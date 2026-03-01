@@ -41,13 +41,17 @@ class CliAgentBackend:
         strict_skill: bool = True,
     ) -> None:
         self.runner = runner or _default_runner
-        self.workdir = Path(workdir) if workdir is not None else None
-        self.skill_path = Path(skill_path) if skill_path is not None else None
+        self.workdir = Path(workdir).resolve() if workdir is not None else None
+        self.skill_path = Path(skill_path).resolve() if skill_path is not None else None
         self.strict_skill = strict_skill
 
     def adjudicate(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
         prompt = self.build_prompt(packet=packet, sink_rule=sink_rule)
-        with tempfile.TemporaryDirectory(prefix="lua_nil_review_agent_") as temp_dir:
+        temp_dir_root = str(self.workdir) if self.workdir is not None else None
+        with tempfile.TemporaryDirectory(
+            prefix="lua_nil_review_agent_",
+            dir=temp_dir_root,
+        ) as temp_dir:
             temp_path = Path(temp_dir)
             schema_path = temp_path / "adjudication_record.schema.json"
             output_path = temp_path / "result.json"

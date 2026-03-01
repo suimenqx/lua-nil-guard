@@ -143,6 +143,10 @@ def test_cli_agent_backend_parses_structured_json_response(tmp_path: Path) -> No
     assert record.judge.status == "risky"
     assert record.prosecutor.role == "prosecutor"
     assert captured["cwd"] == tmp_path
+    output_path = Path(captured["command"][captured["command"].index("-o") + 1])
+    schema_path = Path(captured["command"][captured["command"].index("--schema") + 1])
+    assert tmp_path in output_path.parents
+    assert tmp_path in schema_path.parents
     assert "Skill: lua-nil-adjudicator" in str(captured["stdin_text"])
     assert "Unknown is not risk." in str(captured["stdin_text"])
 
@@ -225,6 +229,66 @@ def test_codex_cli_backend_builds_expected_exec_command(tmp_path: Path) -> None:
     assert "-C" in command
     assert "-m" in command
     assert record.judge.status == "safe"
+
+
+def test_codex_cli_backend_normalizes_relative_workdir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_runner(
+        command: tuple[str, ...],
+        *,
+        stdin_text: str,
+        cwd: Path | None,
+    ) -> None:
+        captured["command"] = command
+        captured["cwd"] = cwd
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(
+            json.dumps(
+                {
+                    "prosecutor": {
+                        "role": "prosecutor",
+                        "status": "uncertain",
+                        "confidence": "low",
+                        "risk_path": [],
+                        "safety_evidence": [],
+                        "missing_evidence": ["stub"],
+                        "recommended_next_action": "expand_context",
+                        "suggested_fix": None,
+                    },
+                    "defender": {
+                        "role": "defender",
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["guard"],
+                        "missing_evidence": [],
+                        "recommended_next_action": "suppress",
+                        "suggested_fix": None,
+                    },
+                    "judge": {
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["guard"],
+                        "counterarguments_considered": [],
+                        "suggested_fix": None,
+                        "needs_human": False,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    backend = CodexCliBackend(runner=fake_runner, workdir=Path("repo"))
+    backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    command = captured["command"]
+    assert command[command.index("-C") + 1] == str(repo_dir.resolve())
+    assert captured["cwd"] == repo_dir.resolve()
 
 
 def test_codeagent_cli_backend_uses_codeagent_executable_by_default(tmp_path: Path) -> None:
