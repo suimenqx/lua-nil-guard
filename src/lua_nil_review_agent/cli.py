@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from .agent_backend import create_adjudication_backend
+from .agent_backend import BackendError, create_adjudication_backend
 from .baseline import BaselineStore, build_baseline, filter_new_findings
 from .parser_backend import get_parser_backend_info
 from .reporting import render_json_report, render_markdown_report
@@ -57,7 +57,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                 ),
             )
-        except SkillRuntimeError as exc:
+        except (SkillRuntimeError, BackendError) as exc:
             return 2, str(exc)
         return 0, render_markdown_report(verdicts, snapshot.confidence_policy)
 
@@ -82,7 +82,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                 ),
             )
-        except SkillRuntimeError as exc:
+        except (SkillRuntimeError, BackendError) as exc:
             return 2, str(exc)
         return 0, render_json_report(verdicts, snapshot.confidence_policy)
 
@@ -108,7 +108,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                 ),
             )
-        except SkillRuntimeError as exc:
+        except (SkillRuntimeError, BackendError) as exc:
             return 2, str(exc)
         baseline = build_baseline(verdicts, snapshot.confidence_policy)
         BaselineStore(baseline_path).save(baseline)
@@ -142,7 +142,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                 ),
             )
-        except SkillRuntimeError as exc:
+        except (SkillRuntimeError, BackendError) as exc:
             return 2, str(exc)
         filtered = filter_new_findings(
             verdicts,
@@ -205,7 +205,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                 ),
             )
-        except SkillRuntimeError as exc:
+        except (SkillRuntimeError, BackendError) as exc:
             return 2, str(exc)
         filtered = filter_new_findings(
             verdicts,
@@ -237,7 +237,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 skill_path=skill_path,
                 strict_skill=strict_skill,
             )
-        except SkillRuntimeError as exc:
+        except (SkillRuntimeError, BackendError) as exc:
             return 2, str(exc)
         if output_path is None:
             return 0, json.dumps(tasks, indent=2, sort_keys=True)

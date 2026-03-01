@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from lua_nil_review_agent.agent_backend import BackendError
 from lua_nil_review_agent.cli import run
 
 
@@ -447,3 +448,57 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
     assert captured["strict_skill"] is False
     assert captured["executable"] == "/tmp/codeagent-bin"
     assert "# Lua Nil Risk Report" in output
+
+
+def test_cli_report_surfaces_backend_errors_without_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local username = req.params.username",
+                "return string.match(username, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_review(*args, **kwargs):
+        raise BackendError("codex backend failed")
+
+    monkeypatch.setattr("lua_nil_review_agent.cli.run_repository_review", fake_review)
+
+    exit_code, output = run(["report", str(tmp_path)])
+
+    assert exit_code == 2
+    assert output == "codex backend failed"
