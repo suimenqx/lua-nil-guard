@@ -38,7 +38,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "report":
         try:
-            backend_name, model, skill_path, strict_skill, positional = _parse_review_options(args[1:])
+            backend_name, model, skill_path, strict_skill, executable, positional = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) != 1:
@@ -54,6 +54,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     model=model,
                     skill_path=skill_path,
                     strict_skill=strict_skill,
+                    executable=executable,
                 ),
             )
         except SkillRuntimeError as exc:
@@ -62,7 +63,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "report-json":
         try:
-            backend_name, model, skill_path, strict_skill, positional = _parse_review_options(args[1:])
+            backend_name, model, skill_path, strict_skill, executable, positional = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) != 1:
@@ -78,6 +79,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     model=model,
                     skill_path=skill_path,
                     strict_skill=strict_skill,
+                    executable=executable,
                 ),
             )
         except SkillRuntimeError as exc:
@@ -86,7 +88,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "baseline-create":
         try:
-            backend_name, model, skill_path, strict_skill, positional = _parse_review_options(args[1:])
+            backend_name, model, skill_path, strict_skill, executable, positional = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) != 2:
@@ -103,6 +105,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     model=model,
                     skill_path=skill_path,
                     strict_skill=strict_skill,
+                    executable=executable,
                 ),
             )
         except SkillRuntimeError as exc:
@@ -119,7 +122,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "report-new":
         try:
-            backend_name, model, skill_path, strict_skill, positional = _parse_review_options(args[1:])
+            backend_name, model, skill_path, strict_skill, executable, positional = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) != 2:
@@ -136,6 +139,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     model=model,
                     skill_path=skill_path,
                     strict_skill=strict_skill,
+                    executable=executable,
                 ),
             )
         except SkillRuntimeError as exc:
@@ -181,7 +185,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "ci-check":
         try:
-            backend_name, model, skill_path, strict_skill, positional = _parse_review_options(args[1:])
+            backend_name, model, skill_path, strict_skill, executable, positional = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) != 2:
@@ -198,6 +202,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     model=model,
                     skill_path=skill_path,
                     strict_skill=strict_skill,
+                    executable=executable,
                 ),
             )
         except SkillRuntimeError as exc:
@@ -283,13 +288,13 @@ def _usage() -> str:
         [
             "Usage:",
             "  lua-nil-review-agent scan <repository>",
-            "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] <repository>",
-            "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] <repository>",
-            "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] <repository> <output>",
-            "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] <repository> <baseline>",
+            "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository>",
+            "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository>",
+            "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> <output>",
+            "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> <baseline>",
             "  lua-nil-review-agent refresh-summaries <repository> [output]",
             "  lua-nil-review-agent refresh-knowledge <repository> [output]",
-            "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] <repository> <baseline>",
+            "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> <baseline>",
             "  lua-nil-review-agent export-prompts [--skill SKILL] [--allow-skill-fallback] <repository> [output]",
             "",
             "Backend values: heuristic | codex | codeagent",
@@ -299,11 +304,12 @@ def _usage() -> str:
 
 def _parse_review_options(
     args: list[str],
-) -> tuple[str, str | None, Path | None, bool, list[str]]:
+) -> tuple[str, str | None, Path | None, bool, str | None, list[str]]:
     backend_name = "heuristic"
     model: str | None = None
     skill_path: Path | None = None
     strict_skill = True
+    executable: str | None = None
     positional: list[str] = []
     index = 0
 
@@ -331,10 +337,16 @@ def _parse_review_options(
             strict_skill = False
             index += 1
             continue
+        if token == "--backend-executable":
+            if index + 1 >= len(args):
+                raise ValueError("--backend-executable requires a value")
+            executable = args[index + 1]
+            index += 2
+            continue
         positional.append(token)
         index += 1
 
-    return backend_name, model, skill_path, strict_skill, positional
+    return backend_name, model, skill_path, strict_skill, executable, positional
 
 
 def _parse_export_options(args: list[str]) -> tuple[Path | None, bool, list[str]]:

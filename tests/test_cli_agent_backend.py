@@ -431,6 +431,13 @@ def test_create_adjudication_backend_passes_skill_path_to_cli_backend(tmp_path: 
     assert backend.skill_path == skill_path
 
 
+def test_create_adjudication_backend_passes_executable_override() -> None:
+    backend = create_adjudication_backend("codeagent", executable="/tmp/codeagent-bin")
+
+    assert isinstance(backend, CodeAgentCliBackend)
+    assert backend.executable == "/tmp/codeagent-bin"
+
+
 def _sample_packet() -> EvidencePacket:
     return EvidencePacket(
         case_id="case_cli_backend",

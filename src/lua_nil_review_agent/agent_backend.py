@@ -335,6 +335,7 @@ def create_adjudication_backend(
     model: str | None = None,
     skill_path: str | Path | None = None,
     strict_skill: bool = True,
+    executable: str | None = None,
     runner=None,
 ) -> AdjudicationBackend:
     """Create a named adjudication backend."""
@@ -349,6 +350,7 @@ def create_adjudication_backend(
             model=model,
             skill_path=skill_path,
             strict_skill=strict_skill,
+            executable=executable or "codex",
         )
     if normalized == "codeagent":
         return CodeAgentCliBackend(
@@ -357,6 +359,7 @@ def create_adjudication_backend(
             model=model,
             skill_path=skill_path,
             strict_skill=strict_skill,
+            executable=executable or "codeagent",
         )
     raise ValueError(f"Unknown adjudication backend: {name}")
 
