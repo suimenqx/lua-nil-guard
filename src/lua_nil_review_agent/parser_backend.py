@@ -1,8 +1,22 @@
 from __future__ import annotations
 
+import ctypes
 from dataclasses import dataclass
 import importlib.util
+from pathlib import Path
 import re
+import shutil
+import subprocess
+import warnings
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+VENDOR_LUA_SRC_DIR = PROJECT_ROOT / "vendor" / "tree-sitter-lua" / "src"
+TREE_SITTER_BUILD_DIR = Path.home() / ".cache" / "lua-nil-review-agent" / "tree_sitter"
+TREE_SITTER_LUA_LIBRARY = TREE_SITTER_BUILD_DIR / "tree_sitter_lua.so"
+
+_LANGUAGE_CACHE = None
+_CDLL_CACHE = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,19 +41,169 @@ class CallSite:
 def get_parser_backend_info() -> ParserBackendInfo:
     """Return the active parser backend description."""
 
-    tree_sitter_available = (
-        importlib.util.find_spec("tree_sitter") is not None
-        and importlib.util.find_spec("tree_sitter_lua") is not None
-    )
-    if tree_sitter_available:
-        return ParserBackendInfo(name="tree_sitter", tree_sitter_available=True)
+    if _load_lua_language() is not None:
+        return ParserBackendInfo(name="tree_sitter_local", tree_sitter_available=True)
     return ParserBackendInfo(name="regex_fallback", tree_sitter_available=False)
 
 
 def collect_call_sites(source: str, qualified_name: str) -> tuple[CallSite, ...]:
     """Collect call sites for a qualified name using the active backend."""
 
+    language = _load_lua_language()
+    if language is not None:
+        tree_sitter_calls = _collect_call_sites_tree_sitter(source, qualified_name, language)
+        if tree_sitter_calls is not None:
+            return tree_sitter_calls
     return _collect_call_sites_fallback(source, qualified_name)
+
+
+def _load_lua_language():
+    global _LANGUAGE_CACHE
+    if _LANGUAGE_CACHE is not None:
+        return _LANGUAGE_CACHE
+
+    if importlib.util.find_spec("tree_sitter") is None:
+        return None
+
+    language = _load_local_compiled_language()
+    if language is not None:
+        _LANGUAGE_CACHE = language
+        return _LANGUAGE_CACHE
+
+    try:
+        from tree_sitter import Language
+        import tree_sitter_lua
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            language = Language(tree_sitter_lua.language())
+    except Exception:
+        return None
+
+    _LANGUAGE_CACHE = language
+    return _LANGUAGE_CACHE
+
+
+def _load_local_compiled_language():
+    library_path = _ensure_local_language_library()
+    if library_path is None:
+        return None
+
+    try:
+        from tree_sitter import Language
+    except Exception:
+        return None
+
+    try:
+        global _CDLL_CACHE
+        _CDLL_CACHE = ctypes.CDLL(str(library_path))
+        language_fn = _CDLL_CACHE.tree_sitter_lua
+        language_fn.restype = ctypes.c_void_p
+        ptr = language_fn()
+        if not ptr:
+            return None
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            return Language(ptr)
+    except Exception:
+        return None
+
+
+def _ensure_local_language_library() -> Path | None:
+    parser_c = VENDOR_LUA_SRC_DIR / "parser.c"
+    scanner_c = VENDOR_LUA_SRC_DIR / "scanner.c"
+    header_dir = VENDOR_LUA_SRC_DIR / "tree_sitter"
+    header_paths = (
+        header_dir / "parser.h",
+        header_dir / "alloc.h",
+        header_dir / "array.h",
+    )
+    if not parser_c.exists() or not scanner_c.exists() or any(not path.exists() for path in header_paths):
+        return None
+    if shutil.which("cc") is None:
+        return None
+
+    source_paths = (parser_c, scanner_c) + header_paths
+    if TREE_SITTER_LUA_LIBRARY.exists():
+        built_mtime = TREE_SITTER_LUA_LIBRARY.stat().st_mtime
+        source_mtime = max(path.stat().st_mtime for path in source_paths)
+        if built_mtime >= source_mtime:
+            return TREE_SITTER_LUA_LIBRARY
+
+    TREE_SITTER_BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    command = [
+        "cc",
+        "-shared",
+        "-fPIC",
+        "-O2",
+        f"-I{VENDOR_LUA_SRC_DIR}",
+        "-o",
+        str(TREE_SITTER_LUA_LIBRARY),
+        str(parser_c),
+        str(scanner_c),
+    ]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError:
+        return None
+    return TREE_SITTER_LUA_LIBRARY
+
+
+def _collect_call_sites_tree_sitter(
+    source: str,
+    qualified_name: str,
+    language,
+) -> tuple[CallSite, ...] | None:
+    try:
+        from tree_sitter import Parser
+    except Exception:
+        return None
+
+    parser = Parser()
+    parser.language = language
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
+    calls: list[CallSite] = []
+    stack = [tree.root_node]
+
+    while stack:
+        node = stack.pop()
+        if node.type == "function_call":
+            call_site = _call_site_from_tree_sitter_node(node, source_bytes)
+            if call_site is not None and call_site.callee == qualified_name:
+                calls.append(call_site)
+        stack.extend(reversed(node.children))
+
+    return tuple(calls)
+
+
+def _call_site_from_tree_sitter_node(node, source_bytes: bytes) -> CallSite | None:
+    arguments_node = None
+    for child in node.children:
+        if child.type == "arguments":
+            arguments_node = child
+            break
+    if arguments_node is None or not node.children:
+        return None
+
+    callee_text = _decode_bytes(source_bytes, node.children[0].start_byte, node.children[0].end_byte)
+    args = tuple(
+        _decode_bytes(source_bytes, child.start_byte, child.end_byte).strip()
+        for child in arguments_node.named_children
+    )
+    start_point = node.start_point
+    offset = len(source_bytes[: node.start_byte].decode("utf-8"))
+    return CallSite(
+        callee=callee_text,
+        offset=offset,
+        line=start_point.row + 1,
+        column=start_point.column + 1,
+        args=args,
+    )
+
+
+def _decode_bytes(source_bytes: bytes, start: int, end: int) -> str:
+    return source_bytes[start:end].decode("utf-8")
 
 
 def _collect_call_sites_fallback(source: str, qualified_name: str) -> tuple[CallSite, ...]:

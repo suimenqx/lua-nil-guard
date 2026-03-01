@@ -6,14 +6,14 @@ from lua_nil_review_agent.parser_backend import (
 )
 
 
-def test_get_parser_backend_info_uses_regex_fallback_when_tree_sitter_missing() -> None:
+def test_get_parser_backend_info_prefers_local_tree_sitter_backend() -> None:
     info = get_parser_backend_info()
 
-    assert info.name == "regex_fallback"
-    assert info.tree_sitter_available is False
+    assert info.name == "tree_sitter_local"
+    assert info.tree_sitter_available is True
 
 
-def test_collect_call_sites_finds_function_calls_with_fallback_backend() -> None:
+def test_collect_call_sites_finds_function_calls_with_tree_sitter_backend() -> None:
     source = "\n".join(
         [
             "local username = req.params.username",

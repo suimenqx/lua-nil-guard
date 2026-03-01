@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .baseline import BaselineStore, build_baseline, filter_new_findings
+from .parser_backend import get_parser_backend_info
 from .reporting import render_json_report, render_markdown_report
 from .service import (
     bootstrap_repository,
@@ -163,6 +164,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _render_scan_summary(root: Path, assessments: tuple[object, ...]) -> str:
+    backend_info = get_parser_backend_info()
     counts = Counter(
         assessment.candidate.static_state
         for assessment in assessments
@@ -172,6 +174,7 @@ def _render_scan_summary(root: Path, assessments: tuple[object, ...]) -> str:
         "# Lua Nil Review Static Summary",
         "",
         f"Repository: {root}",
+        f"Parser backend: {backend_info.name}",
         f"Total candidates: {len(assessments)}",
     ]
 

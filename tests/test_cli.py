@@ -52,6 +52,7 @@ def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert "Lua Nil Review Static Summary" in output
+    assert "Parser backend: tree_sitter_local" in output
     assert "Total candidates: 1" in output
     assert "safe_static: 1" in output
 
