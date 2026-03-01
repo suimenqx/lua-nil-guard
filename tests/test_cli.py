@@ -8,6 +8,13 @@ import pytest
 from lua_nil_review_agent.cli import run
 
 
+def test_cli_help_lists_supported_backends() -> None:
+    exit_code, output = run(["--help"])
+
+    assert exit_code == 0
+    assert "Backend values: heuristic | codex | codeagent" in output
+
+
 def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
     (tmp_path / "config").mkdir()
     (tmp_path / "src").mkdir()

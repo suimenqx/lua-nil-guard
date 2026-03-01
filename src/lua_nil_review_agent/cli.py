@@ -225,14 +225,16 @@ def _usage() -> str:
         [
             "Usage:",
             "  lua-nil-review-agent scan <repository>",
-            "  lua-nil-review-agent report [--backend NAME] [--model MODEL] <repository>",
-            "  lua-nil-review-agent report-json [--backend NAME] [--model MODEL] <repository>",
-            "  lua-nil-review-agent baseline-create [--backend NAME] [--model MODEL] <repository> <output>",
-            "  lua-nil-review-agent report-new [--backend NAME] [--model MODEL] <repository> <baseline>",
+            "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] <repository>",
+            "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] <repository>",
+            "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] <repository> <output>",
+            "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] <repository> <baseline>",
             "  lua-nil-review-agent refresh-summaries <repository> [output]",
             "  lua-nil-review-agent refresh-knowledge <repository> [output]",
-            "  lua-nil-review-agent ci-check [--backend NAME] [--model MODEL] <repository> <baseline>",
+            "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] <repository> <baseline>",
             "  lua-nil-review-agent export-prompts <repository> [output]",
+            "",
+            "Backend values: heuristic | codex | codeagent",
         ]
     )
 

@@ -259,7 +259,7 @@ class CodeAgentCliBackend(CliAgentBackend):
         command = self.build_prompt_command(prompt=prompt, cwd=self.workdir)
         raw = self.runner(command, stdin_text="", cwd=self.workdir)
         if not isinstance(raw, str) or not raw.strip():
-            raise BackendError("CodeAgent CLI backend did not return JSON on stdout")
+            raise BackendError("CodeAgent backend did not return headless JSON on stdout")
         return self.parse_wrapped_response(raw, case_id=packet.case_id)
 
     def build_command(
@@ -291,16 +291,16 @@ class CodeAgentCliBackend(CliAgentBackend):
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise BackendError("Invalid CodeAgent JSON envelope") from exc
+            raise BackendError("Invalid CodeAgent headless JSON envelope") from exc
         if not isinstance(payload, dict):
-            raise BackendError("CodeAgent JSON envelope must be an object")
+            raise BackendError("CodeAgent headless JSON envelope must be an object")
 
         if {"prosecutor", "defender", "judge"}.issubset(payload.keys()):
             return self.parse_response(raw, case_id=case_id)
 
         response = payload.get("response")
         if not isinstance(response, str):
-            raise BackendError("CodeAgent JSON envelope must contain a string response field")
+            raise BackendError("CodeAgent headless JSON envelope must contain a string response field")
 
         return self.parse_response(_strip_markdown_fences(response), case_id=case_id)
 
