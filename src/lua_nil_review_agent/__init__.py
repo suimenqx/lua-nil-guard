@@ -4,8 +4,10 @@ from .agent_backend import (
     AdjudicationBackend,
     BackendError,
     CliAgentBackend,
+    CodeAgentCliBackend,
     CodexCliBackend,
     HeuristicAdjudicationBackend,
+    create_adjudication_backend,
 )
 from .adjudication import adjudicate_packet
 from .baseline import BaselineStore, build_baseline, filter_new_findings
@@ -58,6 +60,7 @@ __all__ = [
     "CandidateCase",
     "ConfidencePolicy",
     "ConfigError",
+    "CodeAgentCliBackend",
     "EvidencePacket",
     "EvidenceTarget",
     "FunctionSummary",
@@ -79,6 +82,7 @@ __all__ = [
     "build_evidence_packet",
     "collect_candidates",
     "collect_call_sites",
+    "create_adjudication_backend",
     "discover_lua_files",
     "derive_facts_from_summaries",
     "export_adjudication_tasks",

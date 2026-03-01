@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from lua_nil_review_agent.cli import run
 
 
@@ -348,3 +350,62 @@ def test_cli_ci_check_fails_when_new_findings_exist(tmp_path: Path) -> None:
 
     assert exit_code == 1
     assert "New findings: 1" in output
+
+
+def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local username = req.params.username",
+                "return string.match(username, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_factory(name: str, *, workdir=None, model=None):
+        captured["name"] = name
+        captured["workdir"] = workdir
+        captured["model"] = model
+        return None
+
+    monkeypatch.setattr("lua_nil_review_agent.cli.create_adjudication_backend", fake_factory)
+
+    exit_code, output = run(["report", "--backend", "codeagent", str(tmp_path)])
+
+    assert exit_code == 0
+    assert captured["name"] == "codeagent"
+    assert captured["workdir"] == tmp_path
+    assert captured["model"] is None
+    assert "# Lua Nil Risk Report" in output

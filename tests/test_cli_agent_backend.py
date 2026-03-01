@@ -8,7 +8,9 @@ import pytest
 from lua_nil_review_agent.agent_backend import (
     BackendError,
     CliAgentBackend,
+    CodeAgentCliBackend,
     CodexCliBackend,
+    create_adjudication_backend,
 )
 from lua_nil_review_agent.models import EvidencePacket, EvidenceTarget, SinkRule
 
@@ -167,6 +169,73 @@ def test_codex_cli_backend_builds_expected_exec_command(tmp_path: Path) -> None:
     assert "-C" in command
     assert "-m" in command
     assert record.judge.status == "safe"
+
+
+def test_codeagent_cli_backend_uses_codeagent_executable_by_default(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_runner(
+        command: tuple[str, ...],
+        *,
+        stdin_text: str,
+        cwd: Path | None,
+    ) -> None:
+        captured["command"] = command
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(
+            json.dumps(
+                {
+                    "prosecutor": {
+                        "role": "prosecutor",
+                        "status": "uncertain",
+                        "confidence": "low",
+                        "risk_path": [],
+                        "safety_evidence": [],
+                        "missing_evidence": ["stub"],
+                        "recommended_next_action": "expand_context",
+                        "suggested_fix": None,
+                    },
+                    "defender": {
+                        "role": "defender",
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["if username then"],
+                        "missing_evidence": [],
+                        "recommended_next_action": "suppress",
+                        "suggested_fix": None,
+                    },
+                    "judge": {
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["if username then"],
+                        "counterarguments_considered": [],
+                        "suggested_fix": None,
+                        "needs_human": False,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    backend = CodeAgentCliBackend(runner=fake_runner, workdir=tmp_path)
+    backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    command = captured["command"]
+    assert command[0:2] == ("codeagent", "exec")
+    assert "--output-schema" in command
+    assert "-o" in command
+
+
+def test_create_adjudication_backend_builds_selected_backend() -> None:
+    heuristic = create_adjudication_backend("heuristic")
+    codex = create_adjudication_backend("codex", model="o3")
+    codeagent = create_adjudication_backend("codeagent")
+
+    assert heuristic.__class__.__name__ == "HeuristicAdjudicationBackend"
+    assert isinstance(codex, CodexCliBackend)
+    assert isinstance(codeagent, CodeAgentCliBackend)
 
 
 def _sample_packet() -> EvidencePacket:

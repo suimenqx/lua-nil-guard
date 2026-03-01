@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Sequence
 
+from .agent_backend import create_adjudication_backend
 from .baseline import BaselineStore, build_baseline, filter_new_findings
 from .parser_backend import get_parser_backend_info
 from .reporting import render_json_report, render_markdown_report
@@ -35,28 +36,49 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         return 0, _render_scan_summary(snapshot.root, assessments)
 
     if command == "report":
-        if len(args) != 2:
+        try:
+            backend_name, model, positional = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 1:
             return 2, "report requires exactly one repository path"
-        root = Path(args[1])
+        root = Path(positional[0])
         snapshot = bootstrap_repository(root)
-        verdicts = run_repository_review(snapshot)
+        verdicts = run_repository_review(
+            snapshot,
+            backend=create_adjudication_backend(backend_name, workdir=root, model=model),
+        )
         return 0, render_markdown_report(verdicts, snapshot.confidence_policy)
 
     if command == "report-json":
-        if len(args) != 2:
+        try:
+            backend_name, model, positional = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 1:
             return 2, "report-json requires exactly one repository path"
-        root = Path(args[1])
+        root = Path(positional[0])
         snapshot = bootstrap_repository(root)
-        verdicts = run_repository_review(snapshot)
+        verdicts = run_repository_review(
+            snapshot,
+            backend=create_adjudication_backend(backend_name, workdir=root, model=model),
+        )
         return 0, render_json_report(verdicts, snapshot.confidence_policy)
 
     if command == "baseline-create":
-        if len(args) != 3:
+        try:
+            backend_name, model, positional = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 2:
             return 2, "baseline-create requires a repository path and output path"
-        root = Path(args[1])
-        baseline_path = Path(args[2])
+        root = Path(positional[0])
+        baseline_path = Path(positional[1])
         snapshot = bootstrap_repository(root)
-        verdicts = run_repository_review(snapshot)
+        verdicts = run_repository_review(
+            snapshot,
+            backend=create_adjudication_backend(backend_name, workdir=root, model=model),
+        )
         baseline = build_baseline(verdicts, snapshot.confidence_policy)
         BaselineStore(baseline_path).save(baseline)
         return 0, "\n".join(
@@ -68,12 +90,19 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         )
 
     if command == "report-new":
-        if len(args) != 3:
+        try:
+            backend_name, model, positional = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 2:
             return 2, "report-new requires a repository path and baseline path"
-        root = Path(args[1])
-        baseline_path = Path(args[2])
+        root = Path(positional[0])
+        baseline_path = Path(positional[1])
         snapshot = bootstrap_repository(root)
-        verdicts = run_repository_review(snapshot)
+        verdicts = run_repository_review(
+            snapshot,
+            backend=create_adjudication_backend(backend_name, workdir=root, model=model),
+        )
         filtered = filter_new_findings(
             verdicts,
             BaselineStore(baseline_path).load(),
@@ -114,12 +143,19 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         )
 
     if command == "ci-check":
-        if len(args) != 3:
+        try:
+            backend_name, model, positional = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 2:
             return 2, "ci-check requires a repository path and baseline path"
-        root = Path(args[1])
-        baseline_path = Path(args[2])
+        root = Path(positional[0])
+        baseline_path = Path(positional[1])
         snapshot = bootstrap_repository(root)
-        verdicts = run_repository_review(snapshot)
+        verdicts = run_repository_review(
+            snapshot,
+            backend=create_adjudication_backend(backend_name, workdir=root, model=model),
+        )
         filtered = filter_new_findings(
             verdicts,
             BaselineStore(baseline_path).load(),
@@ -189,16 +225,42 @@ def _usage() -> str:
         [
             "Usage:",
             "  lua-nil-review-agent scan <repository>",
-            "  lua-nil-review-agent report <repository>",
-            "  lua-nil-review-agent report-json <repository>",
-            "  lua-nil-review-agent baseline-create <repository> <output>",
-            "  lua-nil-review-agent report-new <repository> <baseline>",
+            "  lua-nil-review-agent report [--backend NAME] [--model MODEL] <repository>",
+            "  lua-nil-review-agent report-json [--backend NAME] [--model MODEL] <repository>",
+            "  lua-nil-review-agent baseline-create [--backend NAME] [--model MODEL] <repository> <output>",
+            "  lua-nil-review-agent report-new [--backend NAME] [--model MODEL] <repository> <baseline>",
             "  lua-nil-review-agent refresh-summaries <repository> [output]",
             "  lua-nil-review-agent refresh-knowledge <repository> [output]",
-            "  lua-nil-review-agent ci-check <repository> <baseline>",
+            "  lua-nil-review-agent ci-check [--backend NAME] [--model MODEL] <repository> <baseline>",
             "  lua-nil-review-agent export-prompts <repository> [output]",
         ]
     )
+
+
+def _parse_review_options(args: list[str]) -> tuple[str, str | None, list[str]]:
+    backend_name = "heuristic"
+    model: str | None = None
+    positional: list[str] = []
+    index = 0
+
+    while index < len(args):
+        token = args[index]
+        if token == "--backend":
+            if index + 1 >= len(args):
+                raise ValueError("--backend requires a value")
+            backend_name = args[index + 1]
+            index += 2
+            continue
+        if token == "--model":
+            if index + 1 >= len(args):
+                raise ValueError("--model requires a value")
+            model = args[index + 1]
+            index += 2
+            continue
+        positional.append(token)
+        index += 1
+
+    return backend_name, model, positional
 
 
 if __name__ == "__main__":

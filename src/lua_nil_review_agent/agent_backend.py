@@ -204,10 +204,12 @@ class CodexCliBackend(CliAgentBackend):
         workdir: str | Path | None = None,
         model: str | None = None,
         sandbox: str = "read-only",
+        executable: str = "codex",
     ) -> None:
         super().__init__(runner=runner, workdir=workdir)
         self.model = model
         self.sandbox = sandbox
+        self.executable = executable
 
     def build_command(
         self,
@@ -217,7 +219,7 @@ class CodexCliBackend(CliAgentBackend):
         cwd: Path | None,
     ) -> tuple[str, ...]:
         command: list[str] = [
-            "codex",
+            self.executable,
             "exec",
             "--skip-git-repo-check",
             "--sandbox",
@@ -235,6 +237,46 @@ class CodexCliBackend(CliAgentBackend):
             command.extend(["-m", self.model])
         command.append("-")
         return tuple(command)
+
+
+class CodeAgentCliBackend(CodexCliBackend):
+    """CLI backend for a codeagent binary that follows the same exec contract."""
+
+    def __init__(
+        self,
+        *,
+        runner=None,
+        workdir: str | Path | None = None,
+        model: str | None = None,
+        sandbox: str = "read-only",
+        executable: str = "codeagent",
+    ) -> None:
+        super().__init__(
+            runner=runner,
+            workdir=workdir,
+            model=model,
+            sandbox=sandbox,
+            executable=executable,
+        )
+
+
+def create_adjudication_backend(
+    name: str,
+    *,
+    workdir: str | Path | None = None,
+    model: str | None = None,
+    runner=None,
+) -> AdjudicationBackend:
+    """Create a named adjudication backend."""
+
+    normalized = name.strip().lower()
+    if normalized == "heuristic":
+        return HeuristicAdjudicationBackend()
+    if normalized == "codex":
+        return CodexCliBackend(runner=runner, workdir=workdir, model=model)
+    if normalized == "codeagent":
+        return CodeAgentCliBackend(runner=runner, workdir=workdir, model=model)
+    raise ValueError(f"Unknown adjudication backend: {name}")
 
 
 def _default_runner(
