@@ -239,8 +239,8 @@ class CodexCliBackend(CliAgentBackend):
         return tuple(command)
 
 
-class CodeAgentCliBackend(CodexCliBackend):
-    """CLI backend for a codeagent binary that follows the same exec contract."""
+class CodeAgentCliBackend(CliAgentBackend):
+    """CLI backend for a codeagent binary that follows the Gemini CLI contract."""
 
     def __init__(
         self,
@@ -248,16 +248,61 @@ class CodeAgentCliBackend(CodexCliBackend):
         runner=None,
         workdir: str | Path | None = None,
         model: str | None = None,
-        sandbox: str = "read-only",
         executable: str = "codeagent",
     ) -> None:
-        super().__init__(
-            runner=runner,
-            workdir=workdir,
-            model=model,
-            sandbox=sandbox,
-            executable=executable,
-        )
+        super().__init__(runner=runner, workdir=workdir)
+        self.model = model
+        self.executable = executable
+
+    def adjudicate(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
+        prompt = self.build_prompt(packet=packet, sink_rule=sink_rule)
+        command = self.build_prompt_command(prompt=prompt, cwd=self.workdir)
+        raw = self.runner(command, stdin_text="", cwd=self.workdir)
+        if not isinstance(raw, str) or not raw.strip():
+            raise BackendError("CodeAgent CLI backend did not return JSON on stdout")
+        return self.parse_wrapped_response(raw, case_id=packet.case_id)
+
+    def build_command(
+        self,
+        *,
+        schema_path: Path,
+        output_path: Path,
+        cwd: Path | None,
+    ) -> tuple[str, ...]:
+        raise NotImplementedError("CodeAgentCliBackend builds commands from the prompt directly")
+
+    def build_prompt_command(
+        self,
+        *,
+        prompt: str,
+        cwd: Path | None,
+    ) -> tuple[str, ...]:
+        command: list[str] = [
+            self.executable,
+            "--output-format",
+            "json",
+        ]
+        if self.model is not None:
+            command.extend(["-m", self.model])
+        command.extend(["-p", prompt])
+        return tuple(command)
+
+    def parse_wrapped_response(self, raw: str, *, case_id: str) -> AdjudicationRecord:
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise BackendError("Invalid CodeAgent JSON envelope") from exc
+        if not isinstance(payload, dict):
+            raise BackendError("CodeAgent JSON envelope must be an object")
+
+        if {"prosecutor", "defender", "judge"}.issubset(payload.keys()):
+            return self.parse_response(raw, case_id=case_id)
+
+        response = payload.get("response")
+        if not isinstance(response, str):
+            raise BackendError("CodeAgent JSON envelope must contain a string response field")
+
+        return self.parse_response(_strip_markdown_fences(response), case_id=case_id)
 
 
 def create_adjudication_backend(
@@ -284,7 +329,7 @@ def _default_runner(
     *,
     stdin_text: str,
     cwd: Path | None,
-) -> None:
+) -> str:
     result = subprocess.run(
         command,
         input=stdin_text,
@@ -297,6 +342,7 @@ def _default_runner(
         raise BackendError(
             f"CLI backend command failed with exit code {result.returncode}: {result.stderr.strip()}"
         )
+    return result.stdout
 
 
 def _parse_role_opinion(payload: object) -> RoleOpinion:
@@ -357,3 +403,18 @@ def _require_string_tuple(payload: dict[str, object], key: str) -> tuple[str, ..
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise TypeError(f"{key} must be a string array")
     return tuple(value)
+
+
+def _strip_markdown_fences(text: str) -> str:
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+
+    lines = stripped.splitlines()
+    if len(lines) < 3:
+        return stripped
+    if not lines[0].startswith("```"):
+        return stripped
+    if not lines[-1].startswith("```"):
+        return stripped
+    return "\n".join(lines[1:-1]).strip()

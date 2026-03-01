@@ -179,53 +179,180 @@ def test_codeagent_cli_backend_uses_codeagent_executable_by_default(tmp_path: Pa
         *,
         stdin_text: str,
         cwd: Path | None,
-    ) -> None:
+    ) -> str:
         captured["command"] = command
-        output_path = Path(command[command.index("-o") + 1])
-        output_path.write_text(
-            json.dumps(
-                {
-                    "prosecutor": {
-                        "role": "prosecutor",
-                        "status": "uncertain",
-                        "confidence": "low",
-                        "risk_path": [],
-                        "safety_evidence": [],
-                        "missing_evidence": ["stub"],
-                        "recommended_next_action": "expand_context",
-                        "suggested_fix": None,
-                    },
-                    "defender": {
-                        "role": "defender",
-                        "status": "safe",
-                        "confidence": "high",
-                        "risk_path": [],
-                        "safety_evidence": ["if username then"],
-                        "missing_evidence": [],
-                        "recommended_next_action": "suppress",
-                        "suggested_fix": None,
-                    },
-                    "judge": {
-                        "status": "safe",
-                        "confidence": "high",
-                        "risk_path": [],
-                        "safety_evidence": ["if username then"],
-                        "counterarguments_considered": [],
-                        "suggested_fix": None,
-                        "needs_human": False,
-                    },
-                }
-            ),
-            encoding="utf-8",
+        captured["stdin_text"] = stdin_text
+        captured["cwd"] = cwd
+        return json.dumps(
+            {
+                "response": json.dumps(
+                    {
+                        "prosecutor": {
+                            "role": "prosecutor",
+                            "status": "uncertain",
+                            "confidence": "low",
+                            "risk_path": [],
+                            "safety_evidence": [],
+                            "missing_evidence": ["stub"],
+                            "recommended_next_action": "expand_context",
+                            "suggested_fix": None,
+                        },
+                        "defender": {
+                            "role": "defender",
+                            "status": "safe",
+                            "confidence": "high",
+                            "risk_path": [],
+                            "safety_evidence": ["if username then"],
+                            "missing_evidence": [],
+                            "recommended_next_action": "suppress",
+                            "suggested_fix": None,
+                        },
+                        "judge": {
+                            "status": "safe",
+                            "confidence": "high",
+                            "risk_path": [],
+                            "safety_evidence": ["if username then"],
+                            "counterarguments_considered": [],
+                            "suggested_fix": None,
+                            "needs_human": False,
+                        },
+                    }
+                )
+            }
         )
 
-    backend = CodeAgentCliBackend(runner=fake_runner, workdir=tmp_path)
-    backend.adjudicate(_sample_packet(), _sample_sink_rule())
+    backend = CodeAgentCliBackend(runner=fake_runner, workdir=tmp_path, model="gemini-2.5-pro")
+    record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
 
     command = captured["command"]
-    assert command[0:2] == ("codeagent", "exec")
-    assert "--output-schema" in command
-    assert "-o" in command
+    assert command[0] == "codeagent"
+    assert "exec" not in command
+    assert "--output-format" in command
+    assert command[command.index("--output-format") + 1] == "json"
+    assert "-p" in command
+    assert "-m" in command
+    assert captured["stdin_text"] == ""
+    assert captured["cwd"] == tmp_path
+    assert record.judge.status == "safe"
+
+
+def test_codeagent_cli_backend_accepts_markdown_wrapped_json_response() -> None:
+    def fake_runner(
+        command: tuple[str, ...],
+        *,
+        stdin_text: str,
+        cwd: Path | None,
+    ) -> str:
+        return json.dumps(
+            {
+                "response": "\n".join(
+                    [
+                        "```json",
+                        json.dumps(
+                            {
+                                "prosecutor": {
+                                    "role": "prosecutor",
+                                    "status": "risky",
+                                    "confidence": "high",
+                                    "risk_path": ["req.params.username"],
+                                    "safety_evidence": [],
+                                    "missing_evidence": [],
+                                    "recommended_next_action": "report",
+                                    "suggested_fix": "local safe_value = username or ''",
+                                },
+                                "defender": {
+                                    "role": "defender",
+                                    "status": "uncertain",
+                                    "confidence": "low",
+                                    "risk_path": [],
+                                    "safety_evidence": [],
+                                    "missing_evidence": ["no guard"],
+                                    "recommended_next_action": "expand_context",
+                                    "suggested_fix": None,
+                                },
+                                "judge": {
+                                    "status": "risky",
+                                    "confidence": "high",
+                                    "risk_path": ["req.params.username"],
+                                    "safety_evidence": [],
+                                    "counterarguments_considered": ["no guard"],
+                                    "suggested_fix": "local safe_value = username or ''",
+                                    "needs_human": False,
+                                },
+                            }
+                        ),
+                        "```",
+                    ]
+                )
+            }
+        )
+
+    backend = CodeAgentCliBackend(runner=fake_runner)
+    record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    assert record.judge.status == "risky"
+
+
+def test_codeagent_cli_backend_simulates_gemini_style_subprocess(tmp_path: Path) -> None:
+    executable = tmp_path / "codeagent"
+    executable.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import json",
+                "import sys",
+                "",
+                "args = sys.argv[1:]",
+                "assert '--output-format' in args",
+                "assert args[args.index('--output-format') + 1] == 'json'",
+                "assert '-p' in args",
+                "assert args[args.index('-p') + 1]",
+                "payload = {",
+                "    'prosecutor': {",
+                "        'role': 'prosecutor',",
+                "        'status': 'uncertain',",
+                "        'confidence': 'low',",
+                "        'risk_path': [],",
+                "        'safety_evidence': [],",
+                "        'missing_evidence': ['stub'],",
+                "        'recommended_next_action': 'expand_context',",
+                "        'suggested_fix': None,",
+                "    },",
+                "    'defender': {",
+                "        'role': 'defender',",
+                "        'status': 'safe',",
+                "        'confidence': 'high',",
+                "        'risk_path': [],",
+                "        'safety_evidence': ['if username then'],",
+                "        'missing_evidence': [],",
+                "        'recommended_next_action': 'suppress',",
+                "        'suggested_fix': None,",
+                "    },",
+                "    'judge': {",
+                "        'status': 'safe',",
+                "        'confidence': 'high',",
+                "        'risk_path': [],",
+                "        'safety_evidence': ['if username then'],",
+                "        'counterarguments_considered': [],",
+                "        'suggested_fix': None,",
+                "        'needs_human': False,",
+                "    },",
+                "}",
+                "print(json.dumps({'response': json.dumps(payload)}))",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+
+    backend = CodeAgentCliBackend(
+        executable=str(executable),
+        workdir=tmp_path,
+        model="gemini-2.5-pro",
+    )
+    record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    assert record.judge.status == "safe"
 
 
 def test_create_adjudication_backend_builds_selected_backend() -> None:
