@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 
 from lua_nil_review_agent.reporting import render_json_report
 from lua_nil_review_agent.service import (
@@ -11,9 +12,11 @@ from lua_nil_review_agent.service import (
 )
 
 
-def test_demo_project_mvp_reports_only_the_real_risk_after_knowledge_refresh() -> None:
+def test_demo_project_mvp_reports_only_the_real_risk_after_knowledge_refresh(tmp_path: Path) -> None:
     project_root = Path(__file__).resolve().parents[1] / "examples" / "mvp_cases" / "demo_project"
-    snapshot = bootstrap_repository(project_root)
+    runtime_root = tmp_path / "demo_project"
+    shutil.copytree(project_root, runtime_root)
+    snapshot = bootstrap_repository(runtime_root)
 
     facts = refresh_knowledge_base(snapshot)
     verdicts = run_repository_review(snapshot)

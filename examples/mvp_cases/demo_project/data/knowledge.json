@@ -1,9 +1,0 @@
-[
-  {
-    "confidence": "medium",
-    "key": "normalize_name.returns_non_nil",
-    "source": "summary",
-    "statement": "normalize_name returns non-nil value",
-    "subject": "normalize_name"
-  }
-]
