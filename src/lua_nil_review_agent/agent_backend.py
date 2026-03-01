@@ -240,7 +240,7 @@ class CodexCliBackend(CliAgentBackend):
 
 
 class CodeAgentCliBackend(CliAgentBackend):
-    """CLI backend for a codeagent binary that follows the Gemini CLI contract."""
+    """CLI backend for a codeagent binary that uses headless JSON output."""
 
     def __init__(
         self,

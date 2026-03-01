@@ -221,7 +221,7 @@ def test_codeagent_cli_backend_uses_codeagent_executable_by_default(tmp_path: Pa
             }
         )
 
-    backend = CodeAgentCliBackend(runner=fake_runner, workdir=tmp_path, model="gemini-2.5-pro")
+    backend = CodeAgentCliBackend(runner=fake_runner, workdir=tmp_path, model="codeagent-test-model")
     record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
 
     command = captured["command"]
@@ -293,7 +293,7 @@ def test_codeagent_cli_backend_accepts_markdown_wrapped_json_response() -> None:
     assert record.judge.status == "risky"
 
 
-def test_codeagent_cli_backend_simulates_gemini_style_subprocess(tmp_path: Path) -> None:
+def test_codeagent_cli_backend_simulates_headless_json_subprocess(tmp_path: Path) -> None:
     executable = tmp_path / "codeagent"
     executable.write_text(
         "\n".join(
@@ -348,7 +348,7 @@ def test_codeagent_cli_backend_simulates_gemini_style_subprocess(tmp_path: Path)
     backend = CodeAgentCliBackend(
         executable=str(executable),
         workdir=tmp_path,
-        model="gemini-2.5-pro",
+        model="codeagent-test-model",
     )
     record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
 
