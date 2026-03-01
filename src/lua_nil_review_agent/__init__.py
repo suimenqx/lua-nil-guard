@@ -19,7 +19,12 @@ from .pipeline import build_evidence_packet, should_report
 from .prompting import build_adjudication_prompt
 from .reporting import render_markdown_report
 from .repository import discover_lua_files
-from .service import bootstrap_repository, review_repository, review_source
+from .service import (
+    bootstrap_repository,
+    prepare_evidence_packet,
+    review_repository,
+    review_source,
+)
 from .static_analysis import analyze_candidate
 
 __all__ = [
@@ -43,6 +48,7 @@ __all__ = [
     "load_sink_rules",
     "main",
     "analyze_candidate",
+    "prepare_evidence_packet",
     "review_repository",
     "render_markdown_report",
     "run",

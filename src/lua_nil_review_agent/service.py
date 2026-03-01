@@ -4,7 +4,8 @@ from pathlib import Path
 
 from .collector import collect_candidates
 from .config_loader import load_confidence_policy, load_sink_rules
-from .models import CandidateAssessment, RepositorySnapshot, SinkRule, with_candidate_state
+from .models import CandidateAssessment, EvidencePacket, RepositorySnapshot, SinkRule, with_candidate_state
+from .pipeline import build_evidence_packet
 from .repository import discover_lua_files
 from .static_analysis import analyze_candidate
 
@@ -52,3 +53,30 @@ def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment
         source = file_path.read_text(encoding="utf-8")
         assessments.extend(review_source(file_path, source, snapshot.sink_rules))
     return tuple(assessments)
+
+
+def prepare_evidence_packet(
+    assessment: CandidateAssessment,
+    source: str,
+    *,
+    related_functions: tuple[str, ...] = (),
+    function_summaries: tuple[str, ...] = (),
+    knowledge_facts: tuple[str, ...] = (),
+    context_radius: int = 2,
+) -> EvidencePacket:
+    """Convert a locally analyzed candidate into an agent-ready evidence packet."""
+
+    lines = source.splitlines()
+    start = max(0, assessment.candidate.line - 1 - context_radius)
+    end = min(len(lines), assessment.candidate.line + context_radius)
+    local_context = "\n".join(lines[start:end])
+
+    return build_evidence_packet(
+        candidate=assessment.candidate,
+        local_context=local_context,
+        related_functions=related_functions,
+        function_summaries=function_summaries,
+        knowledge_facts=knowledge_facts,
+        origin_candidates=assessment.static_analysis.origin_candidates,
+        observed_guards=assessment.static_analysis.observed_guards,
+    )
