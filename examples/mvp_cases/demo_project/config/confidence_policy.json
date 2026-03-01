@@ -1,0 +1,5 @@
+{
+  "levels": ["low", "medium", "high"],
+  "default_report_min_confidence": "high",
+  "default_include_medium_in_audit": true
+}
