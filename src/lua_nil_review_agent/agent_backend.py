@@ -37,9 +37,13 @@ class CliAgentBackend:
         *,
         runner=None,
         workdir: str | Path | None = None,
+        skill_path: str | Path | None = None,
+        strict_skill: bool = True,
     ) -> None:
         self.runner = runner or _default_runner
         self.workdir = Path(workdir) if workdir is not None else None
+        self.skill_path = Path(skill_path) if skill_path is not None else None
+        self.strict_skill = strict_skill
 
     def adjudicate(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
         prompt = self.build_prompt(packet=packet, sink_rule=sink_rule)
@@ -67,7 +71,12 @@ class CliAgentBackend:
 
         return "\n".join(
             [
-                build_adjudication_prompt(packet=packet, sink_rule=sink_rule),
+                build_adjudication_prompt(
+                    packet=packet,
+                    sink_rule=sink_rule,
+                    skill_path=self.skill_path,
+                    strict_skill=self.strict_skill,
+                ),
                 "",
                 "Return a single JSON object with this exact top-level shape:",
                 "{",
@@ -202,11 +211,18 @@ class CodexCliBackend(CliAgentBackend):
         *,
         runner=None,
         workdir: str | Path | None = None,
+        skill_path: str | Path | None = None,
+        strict_skill: bool = True,
         model: str | None = None,
         sandbox: str = "read-only",
         executable: str = "codex",
     ) -> None:
-        super().__init__(runner=runner, workdir=workdir)
+        super().__init__(
+            runner=runner,
+            workdir=workdir,
+            skill_path=skill_path,
+            strict_skill=strict_skill,
+        )
         self.model = model
         self.sandbox = sandbox
         self.executable = executable
@@ -247,10 +263,17 @@ class CodeAgentCliBackend(CliAgentBackend):
         *,
         runner=None,
         workdir: str | Path | None = None,
+        skill_path: str | Path | None = None,
+        strict_skill: bool = True,
         model: str | None = None,
         executable: str = "codeagent",
     ) -> None:
-        super().__init__(runner=runner, workdir=workdir)
+        super().__init__(
+            runner=runner,
+            workdir=workdir,
+            skill_path=skill_path,
+            strict_skill=strict_skill,
+        )
         self.model = model
         self.executable = executable
 
@@ -310,6 +333,8 @@ def create_adjudication_backend(
     *,
     workdir: str | Path | None = None,
     model: str | None = None,
+    skill_path: str | Path | None = None,
+    strict_skill: bool = True,
     runner=None,
 ) -> AdjudicationBackend:
     """Create a named adjudication backend."""
@@ -318,9 +343,21 @@ def create_adjudication_backend(
     if normalized == "heuristic":
         return HeuristicAdjudicationBackend()
     if normalized == "codex":
-        return CodexCliBackend(runner=runner, workdir=workdir, model=model)
+        return CodexCliBackend(
+            runner=runner,
+            workdir=workdir,
+            model=model,
+            skill_path=skill_path,
+            strict_skill=strict_skill,
+        )
     if normalized == "codeagent":
-        return CodeAgentCliBackend(runner=runner, workdir=workdir, model=model)
+        return CodeAgentCliBackend(
+            runner=runner,
+            workdir=workdir,
+            model=model,
+            skill_path=skill_path,
+            strict_skill=strict_skill,
+        )
     raise ValueError(f"Unknown adjudication backend: {name}")
 
 

@@ -168,6 +168,8 @@ def export_adjudication_tasks(
     *,
     knowledge_path: str | Path | None = None,
     output_path: str | Path | None = None,
+    skill_path: str | Path | None = None,
+    strict_skill: bool = True,
 ) -> tuple[dict[str, object], ...]:
     """Export agent-ready prompt tasks for all collected candidates."""
 
@@ -206,7 +208,12 @@ def export_adjudication_tasks(
                     "file": assessment.candidate.file,
                     "line": assessment.candidate.line,
                     "function_scope": assessment.candidate.function_scope,
-                    "prompt": build_adjudication_prompt(packet=packet, sink_rule=sink_rule),
+                    "prompt": build_adjudication_prompt(
+                        packet=packet,
+                        sink_rule=sink_rule,
+                        skill_path=skill_path,
+                        strict_skill=strict_skill,
+                    ),
                 }
             )
 

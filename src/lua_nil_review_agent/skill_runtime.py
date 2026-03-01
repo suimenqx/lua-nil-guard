@@ -34,32 +34,101 @@ def load_adjudicator_skill(path: str | Path | None = None) -> SkillDefinition:
     return load_skill_definition(path or default_adjudicator_skill_path())
 
 
-def compile_adjudicator_skill_header(path: str | Path | None = None) -> str:
+def fallback_adjudicator_skill_header() -> str:
+    """Return the built-in adjudicator header used when fallback is allowed."""
+
+    return "\n".join(
+        [
+            "Skill: lua-nil-adjudicator",
+            "Skill purpose: Strictly adjudicate whether a possibly nil value can reach a nil-sensitive Lua sink with explicit path evidence, strong false-positive control, and machine-readable verdicts.",
+            "",
+            "Goal:",
+            "Produce a precise verdict with minimal false positives.",
+            "Judge only this question:",
+            "- Can `nil` reach the declared `nil-sensitive` sink on a real path supported by the provided code?",
+            "",
+            "Required review order:",
+            "1. Identify the sink and the exact value expression under review.",
+            "2. Look for explicit safety evidence first.",
+            "3. If safety is not proven, trace the value origin and path to the sink.",
+            "4. Distinguish facts from inference.",
+            "5. Return `uncertain` when evidence is incomplete.",
+            "",
+            "Canonical principles:",
+            "- Unknown is not risk.",
+            "- Absence of proof is not proof of bug.",
+            "",
+            "Hard rules:",
+            "- Use only the provided code and declared facts.",
+            "- Do not assume undocumented business guarantees.",
+            "- Do not report risk without a concrete path explanation.",
+            "- Do not report safety without explicit supporting evidence.",
+            "- Return `uncertain` when evidence is incomplete.",
+            "- Treat runtime observations as supporting evidence, not absolute proof, unless the failing path is directly observed.",
+            "",
+            "Evidence checklist:",
+            "Check for these before calling a case risky:",
+            "- variable origin",
+            "- assignments and reassignments",
+            "- nearby guards such as `if x then`",
+            "- `assert(x)` style assertions",
+            "- defaulting patterns such as `x = x or \"\"`",
+            "- wrapper or normalizer functions",
+            "- function summaries and repository knowledge facts",
+            "",
+            "Output contract:",
+            "Return a machine-readable object with:",
+            "- `status`: `safe`, `risky`, or `uncertain`",
+            "- `confidence`: `low`, `medium`, or `high`",
+            "- `risk_path`: only explicit, code-supported path steps",
+            "- `safety_evidence`: only explicit guards or contracts",
+            "- `missing_evidence`: what is still needed if unresolved",
+            "- `recommended_next_action`: one of `suppress`, `expand_context`, `verify_runtime`, `report`, `autofix`",
+            "- `suggested_fix`: only when a high-confidence, low-risk fix is clear",
+            "",
+            "Review bias:",
+            "- Prefer silence over speculative warnings.",
+            "- A sparse, trusted report is better than a noisy report.",
+            "- Default to `uncertain` instead of overstating risk.",
+        ]
+    )
+
+
+def compile_adjudicator_skill_header(
+    path: str | Path | None = None,
+    *,
+    strict: bool = True,
+) -> str:
     """Compile the adjudicator skill into a stable runtime instruction header."""
 
-    skill = load_adjudicator_skill(path)
-    required_sections = (
-        "Goal",
-        "Required Review Order",
-        "Canonical Principles",
-        "Hard Rules",
-        "Evidence Checklist",
-        "Output Contract",
-        "Review Bias",
-    )
-    missing = [title for title in required_sections if title not in skill.sections]
-    if missing:
-        raise ValueError(f"Skill is missing required sections: {', '.join(missing)}")
+    try:
+        skill = load_adjudicator_skill(path)
+        required_sections = (
+            "Goal",
+            "Required Review Order",
+            "Canonical Principles",
+            "Hard Rules",
+            "Evidence Checklist",
+            "Output Contract",
+            "Review Bias",
+        )
+        missing = [title for title in required_sections if title not in skill.sections]
+        if missing:
+            raise ValueError(f"Skill is missing required sections: {', '.join(missing)}")
 
-    lines = [
-        f"Skill: {skill.name}",
-        f"Skill purpose: {skill.description}",
-    ]
-    for title in required_sections:
-        lines.append("")
-        lines.append(f"{_format_section_label(title)}:")
-        lines.extend(skill.sections[title])
-    return "\n".join(lines)
+        lines = [
+            f"Skill: {skill.name}",
+            f"Skill purpose: {skill.description}",
+        ]
+        for title in required_sections:
+            lines.append("")
+            lines.append(f"{_format_section_label(title)}:")
+            lines.extend(skill.sections[title])
+        return "\n".join(lines)
+    except (OSError, ValueError):
+        if strict:
+            raise
+        return fallback_adjudicator_skill_header()
 
 
 @lru_cache(maxsize=16)

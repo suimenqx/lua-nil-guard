@@ -40,6 +40,7 @@ from .skill_runtime import (
     SkillDefinition,
     compile_adjudicator_skill_header,
     default_adjudicator_skill_path,
+    fallback_adjudicator_skill_header,
     load_adjudicator_skill,
     load_skill_definition,
 )
@@ -96,6 +97,7 @@ __all__ = [
     "default_adjudicator_skill_path",
     "derive_facts_from_summaries",
     "export_adjudication_tasks",
+    "fallback_adjudicator_skill_header",
     "facts_for_subject",
     "filter_new_findings",
     "load_confidence_policy",

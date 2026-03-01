@@ -11,12 +11,13 @@ def build_adjudication_prompt(
     packet: EvidencePacket,
     sink_rule: SinkRule,
     skill_path: str | Path | None = None,
+    strict_skill: bool = True,
 ) -> str:
     """Render a deterministic prompt for strict nil-risk adjudication."""
 
     return "\n".join(
         [
-            compile_adjudicator_skill_header(skill_path),
+            compile_adjudicator_skill_header(skill_path, strict=strict_skill),
             "",
             "Target case:",
             f"- case_id: {packet.case_id}",

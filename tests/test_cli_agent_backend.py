@@ -32,6 +32,61 @@ class DemoCliBackend(CliAgentBackend):
         )
 
 
+def test_cli_agent_backend_uses_custom_skill_path(tmp_path: Path) -> None:
+    skill_path = _write_minimal_skill(tmp_path / "custom-skill.md", name="custom-adjudicator")
+    captured: dict[str, object] = {}
+
+    def fake_runner(
+        command: tuple[str, ...],
+        *,
+        stdin_text: str,
+        cwd: Path | None,
+    ) -> None:
+        captured["stdin_text"] = stdin_text
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(
+            json.dumps(
+                {
+                    "prosecutor": {
+                        "role": "prosecutor",
+                        "status": "uncertain",
+                        "confidence": "low",
+                        "risk_path": [],
+                        "safety_evidence": [],
+                        "missing_evidence": ["stub"],
+                        "recommended_next_action": "expand_context",
+                        "suggested_fix": None,
+                    },
+                    "defender": {
+                        "role": "defender",
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["custom skill"],
+                        "missing_evidence": [],
+                        "recommended_next_action": "suppress",
+                        "suggested_fix": None,
+                    },
+                    "judge": {
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["custom skill"],
+                        "counterarguments_considered": [],
+                        "suggested_fix": None,
+                        "needs_human": False,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    backend = DemoCliBackend(runner=fake_runner, skill_path=skill_path)
+    backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    assert "Skill: custom-adjudicator" in str(captured["stdin_text"])
+
+
 def test_cli_agent_backend_parses_structured_json_response(tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 
@@ -368,6 +423,14 @@ def test_create_adjudication_backend_builds_selected_backend() -> None:
     assert isinstance(codeagent, CodeAgentCliBackend)
 
 
+def test_create_adjudication_backend_passes_skill_path_to_cli_backend(tmp_path: Path) -> None:
+    skill_path = _write_minimal_skill(tmp_path / "factory-skill.md", name="factory-skill")
+    backend = create_adjudication_backend("codex", skill_path=skill_path)
+
+    assert isinstance(backend, CodexCliBackend)
+    assert backend.skill_path == skill_path
+
+
 def _sample_packet() -> EvidencePacket:
     return EvidencePacket(
         case_id="case_cli_backend",
@@ -402,3 +465,41 @@ def _sample_sink_rule() -> SinkRule:
         default_severity="high",
         safe_patterns=("x or ''",),
     )
+
+
+def _write_minimal_skill(path: Path, *, name: str) -> Path:
+    path.write_text(
+        "\n".join(
+            [
+                "---",
+                f"name: {name}",
+                "description: Test skill.",
+                "---",
+                "",
+                "## Goal",
+                "- Keep precision high.",
+                "",
+                "## Required Review Order",
+                "1. Read the sink.",
+                "",
+                "## Canonical Principles",
+                "- Unknown is not risk.",
+                "- Absence of proof is not proof of bug.",
+                "",
+                "## Hard Rules",
+                "- Return `uncertain` when evidence is incomplete.",
+                "- Do not assume undocumented business guarantees.",
+                "",
+                "## Evidence Checklist",
+                "- variable origin",
+                "",
+                "## Output Contract",
+                "- `status`: `safe`, `risky`, or `uncertain`",
+                "",
+                "## Review Bias",
+                "- Prefer silence over speculative warnings.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return path

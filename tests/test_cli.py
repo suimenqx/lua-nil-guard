@@ -13,6 +13,7 @@ def test_cli_help_lists_supported_backends() -> None:
 
     assert exit_code == 0
     assert "Backend values: heuristic | codex | codeagent" in output
+    assert "--allow-skill-fallback" in output
 
 
 def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
@@ -401,18 +402,35 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
 
     captured: dict[str, object] = {}
 
-    def fake_factory(name: str, *, workdir=None, model=None):
+    skill_path = tmp_path / "custom-skill.md"
+    skill_path.write_text("placeholder", encoding="utf-8")
+
+    def fake_factory(name: str, *, workdir=None, model=None, skill_path=None, strict_skill=True):
         captured["name"] = name
         captured["workdir"] = workdir
         captured["model"] = model
+        captured["skill_path"] = skill_path
+        captured["strict_skill"] = strict_skill
         return None
 
     monkeypatch.setattr("lua_nil_review_agent.cli.create_adjudication_backend", fake_factory)
 
-    exit_code, output = run(["report", "--backend", "codeagent", str(tmp_path)])
+    exit_code, output = run(
+        [
+            "report",
+            "--backend",
+            "codeagent",
+            "--skill",
+            str(skill_path),
+            "--allow-skill-fallback",
+            str(tmp_path),
+        ]
+    )
 
     assert exit_code == 0
     assert captured["name"] == "codeagent"
     assert captured["workdir"] == tmp_path
     assert captured["model"] is None
+    assert captured["skill_path"] == skill_path
+    assert captured["strict_skill"] is False
     assert "# Lua Nil Risk Report" in output

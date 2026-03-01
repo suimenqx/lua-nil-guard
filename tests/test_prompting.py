@@ -94,7 +94,7 @@ def test_build_adjudication_prompt_uses_compiled_skill_header(monkeypatch: pytes
 
     monkeypatch.setattr(
         "lua_nil_review_agent.prompting.compile_adjudicator_skill_header",
-        lambda skill_path=None: "SKILL HEADER FOR TESTS",
+        lambda skill_path=None, strict=True: "SKILL HEADER FOR TESTS",
     )
 
     prompt = build_adjudication_prompt(packet=packet, sink_rule=rule)
