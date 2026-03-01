@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from .models import EvidencePacket, SinkRule
+from .skill_runtime import compile_adjudicator_skill_header
 
 
-def build_adjudication_prompt(*, packet: EvidencePacket, sink_rule: SinkRule) -> str:
+def build_adjudication_prompt(
+    *,
+    packet: EvidencePacket,
+    sink_rule: SinkRule,
+    skill_path: str | Path | None = None,
+) -> str:
     """Render a deterministic prompt for strict nil-risk adjudication."""
 
     return "\n".join(
         [
-            "You are a strict Lua nil-risk adjudicator.",
-            "Judge only whether nil can reach the declared nil-sensitive sink.",
-            "Unknown is not risk.",
-            "Absence of proof is not proof of bug.",
+            compile_adjudicator_skill_header(skill_path),
             "",
             "Target case:",
             f"- case_id: {packet.case_id}",
@@ -45,14 +50,5 @@ def build_adjudication_prompt(*, packet: EvidencePacket, sink_rule: SinkRule) ->
             "",
             "Knowledge facts:",
             "\n".join(packet.knowledge_facts) if packet.knowledge_facts else "(none)",
-            "",
-            "Required output:",
-            "- status: safe | risky | uncertain",
-            "- confidence: low | medium | high",
-            "- risk_path: explicit path steps only",
-            "- safety_evidence: explicit guard or contract evidence only",
-            "- missing_evidence: what else is needed if uncertain",
-            "- recommended_next_action: suppress | expand_context | verify_runtime | report | autofix",
-            "- suggested_fix: only when confidence is sufficient",
         ]
     )

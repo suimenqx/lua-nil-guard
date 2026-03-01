@@ -88,6 +88,7 @@ def test_cli_agent_backend_parses_structured_json_response(tmp_path: Path) -> No
     assert record.judge.status == "risky"
     assert record.prosecutor.role == "prosecutor"
     assert captured["cwd"] == tmp_path
+    assert "Skill: lua-nil-adjudicator" in str(captured["stdin_text"])
     assert "Unknown is not risk." in str(captured["stdin_text"])
 
 
@@ -231,6 +232,8 @@ def test_codeagent_cli_backend_uses_codeagent_executable_by_default(tmp_path: Pa
     assert command[command.index("--output-format") + 1] == "json"
     assert "-p" in command
     assert "-m" in command
+    prompt_argument = command[command.index("-p") + 1]
+    assert "Skill: lua-nil-adjudicator" in prompt_argument
     assert captured["stdin_text"] == ""
     assert captured["cwd"] == tmp_path
     assert record.judge.status == "safe"

@@ -52,6 +52,7 @@ def test_export_adjudication_tasks_builds_prompt_payloads(tmp_path: Path) -> Non
 
     assert len(tasks) == 1
     assert tasks[0]["case_id"]
+    assert "Skill: lua-nil-adjudicator" in tasks[0]["prompt"]
     assert "Unknown is not risk." in tasks[0]["prompt"]
     assert tasks[0]["sink_rule_id"] == "string.match.arg1"
 

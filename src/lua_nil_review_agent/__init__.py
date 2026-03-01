@@ -36,6 +36,13 @@ from .parser_backend import collect_call_sites, get_parser_backend_info
 from .prompting import build_adjudication_prompt
 from .reporting import render_json_report, render_markdown_report
 from .repository import discover_lua_files
+from .skill_runtime import (
+    SkillDefinition,
+    compile_adjudicator_skill_header,
+    default_adjudicator_skill_path,
+    load_adjudicator_skill,
+    load_skill_definition,
+)
 from .service import (
     bootstrap_repository,
     export_adjudication_tasks,
@@ -71,6 +78,7 @@ __all__ = [
     "RoleOpinion",
     "RepositorySnapshot",
     "SinkRule",
+    "SkillDefinition",
     "SummaryStore",
     "StaticAnalysisResult",
     "Verdict",
@@ -84,12 +92,16 @@ __all__ = [
     "collect_call_sites",
     "create_adjudication_backend",
     "discover_lua_files",
+    "compile_adjudicator_skill_header",
+    "default_adjudicator_skill_path",
     "derive_facts_from_summaries",
     "export_adjudication_tasks",
     "facts_for_subject",
     "filter_new_findings",
     "load_confidence_policy",
+    "load_adjudicator_skill",
     "load_sink_rules",
+    "load_skill_definition",
     "main",
     "analyze_candidate",
     "get_parser_backend_info",

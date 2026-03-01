@@ -4,6 +4,10 @@
 
 This document defines the baseline prompt contract for all agent adjudication in this repository.
 
+The runtime instruction header is compiled from `skills/lua-nil-adjudicator/SKILL.md`.
+Behavioral rules belong in the skill and are injected into every adjudication prompt.
+The prompt builder should add case evidence and transport-specific schema constraints, not duplicate the skill policy.
+
 The prompt must enforce:
 
 - evidence-first reasoning

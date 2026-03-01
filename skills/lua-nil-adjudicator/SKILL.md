@@ -23,6 +23,11 @@ Judge only this question:
 4. Distinguish facts from inference.
 5. Return `uncertain` when evidence is incomplete.
 
+## Canonical Principles
+
+- Unknown is not risk.
+- Absence of proof is not proof of bug.
+
 ## Hard Rules
 
 - Use only the provided code and declared facts.
