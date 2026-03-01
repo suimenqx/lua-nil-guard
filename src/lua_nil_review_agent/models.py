@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 from pathlib import Path
 
 
@@ -91,3 +92,26 @@ class RepositorySnapshot:
     sink_rules: tuple[SinkRule, ...]
     confidence_policy: ConfidencePolicy
     lua_files: tuple[Path, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class StaticAnalysisResult:
+    """A bounded local nullability judgment for a single candidate."""
+
+    state: str
+    observed_guards: tuple[str, ...]
+    origin_candidates: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateAssessment:
+    """A candidate paired with its local static analysis result."""
+
+    candidate: CandidateCase
+    static_analysis: StaticAnalysisResult
+
+
+def with_candidate_state(candidate: CandidateCase, state: str) -> CandidateCase:
+    """Return a candidate copy with an updated static state."""
+
+    return replace(candidate, static_state=state)
