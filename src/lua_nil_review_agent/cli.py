@@ -4,7 +4,14 @@ from collections import Counter
 from pathlib import Path
 from typing import Sequence
 
-from .service import bootstrap_repository, review_repository
+from .baseline import BaselineStore, build_baseline, filter_new_findings
+from .reporting import render_markdown_report
+from .service import (
+    bootstrap_repository,
+    refresh_summary_cache,
+    review_repository,
+    run_repository_review,
+)
 
 
 def run(argv: Sequence[str]) -> tuple[int, str]:
@@ -15,15 +22,70 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         return 0, _usage()
 
     command = args[0]
-    if command != "scan":
-        return 2, _usage()
-    if len(args) != 2:
-        return 2, "scan requires exactly one repository path"
+    if command == "scan":
+        if len(args) != 2:
+            return 2, "scan requires exactly one repository path"
+        root = Path(args[1])
+        snapshot = bootstrap_repository(root)
+        assessments = review_repository(snapshot)
+        return 0, _render_scan_summary(snapshot.root, assessments)
 
-    root = Path(args[1])
-    snapshot = bootstrap_repository(root)
-    assessments = review_repository(snapshot)
-    return 0, _render_scan_summary(snapshot.root, assessments)
+    if command == "report":
+        if len(args) != 2:
+            return 2, "report requires exactly one repository path"
+        root = Path(args[1])
+        snapshot = bootstrap_repository(root)
+        verdicts = run_repository_review(snapshot)
+        return 0, render_markdown_report(verdicts, snapshot.confidence_policy)
+
+    if command == "baseline-create":
+        if len(args) != 3:
+            return 2, "baseline-create requires a repository path and output path"
+        root = Path(args[1])
+        baseline_path = Path(args[2])
+        snapshot = bootstrap_repository(root)
+        verdicts = run_repository_review(snapshot)
+        baseline = build_baseline(verdicts, snapshot.confidence_policy)
+        BaselineStore(baseline_path).save(baseline)
+        return 0, "\n".join(
+            [
+                "Baseline created.",
+                f"Baseline entries: {len(baseline)}",
+                f"Output: {baseline_path}",
+            ]
+        )
+
+    if command == "report-new":
+        if len(args) != 3:
+            return 2, "report-new requires a repository path and baseline path"
+        root = Path(args[1])
+        baseline_path = Path(args[2])
+        snapshot = bootstrap_repository(root)
+        verdicts = run_repository_review(snapshot)
+        filtered = filter_new_findings(
+            verdicts,
+            BaselineStore(baseline_path).load(),
+            snapshot.confidence_policy,
+        )
+        return 0, render_markdown_report(filtered, snapshot.confidence_policy)
+
+    if command == "refresh-summaries":
+        if len(args) not in {2, 3}:
+            return 2, "refresh-summaries requires a repository path and optional output path"
+        root = Path(args[1])
+        summary_path = Path(args[2]) if len(args) == 3 else None
+        snapshot = bootstrap_repository(root)
+        summaries = refresh_summary_cache(snapshot, summary_path=summary_path)
+        target = summary_path or (snapshot.root / "data" / "function_summaries.json")
+        return 0, "\n".join(
+            [
+                "Summary cache refreshed.",
+                f"Summary entries: {len(summaries)}",
+                f"Output: {target}",
+            ]
+        )
+
+    return 2, _usage()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -60,6 +122,10 @@ def _usage() -> str:
         [
             "Usage:",
             "  lua-nil-review-agent scan <repository>",
+            "  lua-nil-review-agent report <repository>",
+            "  lua-nil-review-agent baseline-create <repository> <output>",
+            "  lua-nil-review-agent report-new <repository> <baseline>",
+            "  lua-nil-review-agent refresh-summaries <repository> [output]",
         ]
     )
 

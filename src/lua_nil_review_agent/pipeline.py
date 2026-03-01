@@ -45,7 +45,7 @@ def should_report(
 ) -> bool:
     """Apply the precision-first reporting threshold."""
 
-    if verdict.status != "risky":
+    if not verdict.status.startswith("risky"):
         return False
 
     if audit_mode and policy.default_include_medium_in_audit and verdict.confidence == "medium":
