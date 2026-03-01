@@ -474,6 +474,7 @@ def _write_minimal_skill(path: Path, *, name: str) -> Path:
                 "---",
                 f"name: {name}",
                 "description: Test skill.",
+                "skill_contract: lua-nil-adjudicator/v1",
                 "---",
                 "",
                 "## Goal",

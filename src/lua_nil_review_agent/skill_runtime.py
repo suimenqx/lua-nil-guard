@@ -4,6 +4,12 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+ADJUDICATOR_SKILL_CONTRACT = "lua-nil-adjudicator/v1"
+
+
+class SkillRuntimeError(ValueError):
+    """Raised when a configured adjudication skill is invalid or incompatible."""
+
 
 @dataclass(frozen=True)
 class SkillDefinition:
@@ -12,6 +18,7 @@ class SkillDefinition:
     path: Path
     name: str
     description: str
+    frontmatter: dict[str, str]
     body: str
     sections: dict[str, tuple[str, ...]]
 
@@ -40,6 +47,7 @@ def fallback_adjudicator_skill_header() -> str:
     return "\n".join(
         [
             "Skill: lua-nil-adjudicator",
+            f"Skill contract: {ADJUDICATOR_SKILL_CONTRACT}",
             "Skill purpose: Strictly adjudicate whether a possibly nil value can reach a nil-sensitive Lua sink with explicit path evidence, strong false-positive control, and machine-readable verdicts.",
             "",
             "Goal:",
@@ -103,6 +111,7 @@ def compile_adjudicator_skill_header(
 
     try:
         skill = load_adjudicator_skill(path)
+        _ensure_adjudicator_skill_contract(skill)
         required_sections = (
             "Goal",
             "Required Review Order",
@@ -114,10 +123,11 @@ def compile_adjudicator_skill_header(
         )
         missing = [title for title in required_sections if title not in skill.sections]
         if missing:
-            raise ValueError(f"Skill is missing required sections: {', '.join(missing)}")
+            raise SkillRuntimeError(f"Skill is missing required sections: {', '.join(missing)}")
 
         lines = [
             f"Skill: {skill.name}",
+            f"Skill contract: {ADJUDICATOR_SKILL_CONTRACT}",
             f"Skill purpose: {skill.description}",
         ]
         for title in required_sections:
@@ -125,9 +135,11 @@ def compile_adjudicator_skill_header(
             lines.append(f"{_format_section_label(title)}:")
             lines.extend(skill.sections[title])
         return "\n".join(lines)
-    except (OSError, ValueError):
+    except (OSError, ValueError) as exc:
         if strict:
-            raise
+            if isinstance(exc, SkillRuntimeError):
+                raise
+            raise SkillRuntimeError(str(exc))
         return fallback_adjudicator_skill_header()
 
 
@@ -144,6 +156,7 @@ def _load_skill_definition_cached(resolved_path: str) -> SkillDefinition:
         path=path,
         name=name,
         description=description,
+        frontmatter=frontmatter,
         body=body,
         sections=_parse_sections(body),
     )
@@ -191,3 +204,15 @@ def _parse_sections(body: str) -> dict[str, tuple[str, ...]]:
 
 def _format_section_label(title: str) -> str:
     return title[:1] + title[1:].lower()
+
+
+def _ensure_adjudicator_skill_contract(skill: SkillDefinition) -> None:
+    declared = skill.frontmatter.get("skill_contract")
+    if declared != ADJUDICATOR_SKILL_CONTRACT:
+        if declared is None:
+            raise SkillRuntimeError(
+                f"Skill is missing required skill_contract: {ADJUDICATOR_SKILL_CONTRACT}"
+            )
+        raise SkillRuntimeError(
+            f"Unsupported skill_contract: {declared} (expected {ADJUDICATOR_SKILL_CONTRACT})"
+        )

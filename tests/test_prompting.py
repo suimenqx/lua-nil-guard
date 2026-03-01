@@ -108,6 +108,7 @@ def test_skill_file_exists_with_required_frontmatter() -> None:
     assert skill_path.exists()
     content = skill_path.read_text(encoding="utf-8")
     assert content.startswith("---\nname: lua-nil-adjudicator\n")
+    assert "skill_contract: lua-nil-adjudicator/v1" in content
     assert "Return `uncertain` when evidence is incomplete." in content
     assert "Unknown is not risk." in content
     assert "Absence of proof is not proof of bug." in content

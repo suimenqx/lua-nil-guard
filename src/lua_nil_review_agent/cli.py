@@ -9,6 +9,7 @@ from .agent_backend import create_adjudication_backend
 from .baseline import BaselineStore, build_baseline, filter_new_findings
 from .parser_backend import get_parser_backend_info
 from .reporting import render_json_report, render_markdown_report
+from .skill_runtime import SkillRuntimeError
 from .service import (
     bootstrap_repository,
     export_adjudication_tasks,
@@ -44,16 +45,19 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "report requires exactly one repository path"
         root = Path(positional[0])
         snapshot = bootstrap_repository(root)
-        verdicts = run_repository_review(
-            snapshot,
-            backend=create_adjudication_backend(
-                backend_name,
-                workdir=root,
-                model=model,
-                skill_path=skill_path,
-                strict_skill=strict_skill,
-            ),
-        )
+        try:
+            verdicts = run_repository_review(
+                snapshot,
+                backend=create_adjudication_backend(
+                    backend_name,
+                    workdir=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                ),
+            )
+        except SkillRuntimeError as exc:
+            return 2, str(exc)
         return 0, render_markdown_report(verdicts, snapshot.confidence_policy)
 
     if command == "report-json":
@@ -65,16 +69,19 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "report-json requires exactly one repository path"
         root = Path(positional[0])
         snapshot = bootstrap_repository(root)
-        verdicts = run_repository_review(
-            snapshot,
-            backend=create_adjudication_backend(
-                backend_name,
-                workdir=root,
-                model=model,
-                skill_path=skill_path,
-                strict_skill=strict_skill,
-            ),
-        )
+        try:
+            verdicts = run_repository_review(
+                snapshot,
+                backend=create_adjudication_backend(
+                    backend_name,
+                    workdir=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                ),
+            )
+        except SkillRuntimeError as exc:
+            return 2, str(exc)
         return 0, render_json_report(verdicts, snapshot.confidence_policy)
 
     if command == "baseline-create":
@@ -87,16 +94,19 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         root = Path(positional[0])
         baseline_path = Path(positional[1])
         snapshot = bootstrap_repository(root)
-        verdicts = run_repository_review(
-            snapshot,
-            backend=create_adjudication_backend(
-                backend_name,
-                workdir=root,
-                model=model,
-                skill_path=skill_path,
-                strict_skill=strict_skill,
-            ),
-        )
+        try:
+            verdicts = run_repository_review(
+                snapshot,
+                backend=create_adjudication_backend(
+                    backend_name,
+                    workdir=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                ),
+            )
+        except SkillRuntimeError as exc:
+            return 2, str(exc)
         baseline = build_baseline(verdicts, snapshot.confidence_policy)
         BaselineStore(baseline_path).save(baseline)
         return 0, "\n".join(
@@ -117,16 +127,19 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         root = Path(positional[0])
         baseline_path = Path(positional[1])
         snapshot = bootstrap_repository(root)
-        verdicts = run_repository_review(
-            snapshot,
-            backend=create_adjudication_backend(
-                backend_name,
-                workdir=root,
-                model=model,
-                skill_path=skill_path,
-                strict_skill=strict_skill,
-            ),
-        )
+        try:
+            verdicts = run_repository_review(
+                snapshot,
+                backend=create_adjudication_backend(
+                    backend_name,
+                    workdir=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                ),
+            )
+        except SkillRuntimeError as exc:
+            return 2, str(exc)
         filtered = filter_new_findings(
             verdicts,
             BaselineStore(baseline_path).load(),
@@ -176,16 +189,19 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         root = Path(positional[0])
         baseline_path = Path(positional[1])
         snapshot = bootstrap_repository(root)
-        verdicts = run_repository_review(
-            snapshot,
-            backend=create_adjudication_backend(
-                backend_name,
-                workdir=root,
-                model=model,
-                skill_path=skill_path,
-                strict_skill=strict_skill,
-            ),
-        )
+        try:
+            verdicts = run_repository_review(
+                snapshot,
+                backend=create_adjudication_backend(
+                    backend_name,
+                    workdir=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                ),
+            )
+        except SkillRuntimeError as exc:
+            return 2, str(exc)
         filtered = filter_new_findings(
             verdicts,
             BaselineStore(baseline_path).load(),
@@ -209,12 +225,15 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         root = Path(positional[0])
         output_path = Path(positional[1]) if len(positional) == 2 else None
         snapshot = bootstrap_repository(root)
-        tasks = export_adjudication_tasks(
-            snapshot,
-            output_path=output_path,
-            skill_path=skill_path,
-            strict_skill=strict_skill,
-        )
+        try:
+            tasks = export_adjudication_tasks(
+                snapshot,
+                output_path=output_path,
+                skill_path=skill_path,
+                strict_skill=strict_skill,
+            )
+        except SkillRuntimeError as exc:
+            return 2, str(exc)
         if output_path is None:
             return 0, json.dumps(tasks, indent=2, sort_keys=True)
         return 0, "\n".join(

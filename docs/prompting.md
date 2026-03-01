@@ -8,6 +8,7 @@ The runtime instruction header is compiled from `skills/lua-nil-adjudicator/SKIL
 Behavioral rules belong in the skill and are injected into every adjudication prompt.
 The prompt builder should add case evidence and transport-specific schema constraints, not duplicate the skill policy.
 Strict mode is the default. If callers explicitly allow fallback, an internal canonical header is used only when the selected skill file is missing or invalid.
+Every adjudication skill is expected to declare `skill_contract: lua-nil-adjudicator/v1` in frontmatter. In strict mode, missing or incompatible contracts are rejected.
 
 The prompt must enforce:
 

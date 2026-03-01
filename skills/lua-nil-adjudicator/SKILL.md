@@ -1,6 +1,7 @@
 ---
 name: lua-nil-adjudicator
 description: Strictly adjudicate whether a possibly nil value can reach a nil-sensitive Lua sink with explicit path evidence, strong false-positive control, and machine-readable verdicts. Use when reviewing Lua code for nil crash risk, validating candidate findings, or generating high-confidence remediation guidance.
+skill_contract: lua-nil-adjudicator/v1
 ---
 
 # Lua Nil Adjudicator

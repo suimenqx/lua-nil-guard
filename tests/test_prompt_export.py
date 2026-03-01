@@ -103,6 +103,7 @@ def test_export_adjudication_tasks_accepts_custom_skill_path(tmp_path: Path) -> 
                 "---",
                 "name: export-skill",
                 "description: Export test skill.",
+                "skill_contract: lua-nil-adjudicator/v1",
                 "---",
                 "",
                 "## Goal",
@@ -234,6 +235,7 @@ def test_cli_export_prompts_accepts_skill_option(tmp_path: Path) -> None:
                 "---",
                 "name: cli-export-skill",
                 "description: CLI export test skill.",
+                "skill_contract: lua-nil-adjudicator/v1",
                 "---",
                 "",
                 "## Goal",
@@ -345,3 +347,85 @@ def test_cli_export_prompts_allows_skill_fallback(tmp_path: Path) -> None:
     assert "Prompt tasks: 1" in output
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert "Skill: lua-nil-adjudicator" in payload[0]["prompt"]
+
+
+def test_cli_export_prompts_reports_invalid_skill_contract_without_fallback(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local username = req.params.username",
+                "return string.match(username, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    invalid_skill = tmp_path / "wrong-contract.md"
+    invalid_skill.write_text(
+        "\n".join(
+            [
+                "---",
+                "name: wrong-contract",
+                "description: Wrong contract.",
+                "skill_contract: lua-nil-adjudicator/v2",
+                "---",
+                "",
+                "## Goal",
+                "- Incompatible on purpose.",
+                "",
+                "## Required Review Order",
+                "1. Read the sink.",
+                "",
+                "## Canonical Principles",
+                "- Unknown is not risk.",
+                "- Absence of proof is not proof of bug.",
+                "",
+                "## Hard Rules",
+                "- Return `uncertain` when evidence is incomplete.",
+                "- Do not assume undocumented business guarantees.",
+                "",
+                "## Evidence Checklist",
+                "- variable origin",
+                "",
+                "## Output Contract",
+                "- `status`: `safe`, `risky`, or `uncertain`",
+                "",
+                "## Review Bias",
+                "- Prefer silence over speculative warnings.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["export-prompts", "--skill", str(invalid_skill), str(tmp_path)])
+
+    assert exit_code == 2
+    assert "Unsupported skill_contract" in output

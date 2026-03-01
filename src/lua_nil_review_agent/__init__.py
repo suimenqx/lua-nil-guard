@@ -37,7 +37,9 @@ from .prompting import build_adjudication_prompt
 from .reporting import render_json_report, render_markdown_report
 from .repository import discover_lua_files
 from .skill_runtime import (
+    ADJUDICATOR_SKILL_CONTRACT,
     SkillDefinition,
+    SkillRuntimeError,
     compile_adjudicator_skill_header,
     default_adjudicator_skill_path,
     fallback_adjudicator_skill_header,
@@ -61,6 +63,7 @@ from .verification import verify_verdict
 __all__ = [
     "AdjudicationRecord",
     "AdjudicationBackend",
+    "ADJUDICATOR_SKILL_CONTRACT",
     "BackendError",
     "BaselineStore",
     "CliAgentBackend",
@@ -80,6 +83,7 @@ __all__ = [
     "RepositorySnapshot",
     "SinkRule",
     "SkillDefinition",
+    "SkillRuntimeError",
     "SummaryStore",
     "StaticAnalysisResult",
     "Verdict",
