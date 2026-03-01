@@ -111,6 +111,55 @@ class CandidateAssessment:
     static_analysis: StaticAnalysisResult
 
 
+@dataclass(frozen=True, slots=True)
+class FunctionSummary:
+    """A reusable summary of a function's local nil-relevant behavior."""
+
+    function_id: str
+    file: str
+    function_name: str
+    line: int
+    params: dict[str, str]
+    guards: tuple[str, ...]
+    returns: tuple[str, ...]
+    confidence: str
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeFact:
+    """A persisted safe/risky fact derived from prior review."""
+
+    key: str
+    subject: str
+    statement: str
+    confidence: str
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
+class RoleOpinion:
+    """A single agent-role opinion used during adjudication."""
+
+    role: str
+    status: str
+    confidence: str
+    risk_path: tuple[str, ...]
+    safety_evidence: tuple[str, ...]
+    missing_evidence: tuple[str, ...]
+    recommended_next_action: str
+    suggested_fix: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class AdjudicationRecord:
+    """The full prosecutor/defender/judge result set for one case."""
+
+    prosecutor: RoleOpinion
+    defender: RoleOpinion
+    judge: Verdict
+
+
 def with_candidate_state(candidate: CandidateCase, state: str) -> CandidateCase:
     """Return a candidate copy with an updated static state."""
 
