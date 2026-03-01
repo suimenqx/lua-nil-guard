@@ -1,6 +1,12 @@
 """Foundational package for the Lua nil risk review agent."""
 
-from .agent_backend import AdjudicationBackend, HeuristicAdjudicationBackend
+from .agent_backend import (
+    AdjudicationBackend,
+    BackendError,
+    CliAgentBackend,
+    CodexCliBackend,
+    HeuristicAdjudicationBackend,
+)
 from .adjudication import adjudicate_packet
 from .baseline import BaselineStore, build_baseline, filter_new_findings
 from .cli import main, run
@@ -45,7 +51,9 @@ from .verification import verify_verdict
 __all__ = [
     "AdjudicationRecord",
     "AdjudicationBackend",
+    "BackendError",
     "BaselineStore",
+    "CliAgentBackend",
     "CandidateAssessment",
     "CandidateCase",
     "ConfidencePolicy",
@@ -55,6 +63,7 @@ __all__ = [
     "FunctionSummary",
     "KnowledgeBase",
     "KnowledgeFact",
+    "CodexCliBackend",
     "HeuristicAdjudicationBackend",
     "RoleOpinion",
     "RepositorySnapshot",
