@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,3 +81,13 @@ class Verdict:
     counterarguments_considered: tuple[str, ...]
     suggested_fix: str | None
     needs_human: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RepositorySnapshot:
+    """Resolved repository inputs used to start a review run."""
+
+    root: Path
+    sink_rules: tuple[SinkRule, ...]
+    confidence_policy: ConfidencePolicy
+    lua_files: tuple[Path, ...]
