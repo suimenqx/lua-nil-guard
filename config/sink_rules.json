@@ -1,0 +1,52 @@
+[
+  {
+    "id": "string.match.arg1",
+    "kind": "function_arg",
+    "qualified_name": "string.match",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or ''", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "string.find.arg1",
+    "kind": "function_arg",
+    "qualified_name": "string.find",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or ''", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "string.gsub.arg1",
+    "kind": "function_arg",
+    "qualified_name": "string.gsub",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or ''", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "table.insert.arg1",
+    "kind": "function_arg",
+    "qualified_name": "table.insert",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or {}", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "member_access.receiver",
+    "kind": "receiver",
+    "qualified_name": "member_access",
+    "arg_index": 0,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["assert(x)", "if x then ... end"]
+  }
+]
