@@ -1,11 +1,12 @@
 """Foundational package for the Lua nil risk review agent."""
 
+from .agent_backend import AdjudicationBackend, HeuristicAdjudicationBackend
 from .adjudication import adjudicate_packet
 from .baseline import BaselineStore, build_baseline, filter_new_findings
 from .cli import main, run
 from .collector import collect_candidates
 from .config_loader import ConfigError, load_confidence_policy, load_sink_rules
-from .knowledge import KnowledgeBase, facts_for_subject
+from .knowledge import KnowledgeBase, derive_facts_from_summaries, facts_for_subject
 from .models import (
     AdjudicationRecord,
     CandidateAssessment,
@@ -23,11 +24,14 @@ from .models import (
     with_candidate_state,
 )
 from .pipeline import build_evidence_packet, should_report
+from .parser_backend import collect_call_sites, get_parser_backend_info
 from .prompting import build_adjudication_prompt
-from .reporting import render_markdown_report
+from .reporting import render_json_report, render_markdown_report
 from .repository import discover_lua_files
 from .service import (
     bootstrap_repository,
+    export_adjudication_tasks,
+    refresh_knowledge_base,
     prepare_evidence_packet,
     refresh_summary_cache,
     review_repository,
@@ -40,6 +44,7 @@ from .verification import verify_verdict
 
 __all__ = [
     "AdjudicationRecord",
+    "AdjudicationBackend",
     "BaselineStore",
     "CandidateAssessment",
     "CandidateCase",
@@ -50,6 +55,7 @@ __all__ = [
     "FunctionSummary",
     "KnowledgeBase",
     "KnowledgeFact",
+    "HeuristicAdjudicationBackend",
     "RoleOpinion",
     "RepositorySnapshot",
     "SinkRule",
@@ -63,17 +69,23 @@ __all__ = [
     "build_adjudication_prompt",
     "build_evidence_packet",
     "collect_candidates",
+    "collect_call_sites",
     "discover_lua_files",
+    "derive_facts_from_summaries",
+    "export_adjudication_tasks",
     "facts_for_subject",
     "filter_new_findings",
     "load_confidence_policy",
     "load_sink_rules",
     "main",
     "analyze_candidate",
+    "get_parser_backend_info",
     "summarize_source",
     "prepare_evidence_packet",
+    "refresh_knowledge_base",
     "refresh_summary_cache",
     "review_repository",
+    "render_json_report",
     "render_markdown_report",
     "run",
     "run_repository_review",

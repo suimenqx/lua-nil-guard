@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from .models import ConfidencePolicy, Verdict
 from .pipeline import should_report
 
@@ -33,3 +35,28 @@ def render_markdown_report(
         )
 
     return "\n".join(lines).rstrip()
+
+
+def render_json_report(
+    verdicts: tuple[Verdict, ...],
+    policy: ConfidencePolicy,
+    *,
+    audit_mode: bool = False,
+) -> str:
+    """Render reportable findings as a JSON array."""
+
+    payload = [
+        {
+            "case_id": verdict.case_id,
+            "status": verdict.status,
+            "confidence": verdict.confidence,
+            "risk_path": list(verdict.risk_path),
+            "safety_evidence": list(verdict.safety_evidence),
+            "counterarguments_considered": list(verdict.counterarguments_considered),
+            "suggested_fix": verdict.suggested_fix,
+            "needs_human": verdict.needs_human,
+        }
+        for verdict in verdicts
+        if should_report(verdict, policy, audit_mode=audit_mode)
+    ]
+    return json.dumps(payload, indent=2, sort_keys=True)

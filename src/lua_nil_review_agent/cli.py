@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
 from pathlib import Path
 from typing import Sequence
 
 from .baseline import BaselineStore, build_baseline, filter_new_findings
-from .reporting import render_markdown_report
+from .reporting import render_json_report, render_markdown_report
 from .service import (
     bootstrap_repository,
+    export_adjudication_tasks,
+    refresh_knowledge_base,
     refresh_summary_cache,
     review_repository,
     run_repository_review,
@@ -37,6 +40,14 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         snapshot = bootstrap_repository(root)
         verdicts = run_repository_review(snapshot)
         return 0, render_markdown_report(verdicts, snapshot.confidence_policy)
+
+    if command == "report-json":
+        if len(args) != 2:
+            return 2, "report-json requires exactly one repository path"
+        root = Path(args[1])
+        snapshot = bootstrap_repository(root)
+        verdicts = run_repository_review(snapshot)
+        return 0, render_json_report(verdicts, snapshot.confidence_policy)
 
     if command == "baseline-create":
         if len(args) != 3:
@@ -85,6 +96,59 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             ]
         )
 
+    if command == "refresh-knowledge":
+        if len(args) not in {2, 3}:
+            return 2, "refresh-knowledge requires a repository path and optional output path"
+        root = Path(args[1])
+        knowledge_path = Path(args[2]) if len(args) == 3 else None
+        snapshot = bootstrap_repository(root)
+        facts = refresh_knowledge_base(snapshot, knowledge_path=knowledge_path)
+        target = knowledge_path or (snapshot.root / "data" / "knowledge.json")
+        return 0, "\n".join(
+            [
+                "Knowledge cache refreshed.",
+                f"Knowledge entries: {len(facts)}",
+                f"Output: {target}",
+            ]
+        )
+
+    if command == "ci-check":
+        if len(args) != 3:
+            return 2, "ci-check requires a repository path and baseline path"
+        root = Path(args[1])
+        baseline_path = Path(args[2])
+        snapshot = bootstrap_repository(root)
+        verdicts = run_repository_review(snapshot)
+        filtered = filter_new_findings(
+            verdicts,
+            BaselineStore(baseline_path).load(),
+            snapshot.confidence_policy,
+        )
+        exit_code = 1 if filtered else 0
+        return exit_code, "\n".join(
+            [
+                "CI check complete.",
+                f"New findings: {len(filtered)}",
+            ]
+        )
+
+    if command == "export-prompts":
+        if len(args) not in {2, 3}:
+            return 2, "export-prompts requires a repository path and optional output path"
+        root = Path(args[1])
+        output_path = Path(args[2]) if len(args) == 3 else None
+        snapshot = bootstrap_repository(root)
+        tasks = export_adjudication_tasks(snapshot, output_path=output_path)
+        if output_path is None:
+            return 0, json.dumps(tasks, indent=2, sort_keys=True)
+        return 0, "\n".join(
+            [
+                "Prompt export complete.",
+                f"Prompt tasks: {len(tasks)}",
+                f"Output: {output_path}",
+            ]
+        )
+
     return 2, _usage()
 
 
@@ -123,9 +187,13 @@ def _usage() -> str:
             "Usage:",
             "  lua-nil-review-agent scan <repository>",
             "  lua-nil-review-agent report <repository>",
+            "  lua-nil-review-agent report-json <repository>",
             "  lua-nil-review-agent baseline-create <repository> <output>",
             "  lua-nil-review-agent report-new <repository> <baseline>",
             "  lua-nil-review-agent refresh-summaries <repository> [output]",
+            "  lua-nil-review-agent refresh-knowledge <repository> [output]",
+            "  lua-nil-review-agent ci-check <repository> <baseline>",
+            "  lua-nil-review-agent export-prompts <repository> [output]",
         ]
     )
 

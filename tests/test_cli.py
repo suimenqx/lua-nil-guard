@@ -249,3 +249,101 @@ def test_cli_refresh_summaries_writes_summary_cache(tmp_path: Path) -> None:
     assert exit_code == 0
     assert "Summary entries: 1" in output
     assert summary_path.exists()
+
+
+def test_cli_refresh_knowledge_writes_knowledge_cache(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local function normalize_name(name)",
+                "  name = name or ''",
+                "  return name",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    knowledge_path = tmp_path / "data" / "knowledge.json"
+
+    exit_code, output = run(["refresh-knowledge", str(tmp_path), str(knowledge_path)])
+
+    assert exit_code == 0
+    assert "Knowledge entries: 1" in output
+    assert knowledge_path.exists()
+
+
+def test_cli_ci_check_fails_when_new_findings_exist(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local username = req.params.username",
+                "return string.match(username, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text("[]", encoding="utf-8")
+
+    exit_code, output = run(["ci-check", str(tmp_path), str(baseline_path)])
+
+    assert exit_code == 1
+    assert "New findings: 1" in output

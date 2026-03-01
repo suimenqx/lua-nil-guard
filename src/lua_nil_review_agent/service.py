@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
-from .adjudication import adjudicate_packet
+from .agent_backend import AdjudicationBackend, HeuristicAdjudicationBackend
 from .collector import collect_candidates
 from .config_loader import load_confidence_policy, load_sink_rules
-from .knowledge import KnowledgeBase, facts_for_subject
+from .knowledge import KnowledgeBase, derive_facts_from_summaries, facts_for_subject
 from .models import CandidateAssessment, EvidencePacket, RepositorySnapshot, SinkRule, Verdict, with_candidate_state
 from .pipeline import build_evidence_packet
+from .prompting import build_adjudication_prompt
 from .repository import discover_lua_files
 from .summaries import SummaryStore, summarize_source
 from .static_analysis import analyze_candidate
@@ -93,6 +95,7 @@ def prepare_evidence_packet(
 def run_repository_review(
     snapshot: RepositorySnapshot,
     *,
+    backend: AdjudicationBackend | None = None,
     knowledge_path: str | Path | None = None,
 ) -> tuple[Verdict, ...]:
     """Run the current end-to-end local review pipeline across a repository."""
@@ -101,6 +104,7 @@ def run_repository_review(
     summaries = _collect_repository_summaries(snapshot)
     summary_text_by_name = _build_summary_text_index(summaries)
     facts = _load_knowledge_facts(snapshot, knowledge_path)
+    adjudication_backend = backend or HeuristicAdjudicationBackend()
 
     verdicts: list[Verdict] = []
     for file_path in snapshot.lua_files:
@@ -124,7 +128,10 @@ def run_repository_review(
                 function_summaries=function_summaries,
                 knowledge_facts=knowledge_facts,
             )
-            adjudication = adjudicate_packet(packet, sink_rule_by_id[assessment.candidate.sink_rule_id])
+            adjudication = adjudication_backend.adjudicate(
+                packet,
+                sink_rule_by_id[assessment.candidate.sink_rule_id],
+            )
             verdicts.append(verify_verdict(adjudication.judge, packet))
     return tuple(verdicts)
 
@@ -140,6 +147,75 @@ def refresh_summary_cache(
     path = Path(summary_path) if summary_path is not None else snapshot.root / "data" / "function_summaries.json"
     SummaryStore(path).save(summaries)
     return summaries
+
+
+def refresh_knowledge_base(
+    snapshot: RepositorySnapshot,
+    *,
+    knowledge_path: str | Path | None = None,
+) -> tuple[object, ...]:
+    """Rebuild and persist repository knowledge facts derived from summaries."""
+
+    summaries = _collect_repository_summaries(snapshot)
+    facts = derive_facts_from_summaries(summaries)
+    path = Path(knowledge_path) if knowledge_path is not None else snapshot.root / "data" / "knowledge.json"
+    KnowledgeBase(path).save(facts)
+    return facts
+
+
+def export_adjudication_tasks(
+    snapshot: RepositorySnapshot,
+    *,
+    knowledge_path: str | Path | None = None,
+    output_path: str | Path | None = None,
+) -> tuple[dict[str, object], ...]:
+    """Export agent-ready prompt tasks for all collected candidates."""
+
+    sink_rule_by_id = {rule.id: rule for rule in snapshot.sink_rules}
+    summaries = _collect_repository_summaries(snapshot)
+    summary_text_by_name = _build_summary_text_index(summaries)
+    facts = _load_knowledge_facts(snapshot, knowledge_path)
+    tasks: list[dict[str, object]] = []
+
+    for file_path in snapshot.lua_files:
+        source = file_path.read_text(encoding="utf-8")
+        for assessment in review_source(file_path, source, snapshot.sink_rules):
+            related_functions = _related_functions_from_assessment(assessment)
+            function_summaries = tuple(
+                summary
+                for function_name in related_functions
+                for summary in summary_text_by_name.get(function_name, ())
+            )
+            knowledge_facts = tuple(
+                fact
+                for subject in related_functions + (assessment.candidate.function_scope,)
+                for fact in facts_for_subject(facts, subject)
+            )
+            packet = prepare_evidence_packet(
+                assessment,
+                source,
+                related_functions=related_functions,
+                function_summaries=function_summaries,
+                knowledge_facts=knowledge_facts,
+            )
+            sink_rule = sink_rule_by_id[assessment.candidate.sink_rule_id]
+            tasks.append(
+                {
+                    "case_id": assessment.candidate.case_id,
+                    "sink_rule_id": sink_rule.id,
+                    "file": assessment.candidate.file,
+                    "line": assessment.candidate.line,
+                    "function_scope": assessment.candidate.function_scope,
+                    "prompt": build_adjudication_prompt(packet=packet, sink_rule=sink_rule),
+                }
+            )
+
+    task_tuple = tuple(tasks)
+    if output_path is not None:
+        target = Path(output_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(task_tuple, indent=2, sort_keys=True), encoding="utf-8")
+    return task_tuple
 
 
 def _collect_repository_summaries(snapshot: RepositorySnapshot) -> tuple[object, ...]:
