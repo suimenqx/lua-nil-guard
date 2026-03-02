@@ -299,14 +299,25 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         )
 
     if command == "apply-autofix":
-        if len(args) != 2:
+        dry_run = False
+        positional: list[str] = []
+        for token in args[1:]:
+            if token == "--dry-run":
+                dry_run = True
+                continue
+            positional.append(token)
+        if len(positional) != 1:
             return 2, "apply-autofix requires exactly one autofix manifest path"
         try:
-            applied, conflicts = apply_autofix_manifest(Path(args[1]))
+            applied, conflicts = apply_autofix_manifest(
+                Path(positional[0]),
+                dry_run=dry_run,
+            )
         except (ValueError, OSError) as exc:
             return 2, str(exc)
         lines = [
             "Autofix apply complete.",
+            f"Dry run: {'yes' if dry_run else 'no'}",
             f"Applied patches: {len(applied)}",
             f"Conflicts: {len(conflicts)}",
         ]
@@ -363,7 +374,7 @@ def _usage() -> str:
             "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> <baseline>",
             "  lua-nil-review-agent export-prompts [--skill SKILL] [--allow-skill-fallback] <repository> [output]",
             "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> [output]",
-            "  lua-nil-review-agent apply-autofix <autofix-manifest>",
+            "  lua-nil-review-agent apply-autofix [--dry-run] <autofix-manifest>",
             "",
             "Backend values: heuristic | codex | codeagent",
         ]

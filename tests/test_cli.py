@@ -192,12 +192,44 @@ def test_cli_apply_autofix_updates_files_from_manifest(tmp_path: Path) -> None:
     exit_code, output = run(["apply-autofix", str(manifest)])
 
     assert exit_code == 0
+    assert "Dry run: no" in output
     assert "Applied patches: 1" in output
     assert "Conflicts: 0" in output
     assert target.read_text(encoding="utf-8") == (
         "username = username or ''\n"
         "return string.match(username, '^a')\n"
     )
+
+
+def test_cli_apply_autofix_dry_run_does_not_write_files(tmp_path: Path) -> None:
+    target = tmp_path / "demo.lua"
+    original = "return string.match(username, '^a')\n"
+    target.write_text(original, encoding="utf-8")
+    manifest = tmp_path / "autofix.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": "case_dry_run",
+                    "file": str(target),
+                    "action": "insert_before",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "replacement": "username = username or ''",
+                    "expected_original": "return string.match(username, '^a')",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["apply-autofix", "--dry-run", str(manifest)])
+
+    assert exit_code == 0
+    assert "Dry run: yes" in output
+    assert "Applied patches: 1" in output
+    assert "Conflicts: 0" in output
+    assert target.read_text(encoding="utf-8") == original
 
 
 def test_cli_apply_autofix_returns_conflicts_without_writing_files(tmp_path: Path) -> None:
@@ -225,6 +257,7 @@ def test_cli_apply_autofix_returns_conflicts_without_writing_files(tmp_path: Pat
     exit_code, output = run(["apply-autofix", str(manifest)])
 
     assert exit_code == 1
+    assert "Dry run: no" in output
     assert "Applied patches: 0" in output
     assert "Conflicts: 1" in output
     assert "anchor line no longer matches expected_original" in output

@@ -127,6 +127,35 @@ def test_apply_autofix_manifest_updates_file_when_expected_original_matches(tmp_
     )
 
 
+def test_apply_autofix_manifest_dry_run_does_not_write_file(tmp_path: Path) -> None:
+    target = tmp_path / "demo.lua"
+    original = "return string.match(username, 'x')\n"
+    target.write_text(original, encoding="utf-8")
+    manifest = tmp_path / "autofix.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": "case_dry_run",
+                    "file": str(target),
+                    "action": "insert_before",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "replacement": "username = username or ''",
+                    "expected_original": "return string.match(username, 'x')",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    applied, conflicts = apply_autofix_manifest(manifest, dry_run=True)
+
+    assert len(applied) == 1
+    assert not conflicts
+    assert target.read_text(encoding="utf-8") == original
+
+
 def test_apply_autofix_manifest_reports_conflicts_without_writing_file(tmp_path: Path) -> None:
     target = tmp_path / "demo.lua"
     original = "return string.match(user_name, 'x')\n"

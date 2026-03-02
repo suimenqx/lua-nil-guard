@@ -264,6 +264,8 @@ def export_autofix_patches(
 
 def apply_autofix_manifest(
     manifest_path: str | Path,
+    *,
+    dry_run: bool = False,
 ) -> tuple[tuple[AutofixPatch, ...], tuple[str, ...]]:
     """Apply an exported autofix manifest with per-file conflict checks."""
 
@@ -276,7 +278,11 @@ def apply_autofix_manifest(
     conflicts: list[str] = []
 
     for file_path, file_patches in grouped.items():
-        file_applied, file_conflicts = _apply_autofix_group(file_path, tuple(file_patches))
+        file_applied, file_conflicts = _apply_autofix_group(
+            file_path,
+            tuple(file_patches),
+            dry_run=dry_run,
+        )
         applied.extend(file_applied)
         conflicts.extend(file_conflicts)
 
@@ -331,6 +337,8 @@ def _deserialize_autofix_patch(payload: object) -> AutofixPatch:
 def _apply_autofix_group(
     file_path: Path,
     patches: tuple[AutofixPatch, ...],
+    *,
+    dry_run: bool = False,
 ) -> tuple[tuple[AutofixPatch, ...], tuple[str, ...]]:
     if not file_path.exists():
         return (), tuple(f"{patch.case_id}: target file not found: {file_path}" for patch in patches)
@@ -352,6 +360,9 @@ def _apply_autofix_group(
 
     if conflicts:
         return (), tuple(conflicts)
+
+    if dry_run:
+        return tuple(applied), ()
 
     updated_text = "\n".join(trial_lines)
     if trailing_newline:
