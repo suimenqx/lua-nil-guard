@@ -203,6 +203,8 @@ class BenchmarkSummary:
     unresolved_cases: int
     backend_fallbacks: int
     backend_timeouts: int
+    backend_cache_hits: int
+    backend_cache_misses: int
     cases: tuple[BenchmarkCaseResult, ...]
 
 

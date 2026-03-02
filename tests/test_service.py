@@ -189,6 +189,8 @@ def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -
     assert summary.unresolved_cases == 0
     assert summary.backend_fallbacks == 0
     assert summary.backend_timeouts == 0
+    assert summary.backend_cache_hits == 0
+    assert summary.backend_cache_misses == 0
     assert all(case.matches_expectation for case in summary.cases)
 
 
@@ -233,7 +235,12 @@ def test_benchmark_repository_review_counts_backend_fallbacks(tmp_path: Path) ->
     snapshot = bootstrap_repository(tmp_path)
     summary = benchmark_repository_review(
         snapshot,
-        backend=CodexCliBackend(runner=failing_runner, workdir=tmp_path, max_attempts=1),
+        backend=CodexCliBackend(
+            runner=failing_runner,
+            workdir=tmp_path,
+            max_attempts=1,
+            cache_path=tmp_path / "codex-cache.json",
+        ),
     )
 
     assert summary.total_cases == 1
@@ -241,7 +248,24 @@ def test_benchmark_repository_review_counts_backend_fallbacks(tmp_path: Path) ->
     assert summary.actual_uncertain == 1
     assert summary.backend_fallbacks == 1
     assert summary.backend_timeouts == 1
+    assert summary.backend_cache_hits == 0
+    assert summary.backend_cache_misses == 1
     assert summary.cases[0].backend_failure_reason == "CLI backend command timed out after 5s"
+
+
+def test_benchmark_repository_review_reports_backend_cache_metrics(tmp_path: Path) -> None:
+    project_root = Path(__file__).resolve().parents[1] / "examples" / "mvp_cases" / "agent_semantic_suite"
+    runtime_root = tmp_path / "agent_semantic_suite"
+    shutil.copytree(project_root, runtime_root)
+
+    snapshot = bootstrap_repository(runtime_root)
+    backend = StrictEvidenceBackend()
+    backend.cache_hits = 7
+    backend.cache_misses = 11
+    summary = benchmark_repository_review(snapshot, backend=backend)
+
+    assert summary.backend_cache_hits == 7
+    assert summary.backend_cache_misses == 11
 
 
 def test_export_autofix_patches_writes_reportable_patch_file(tmp_path: Path) -> None:

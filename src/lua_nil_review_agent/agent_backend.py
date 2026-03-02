@@ -92,12 +92,17 @@ class CliAgentBackend:
         self.max_attempts = max(1, max_attempts)
         self.fallback_to_uncertain_on_error = fallback_to_uncertain_on_error
         self.cache_path = Path(cache_path).resolve() if cache_path is not None else None
+        self.cache_hits = 0
+        self.cache_misses = 0
 
     def adjudicate(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
         prompt = self.build_prompt(packet=packet, sink_rule=sink_rule)
         cached = self._load_cached_record(prompt=prompt, case_id=packet.case_id)
         if cached is not None:
+            self.cache_hits += 1
             return cached
+        if self.cache_path is not None:
+            self.cache_misses += 1
         return self._adjudicate_with_retries(
             lambda: self._adjudicate_once(packet, sink_rule, prompt),
             packet=packet,

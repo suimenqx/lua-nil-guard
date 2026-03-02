@@ -225,6 +225,8 @@ def test_cli_agent_backend_reuses_cached_result_without_runner(tmp_path: Path) -
     assert first.judge.status == "safe"
     assert second.judge.status == "safe"
     assert attempts["count"] == 1
+    assert backend.cache_hits == 1
+    assert backend.cache_misses == 1
     payload = json.loads(cache_path.read_text(encoding="utf-8"))
     assert len(payload) == 1
 

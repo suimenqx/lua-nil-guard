@@ -186,6 +186,8 @@ def benchmark_repository_review(
     actual_risky = sum(1 for case in cases if case.actual_status == "risky")
     actual_safe = sum(1 for case in cases if case.actual_status == "safe")
     actual_uncertain = sum(1 for case in cases if case.actual_status == "uncertain")
+    backend_cache_hits = _backend_metric(adjudication_backend, "cache_hits")
+    backend_cache_misses = _backend_metric(adjudication_backend, "cache_misses")
 
     return BenchmarkSummary(
         total_cases=len(cases),
@@ -214,6 +216,8 @@ def benchmark_repository_review(
             if case.backend_failure_reason is not None
             and "timed out" in case.backend_failure_reason.lower()
         ),
+        backend_cache_hits=backend_cache_hits,
+        backend_cache_misses=backend_cache_misses,
         cases=tuple(cases),
     )
 
@@ -591,6 +595,13 @@ def _extract_backend_failure_reason(verdict: Verdict) -> str | None:
         if item.startswith("CLI backend command"):
             return item
     return None
+
+
+def _backend_metric(backend: object, name: str) -> int:
+    value = getattr(backend, name, 0)
+    if isinstance(value, int) and value >= 0:
+        return value
+    return 0
 
 
 def _serialize_autofix_patch(patch: AutofixPatch) -> dict[str, object]:
