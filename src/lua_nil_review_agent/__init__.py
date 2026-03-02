@@ -48,6 +48,7 @@ from .skill_runtime import (
     load_skill_definition,
 )
 from .service import (
+    apply_autofix_manifest,
     bootstrap_repository,
     export_adjudication_tasks,
     export_autofix_patches,
@@ -92,6 +93,7 @@ __all__ = [
     "Verdict",
     "with_candidate_state",
     "adjudicate_packet",
+    "apply_autofix_manifest",
     "bootstrap_repository",
     "build_baseline",
     "build_adjudication_prompt",

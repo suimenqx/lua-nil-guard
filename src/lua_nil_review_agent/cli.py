@@ -11,6 +11,7 @@ from .parser_backend import get_parser_backend_info
 from .reporting import render_json_report, render_markdown_report
 from .skill_runtime import SkillRuntimeError
 from .service import (
+    apply_autofix_manifest,
     bootstrap_repository,
     export_adjudication_tasks,
     export_autofix_patches,
@@ -284,6 +285,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     "start_line": patch.start_line,
                     "end_line": patch.end_line,
                     "replacement": patch.replacement,
+                    "expected_original": patch.expected_original,
                 }
                 for patch in patches
             ]
@@ -295,6 +297,23 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 f"Output: {output_path}",
             ]
         )
+
+    if command == "apply-autofix":
+        if len(args) != 2:
+            return 2, "apply-autofix requires exactly one autofix manifest path"
+        try:
+            applied, conflicts = apply_autofix_manifest(Path(args[1]))
+        except (ValueError, OSError) as exc:
+            return 2, str(exc)
+        lines = [
+            "Autofix apply complete.",
+            f"Applied patches: {len(applied)}",
+            f"Conflicts: {len(conflicts)}",
+        ]
+        if conflicts:
+            lines.extend(conflicts)
+            return 1, "\n".join(lines)
+        return 0, "\n".join(lines)
 
     return 2, _usage()
 
@@ -344,6 +363,7 @@ def _usage() -> str:
             "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> <baseline>",
             "  lua-nil-review-agent export-prompts [--skill SKILL] [--allow-skill-fallback] <repository> [output]",
             "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> [output]",
+            "  lua-nil-review-agent apply-autofix <autofix-manifest>",
             "",
             "Backend values: heuristic | codex | codeagent",
         ]

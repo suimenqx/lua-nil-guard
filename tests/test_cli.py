@@ -17,6 +17,7 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "--allow-skill-fallback" in output
     assert "--backend-executable PATH" in output
     assert "export-autofix" in output
+    assert "apply-autofix" in output
 
 
 def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
@@ -164,6 +165,77 @@ def test_cli_export_autofix_outputs_machine_readable_patches(tmp_path: Path) -> 
     assert payload[0]["action"] == "insert_before"
     assert payload[0]["start_line"] == 2
     assert payload[0]["replacement"] == "username = username or ''"
+    assert payload[0]["expected_original"] == "return string.match(username, '^a')"
+
+
+def test_cli_apply_autofix_updates_files_from_manifest(tmp_path: Path) -> None:
+    target = tmp_path / "demo.lua"
+    target.write_text("return string.match(username, '^a')\n", encoding="utf-8")
+    manifest = tmp_path / "autofix.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": "case_apply",
+                    "file": str(target),
+                    "action": "insert_before",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "replacement": "username = username or ''",
+                    "expected_original": "return string.match(username, '^a')",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["apply-autofix", str(manifest)])
+
+    assert exit_code == 0
+    assert "Applied patches: 1" in output
+    assert "Conflicts: 0" in output
+    assert target.read_text(encoding="utf-8") == (
+        "username = username or ''\n"
+        "return string.match(username, '^a')\n"
+    )
+
+
+def test_cli_apply_autofix_returns_conflicts_without_writing_files(tmp_path: Path) -> None:
+    target = tmp_path / "demo.lua"
+    original = "return string.match(user_name, '^a')\n"
+    target.write_text(original, encoding="utf-8")
+    manifest = tmp_path / "autofix.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": "case_conflict",
+                    "file": str(target),
+                    "action": "insert_before",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "replacement": "user_name = user_name or ''",
+                    "expected_original": "return string.match(username, '^a')",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["apply-autofix", str(manifest)])
+
+    assert exit_code == 1
+    assert "Applied patches: 0" in output
+    assert "Conflicts: 1" in output
+    assert "anchor line no longer matches expected_original" in output
+    assert target.read_text(encoding="utf-8") == original
+
+
+def test_cli_apply_autofix_reports_missing_manifest() -> None:
+    exit_code, output = run(["apply-autofix", "missing-autofix.json"])
+
+    assert exit_code == 2
+    assert "missing-autofix.json" in output
 
 
 def test_cli_baseline_create_writes_baseline_file(tmp_path: Path) -> None:

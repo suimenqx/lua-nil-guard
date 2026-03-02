@@ -235,6 +235,7 @@ def _build_autofix_patch(
             start_line=packet.target.line,
             end_line=packet.target.line,
             replacement=suggested_fix,
+            expected_original=target_line,
         )
 
     bounds = _find_snippet_bounds(packet, sink_rule)
@@ -251,6 +252,7 @@ def _build_autofix_patch(
         start_line=start_line,
         end_line=end_line,
         replacement=suggested_fix,
+        expected_original="\n".join(packet.local_context.splitlines()[start_index : end_index + 1]),
     )
 
 

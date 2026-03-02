@@ -262,12 +262,102 @@ def export_autofix_patches(
     return patches
 
 
+def apply_autofix_manifest(
+    manifest_path: str | Path,
+) -> tuple[tuple[AutofixPatch, ...], tuple[str, ...]]:
+    """Apply an exported autofix manifest with per-file conflict checks."""
+
+    patches = _load_autofix_manifest(manifest_path)
+    grouped: dict[Path, list[AutofixPatch]] = {}
+    for patch in patches:
+        grouped.setdefault(Path(patch.file), []).append(patch)
+
+    applied: list[AutofixPatch] = []
+    conflicts: list[str] = []
+
+    for file_path, file_patches in grouped.items():
+        file_applied, file_conflicts = _apply_autofix_group(file_path, tuple(file_patches))
+        applied.extend(file_applied)
+        conflicts.extend(file_conflicts)
+
+    return tuple(applied), tuple(conflicts)
+
+
 def _collect_repository_summaries(snapshot: RepositorySnapshot) -> tuple[object, ...]:
     summaries: list[object] = []
     for file_path in snapshot.lua_files:
         source = file_path.read_text(encoding="utf-8")
         summaries.extend(summarize_source(file_path, source))
     return tuple(summaries)
+
+
+def _load_autofix_manifest(manifest_path: str | Path) -> tuple[AutofixPatch, ...]:
+    payload = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    if not isinstance(payload, list):
+        raise ValueError("autofix manifest must be a JSON array")
+    return tuple(_deserialize_autofix_patch(item) for item in payload)
+
+
+def _deserialize_autofix_patch(payload: object) -> AutofixPatch:
+    if not isinstance(payload, dict):
+        raise ValueError("autofix manifest entries must be JSON objects")
+
+    required_string_keys = ("case_id", "file", "action", "replacement")
+    for key in required_string_keys:
+        value = payload.get(key)
+        if not isinstance(value, str):
+            raise ValueError(f"autofix patch field {key} must be a string")
+
+    start_line = payload.get("start_line")
+    end_line = payload.get("end_line")
+    if not isinstance(start_line, int) or not isinstance(end_line, int):
+        raise ValueError("autofix patch start_line and end_line must be integers")
+
+    expected_original = payload.get("expected_original", "")
+    if not isinstance(expected_original, str):
+        raise ValueError("autofix patch expected_original must be a string")
+
+    return AutofixPatch(
+        case_id=payload["case_id"],
+        file=payload["file"],
+        action=payload["action"],
+        start_line=start_line,
+        end_line=end_line,
+        replacement=payload["replacement"],
+        expected_original=expected_original,
+    )
+
+
+def _apply_autofix_group(
+    file_path: Path,
+    patches: tuple[AutofixPatch, ...],
+) -> tuple[tuple[AutofixPatch, ...], tuple[str, ...]]:
+    if not file_path.exists():
+        return (), tuple(f"{patch.case_id}: target file not found: {file_path}" for patch in patches)
+
+    original_text = file_path.read_text(encoding="utf-8")
+    trailing_newline = original_text.endswith("\n")
+    trial_lines = original_text.splitlines()
+    applied: list[AutofixPatch] = []
+    conflicts: list[str] = []
+
+    ordered = sorted(patches, key=lambda patch: (patch.start_line, patch.end_line), reverse=True)
+    for patch in ordered:
+        conflict = _validate_autofix_patch(trial_lines, patch)
+        if conflict is not None:
+            conflicts.append(f"{patch.case_id}: {conflict}")
+            continue
+        _apply_autofix_patch_to_lines(trial_lines, patch)
+        applied.append(patch)
+
+    if conflicts:
+        return (), tuple(conflicts)
+
+    updated_text = "\n".join(trial_lines)
+    if trailing_newline:
+        updated_text = f"{updated_text}\n"
+    file_path.write_text(updated_text, encoding="utf-8")
+    return tuple(applied), ()
 
 
 def _build_summary_text_index(summaries: tuple[object, ...]) -> dict[str, tuple[str, ...]]:
@@ -297,7 +387,47 @@ def _serialize_autofix_patch(patch: AutofixPatch) -> dict[str, object]:
         "start_line": patch.start_line,
         "end_line": patch.end_line,
         "replacement": patch.replacement,
+        "expected_original": patch.expected_original,
     }
+
+
+def _validate_autofix_patch(lines: list[str], patch: AutofixPatch) -> str | None:
+    if patch.start_line < 1 or patch.end_line < patch.start_line:
+        return "invalid patch line range"
+    if patch.action not in {"insert_before", "replace_range"}:
+        return f"unsupported patch action: {patch.action}"
+    if not patch.expected_original:
+        return "patch is missing expected_original"
+
+    start_index = patch.start_line - 1
+    end_index = patch.end_line
+
+    if patch.action == "insert_before":
+        if start_index >= len(lines):
+            return "anchor line is out of range"
+        current = lines[start_index]
+        if current != patch.expected_original:
+            return "anchor line no longer matches expected_original"
+        return None
+
+    if end_index > len(lines):
+        return "replace range is out of range"
+    current = "\n".join(lines[start_index:end_index])
+    if current != patch.expected_original:
+        return "replace range no longer matches expected_original"
+    return None
+
+
+def _apply_autofix_patch_to_lines(lines: list[str], patch: AutofixPatch) -> None:
+    start_index = patch.start_line - 1
+    replacement_lines = patch.replacement.splitlines()
+
+    if patch.action == "insert_before":
+        lines[start_index:start_index] = replacement_lines
+        return
+
+    end_index = patch.end_line
+    lines[start_index:end_index] = replacement_lines
 
 
 def _related_functions_from_assessment(assessment: CandidateAssessment) -> tuple[str, ...]:

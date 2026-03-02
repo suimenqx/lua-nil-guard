@@ -73,6 +73,7 @@ def _serialize_autofix_patch(patch: AutofixPatch | None) -> dict[str, object] | 
         "start_line": patch.start_line,
         "end_line": patch.end_line,
         "replacement": patch.replacement,
+        "expected_original": patch.expected_original,
     }
 
 

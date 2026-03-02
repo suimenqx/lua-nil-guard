@@ -80,6 +80,7 @@ class AutofixPatch:
     start_line: int
     end_line: int
     replacement: str
+    expected_original: str = ""
 
 
 @dataclass(frozen=True, slots=True)
