@@ -144,3 +144,65 @@ def test_analyze_candidate_tracks_single_call_origin_for_multi_assignment() -> N
     assert result.state == "unknown_static"
     assert result.observed_guards == ()
     assert result.origin_candidates == ("normalize_pair(req.params.display_name)",)
+
+
+def test_analyze_candidate_does_not_treat_closed_if_block_as_active_guard() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "if username then",
+            "  log(username)",
+            "end",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_6",
+        file="demo.lua",
+        line=5,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
+    assert result.origin_candidates == ("req.params.username",)
+
+
+def test_analyze_candidate_treats_early_return_guard_as_safe() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "if not username then",
+            "  return nil",
+            "end",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_7",
+        file="demo.lua",
+        line=5,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "safe_static"
+    assert result.observed_guards == ("if not username then return",)
+    assert result.origin_candidates == ("req.params.username",)

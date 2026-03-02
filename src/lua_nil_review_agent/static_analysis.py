@@ -23,8 +23,10 @@ def analyze_candidate(source: str, candidate: CandidateCase) -> StaticAnalysisRe
     origin = _find_last_assignment(prior_lines, candidate.symbol)
     observed_guards: list[str] = []
 
-    if _has_guard(prior_lines, candidate.symbol):
+    if _has_active_positive_guard(prior_lines, candidate.symbol):
         observed_guards.append(f"if {candidate.symbol} then")
+    if _has_early_exit_guard(prior_lines, candidate.symbol):
+        observed_guards.append(f"if not {candidate.symbol} then return")
     if _has_assert(prior_lines, candidate.symbol):
         observed_guards.append(f"assert({candidate.symbol})")
     if _has_defaulting_origin(origin):
@@ -70,9 +72,46 @@ def _find_last_assignment(lines: list[str], symbol: str) -> str | None:
     return None
 
 
-def _has_guard(lines: list[str], symbol: str) -> bool:
-    pattern = re.compile(rf"^\s*if\s+{re.escape(symbol)}\s+then\s*$")
-    return any(pattern.match(line) for line in lines)
+def _has_active_positive_guard(lines: list[str], symbol: str) -> bool:
+    stack: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        if _is_if_open_for_symbol(stripped, symbol):
+            stack.append("symbol_if")
+            continue
+        if _is_if_open(stripped):
+            stack.append("if")
+            continue
+        if _is_elseif_line(stripped):
+            if stack and stack[-1] in {"if", "symbol_if"}:
+                stack[-1] = "symbol_if" if _is_elseif_for_symbol(stripped, symbol) else "if"
+            continue
+        if stripped == "else":
+            if stack and stack[-1] in {"if", "symbol_if"}:
+                stack[-1] = "if"
+            continue
+        if _opens_non_if_block(stripped):
+            stack.append("block")
+            continue
+        if _closes_block(stripped) and stack:
+            stack.pop()
+
+    return "symbol_if" in stack
+
+
+def _has_early_exit_guard(lines: list[str], symbol: str) -> bool:
+    compact_lines = [line.strip() for line in lines if line.strip()]
+    if len(compact_lines) < 3:
+        return False
+
+    if compact_lines[-1] != "end":
+        return False
+    if not _is_early_exit_statement(compact_lines[-2]):
+        return False
+    return _is_negative_guard_for_symbol(compact_lines[-3], symbol)
 
 
 def _has_assert(lines: list[str], symbol: str) -> bool:
@@ -126,3 +165,54 @@ def _split_top_level_values(values_text: str) -> list[str]:
     if tail:
         values.append(tail)
     return values
+
+
+def _is_if_open_for_symbol(stripped_line: str, symbol: str) -> bool:
+    if not _is_if_open(stripped_line):
+        return False
+    condition = stripped_line[len("if ") : -len(" then")].strip()
+    return condition == symbol or condition == f"{symbol} ~= nil"
+
+
+def _is_if_open(stripped_line: str) -> bool:
+    return stripped_line.startswith("if ") and stripped_line.endswith(" then")
+
+
+def _is_elseif_line(stripped_line: str) -> bool:
+    return stripped_line.startswith("elseif ") and stripped_line.endswith(" then")
+
+
+def _is_elseif_for_symbol(stripped_line: str, symbol: str) -> bool:
+    condition = stripped_line[len("elseif ") : -len(" then")].strip()
+    return condition == symbol or condition == f"{symbol} ~= nil"
+
+
+def _opens_non_if_block(stripped_line: str) -> bool:
+    return (
+        (stripped_line.startswith("for ") and stripped_line.endswith(" do"))
+        or (stripped_line.startswith("while ") and stripped_line.endswith(" do"))
+        or stripped_line == "do"
+        or stripped_line == "repeat"
+        or bool(re.match(r"^(?:local\s+)?function\b", stripped_line))
+        or bool(re.search(r"(?:=\s*|return\s+)function\b", stripped_line))
+    )
+
+
+def _closes_block(stripped_line: str) -> bool:
+    return stripped_line == "end" or stripped_line.startswith("until ")
+
+
+def _is_negative_guard_for_symbol(stripped_line: str, symbol: str) -> bool:
+    return (
+        stripped_line == f"if not {symbol} then"
+        or stripped_line == f"if {symbol} == nil then"
+    )
+
+
+def _is_early_exit_statement(stripped_line: str) -> bool:
+    return (
+        stripped_line == "return"
+        or stripped_line.startswith("return ")
+        or stripped_line.startswith("error(")
+        or stripped_line.startswith("assert(false")
+    )
