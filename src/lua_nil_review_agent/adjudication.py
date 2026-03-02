@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import re
 
 from .models import AdjudicationRecord, EvidencePacket, RoleOpinion, SinkRule, Verdict
@@ -158,9 +159,8 @@ def _suggested_fix(packet: EvidencePacket, sink_rule: SinkRule) -> str | None:
     if sink_rule.kind == "unary_operand" and sink_rule.qualified_name == "#":
         return _coalesce_fix(packet, sink_rule, "{}")
 
-    expression = packet.target.expression
     if sink_rule.kind == "receiver" or sink_rule.qualified_name == "member_access":
-        return f"if not {expression} then return nil end"
+        return _receiver_fix(packet, sink_rule)
 
     return None
 
@@ -187,6 +187,41 @@ def _coalesce_fix(
         return alias_line
 
     return f"local safe_value = {expression} or {fallback_literal}"
+
+
+def _receiver_fix(
+    packet: EvidencePacket,
+    sink_rule: SinkRule,
+) -> str:
+    expression = packet.target.expression
+    target_line = _find_target_line(packet, sink_rule)
+    if target_line is not None and _is_elseif_line(target_line.strip()):
+        return f"if not {expression} then return nil end"
+
+    if _IDENTIFIER_RE.match(expression):
+        snippet = _build_contextual_receiver_fix_snippet(
+            packet=packet,
+            sink_rule=sink_rule,
+            guard_expression=expression,
+        )
+        if snippet is not None:
+            return snippet
+        return f"if not {expression} then return nil end"
+
+    alias = _suggest_local_alias(expression)
+    if alias is not None:
+        snippet = _build_contextual_receiver_fix_snippet(
+            packet=packet,
+            sink_rule=sink_rule,
+            guard_expression=alias,
+            alias_line_builder=lambda indent: f"{indent}local {alias} = {expression}",
+            replacement=alias,
+        )
+        if snippet is not None:
+            return snippet
+        return f"local {alias} = {expression}\nif not {alias} then return nil end"
+
+    return f"if not {expression} then return nil end"
 
 
 def _suggest_local_alias(expression: str) -> str | None:
@@ -230,6 +265,12 @@ def _leading_indent(line: str) -> str:
     return line[: len(line) - len(stripped)]
 
 
+def _nested_indent(indent: str) -> str:
+    if indent.endswith("\t"):
+        return f"{indent}\t"
+    return f"{indent}  "
+
+
 def _build_contextual_fix_snippet(
     packet: EvidencePacket,
     sink_rule: SinkRule,
@@ -257,6 +298,47 @@ def _build_contextual_fix_snippet(
         snippet_lines.append(current)
         if insert_after_start and index == start_index:
             snippet_lines.append(alias_line)
+    return "\n".join(snippet_lines)
+
+
+def _build_contextual_receiver_fix_snippet(
+    packet: EvidencePacket,
+    sink_rule: SinkRule,
+    guard_expression: str,
+    alias_line_builder: Callable[[str], str] | None = None,
+    replacement: str | None = None,
+) -> str | None:
+    lines = packet.local_context.splitlines()
+    bounds = _find_snippet_bounds(packet, sink_rule)
+    if bounds is None:
+        return None
+
+    start_index, target_index, end_index = bounds
+    target_line = lines[target_index]
+    base_indent = _leading_indent(target_line)
+    child_indent = _nested_indent(base_indent)
+    prelude_lines: list[str] = []
+    if alias_line_builder is not None:
+        prelude_lines.append(alias_line_builder(base_indent))
+    prelude_lines.extend(
+        (
+            f"{base_indent}if not {guard_expression} then",
+            f"{child_indent}return nil",
+            f"{base_indent}end",
+        )
+    )
+
+    insert_after_start = _is_else_line(lines[start_index].strip())
+    snippet_lines: list[str] = []
+    if not insert_after_start:
+        snippet_lines.extend(prelude_lines)
+    for index in range(start_index, end_index + 1):
+        current = lines[index]
+        if replacement is not None and index == target_index:
+            current = current.replace(packet.target.expression, replacement, 1)
+        snippet_lines.append(current)
+        if insert_after_start and index == start_index:
+            snippet_lines.extend(prelude_lines)
     return "\n".join(snippet_lines)
 
 

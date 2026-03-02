@@ -199,7 +199,108 @@ def test_adjudicate_packet_uses_guard_fix_for_receiver_sinks() -> None:
     record = adjudicate_packet(packet, rule)
 
     assert record.judge.status == "risky"
-    assert record.judge.suggested_fix == "if not profile then return nil end"
+    assert record.judge.suggested_fix == (
+        "if not profile then\n"
+        "  return nil\n"
+        "end\n"
+        "return profile.name"
+    )
+
+
+def test_adjudicate_packet_uses_contextual_fix_for_dot_path_receiver_sinks() -> None:
+    packet = EvidencePacket(
+        case_id="case_receiver_dot_path",
+        target=EvidenceTarget(
+            file="demo.lua",
+            line=4,
+            column=10,
+            sink="member_access",
+            arg_index=0,
+            expression="req.profile",
+        ),
+        local_context="  return req.profile.name",
+        related_functions=(),
+        function_summaries=(),
+        knowledge_facts=(),
+        static_reasoning={
+            "state": "unknown_static",
+            "origin_candidates": ("req.profile",),
+            "observed_guards": (),
+        },
+    )
+    rule = SinkRule(
+        id="member_access.receiver",
+        kind="receiver",
+        qualified_name="member_access",
+        arg_index=0,
+        nil_sensitive=True,
+        failure_mode="runtime_error",
+        default_severity="high",
+        safe_patterns=("if x then ... end",),
+    )
+
+    record = adjudicate_packet(packet, rule)
+
+    assert record.judge.status == "risky"
+    assert record.judge.suggested_fix == (
+        "  local profile = req.profile\n"
+        "  if not profile then\n"
+        "    return nil\n"
+        "  end\n"
+        "  return profile.name"
+    )
+
+
+def test_adjudicate_packet_expands_else_branch_for_receiver_fix() -> None:
+    packet = EvidencePacket(
+        case_id="case_receiver_else",
+        target=EvidenceTarget(
+            file="demo.lua",
+            line=5,
+            column=12,
+            sink="member_access",
+            arg_index=0,
+            expression="req.profile",
+        ),
+        local_context=(
+            "  if ready then\n"
+            "    return nil\n"
+            "  else\n"
+            "    return req.profile.name\n"
+            "  end"
+        ),
+        related_functions=(),
+        function_summaries=(),
+        knowledge_facts=(),
+        static_reasoning={
+            "state": "unknown_static",
+            "origin_candidates": ("req.profile",),
+            "observed_guards": (),
+        },
+    )
+    rule = SinkRule(
+        id="member_access.receiver",
+        kind="receiver",
+        qualified_name="member_access",
+        arg_index=0,
+        nil_sensitive=True,
+        failure_mode="runtime_error",
+        default_severity="high",
+        safe_patterns=("if x then ... end",),
+    )
+
+    record = adjudicate_packet(packet, rule)
+
+    assert record.judge.status == "risky"
+    assert record.judge.suggested_fix == (
+        "  else\n"
+        "    local profile = req.profile\n"
+        "    if not profile then\n"
+        "      return nil\n"
+        "    end\n"
+        "    return profile.name\n"
+        "  end"
+    )
 
 
 def test_adjudicate_packet_uses_table_fix_for_length_sinks() -> None:
