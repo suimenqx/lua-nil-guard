@@ -639,6 +639,73 @@ def test_claude_cli_backend_accepts_result_string_payload() -> None:
     assert record.judge.status == "risky"
 
 
+def test_claude_cli_backend_runs_optional_warmup_before_first_request(tmp_path: Path) -> None:
+    commands: list[tuple[str, ...]] = []
+
+    def fake_runner(
+        command: tuple[str, ...],
+        *,
+        stdin_text: str,
+        cwd: Path | None,
+    ) -> str:
+        assert stdin_text == ""
+        assert cwd == tmp_path
+        commands.append(command)
+        prompt = command[-1]
+        if 'Return exactly this JSON object and nothing else: {"ok": true}' in prompt:
+            return json.dumps({"result": '{"ok": true}'})
+        return json.dumps(
+            {
+                "result": json.dumps(
+                    {
+                        "prosecutor": {
+                            "role": "prosecutor",
+                            "status": "risky",
+                            "confidence": "high",
+                            "risk_path": ["nil"],
+                            "safety_evidence": [],
+                            "missing_evidence": [],
+                            "recommended_next_action": "report",
+                            "suggested_fix": "subject = subject or ''",
+                        },
+                        "defender": {
+                            "role": "defender",
+                            "status": "uncertain",
+                            "confidence": "low",
+                            "risk_path": [],
+                            "safety_evidence": [],
+                            "missing_evidence": ["no guard"],
+                            "recommended_next_action": "expand_context",
+                            "suggested_fix": None,
+                        },
+                        "judge": {
+                            "status": "risky",
+                            "confidence": "high",
+                            "risk_path": ["nil"],
+                            "safety_evidence": [],
+                            "counterarguments_considered": ["no guard"],
+                            "suggested_fix": "subject = subject or ''",
+                            "needs_human": False,
+                        },
+                    }
+                )
+            }
+        )
+
+    backend = ClaudeCliBackend(
+        runner=fake_runner,
+        workdir=tmp_path,
+        warmup_enabled=True,
+    )
+    record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    assert record.judge.status == "risky"
+    assert len(commands) == 2
+    assert 'Return exactly this JSON object and nothing else: {"ok": true}' in commands[0][-1]
+    assert "Adjudication policy: lua-nil-adjudicator" in commands[1][-1]
+    assert backend.backend_call_count == 2
+
+
 def test_codeagent_cli_backend_uses_codeagent_executable_by_default(tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 
@@ -1161,7 +1228,7 @@ def test_create_adjudication_backend_uses_builtin_defaults_for_claude() -> None:
 
     assert isinstance(backend, ClaudeCliBackend)
     assert backend.provider_spec == CLAUDE_PROVIDER_SPEC
-    assert backend.timeout_seconds == 45.0
+    assert backend.timeout_seconds == 75.0
     assert backend.max_attempts == 2
     assert backend.fallback_to_uncertain_on_error is True
 

@@ -500,6 +500,7 @@ class ClaudeCliBackend(CliAgentBackend):
         config_overrides: tuple[str, ...] = (),
         cache_path: str | Path | None = None,
         provider_spec: AgentProviderSpec | None = None,
+        warmup_enabled: bool | None = None,
     ) -> None:
         self.provider_spec = provider_spec or CLAUDE_PROVIDER_SPEC
         self.cli_protocol = get_cli_protocol_builder(self.provider_spec.protocol)
@@ -529,6 +530,8 @@ class ClaudeCliBackend(CliAgentBackend):
         self.model = model
         self.executable = executable or self.provider_spec.default_executable
         self.config_overrides = config_overrides
+        self.warmup_enabled = (runner is None) if warmup_enabled is None else warmup_enabled
+        self._warmup_attempted = False
 
     def _cache_identity(self) -> dict[str, object]:
         return {
@@ -579,6 +582,7 @@ class ClaudeCliBackend(CliAgentBackend):
         sink_rule: SinkRule,
         prompt: str,
     ) -> AdjudicationRecord:
+        self._ensure_warmup()
         command = self.build_prompt_command(prompt=prompt)
         raw = self._run_command(command, stdin_text="")
         if not isinstance(raw, str) or not raw.strip():
@@ -626,6 +630,59 @@ class ClaudeCliBackend(CliAgentBackend):
             print_flag="-p",
             prompt=prompt,
         )
+
+    def build_warmup_command(self) -> tuple[str, ...]:
+        protocol = self.cli_protocol
+        if not isinstance(protocol, StdoutStructuredCliProtocol):
+            raise BackendError(
+                f"Provider {self.provider_spec.name} requires stdout_structured_cli, got {self.provider_spec.protocol}"
+            )
+        return protocol.build_command(
+            executable=self.executable,
+            base_args=(
+                "--output-format",
+                "json",
+                "--permission-mode",
+                "dontAsk",
+                "--tools",
+                "",
+                "--no-session-persistence",
+            ),
+            model=self.model,
+            model_flag="--model",
+            schema=None,
+            schema_flag=None,
+            print_flag="-p",
+            prompt='Return exactly this JSON object and nothing else: {"ok": true}',
+        )
+
+    def _ensure_warmup(self) -> None:
+        if not self.warmup_enabled or self._warmup_attempted:
+            return
+        self._warmup_attempted = True
+        command = self.build_warmup_command()
+        self.backend_call_count += 1
+        started = time.perf_counter()
+        try:
+            if self._uses_default_runner:
+                warmup_timeout = self.timeout_seconds
+                if warmup_timeout is None:
+                    warmup_timeout = 12.0
+                else:
+                    warmup_timeout = min(warmup_timeout, 12.0)
+                _default_runner(
+                    command,
+                    stdin_text="",
+                    cwd=self.workdir,
+                    timeout_seconds=warmup_timeout,
+                )
+            else:
+                self.runner(command, stdin_text="", cwd=self.workdir)
+        except Exception:
+            # Warm-up is a best-effort latency stabilizer and must not block the real review path.
+            return
+        finally:
+            self.backend_total_seconds += max(0.0, time.perf_counter() - started)
 
     def parse_wrapped_response(self, raw: str, *, case_id: str) -> AdjudicationRecord:
         try:

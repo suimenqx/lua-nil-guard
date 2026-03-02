@@ -28,7 +28,7 @@ BUILTIN_AGENT_PROVIDER_MANIFESTS: dict[str, dict[str, object]] = {
         "name": "claude",
         "protocol": "stdout_structured_cli",
         "default_executable": "claude",
-        "default_timeout_seconds": 45.0,
+        "default_timeout_seconds": 75.0,
         "default_max_attempts": 2,
         "default_fallback_to_uncertain_on_error": True,
         "capabilities": {
