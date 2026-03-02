@@ -267,10 +267,16 @@ def apply_autofix_manifest(
     manifest_path: str | Path,
     *,
     dry_run: bool = False,
+    case_ids: tuple[str, ...] = (),
+    file_paths: tuple[str | Path, ...] = (),
 ) -> tuple[tuple[AutofixPatch, ...], tuple[str, ...]]:
     """Apply an exported autofix manifest with per-file conflict checks."""
 
-    patches = _load_autofix_manifest(manifest_path)
+    patches = _filter_autofix_patches(
+        _load_autofix_manifest(manifest_path),
+        case_ids=case_ids,
+        file_paths=file_paths,
+    )
     grouped: dict[Path, list[AutofixPatch]] = {}
     for patch in patches:
         grouped.setdefault(Path(patch.file), []).append(patch)
@@ -294,10 +300,16 @@ def export_autofix_unified_diff(
     manifest_path: str | Path,
     *,
     output_path: str | Path | None = None,
+    case_ids: tuple[str, ...] = (),
+    file_paths: tuple[str | Path, ...] = (),
 ) -> tuple[str, tuple[str, ...]]:
     """Render a unified diff from an exported autofix manifest."""
 
-    patches = _load_autofix_manifest(manifest_path)
+    patches = _filter_autofix_patches(
+        _load_autofix_manifest(manifest_path),
+        case_ids=case_ids,
+        file_paths=file_paths,
+    )
     grouped: dict[Path, list[AutofixPatch]] = {}
     for patch in patches:
         grouped.setdefault(Path(patch.file), []).append(patch)
@@ -373,6 +385,25 @@ def _deserialize_autofix_patch(payload: object) -> AutofixPatch:
         replacement=payload["replacement"],
         expected_original=expected_original,
     )
+
+
+def _filter_autofix_patches(
+    patches: tuple[AutofixPatch, ...],
+    *,
+    case_ids: tuple[str, ...] = (),
+    file_paths: tuple[str | Path, ...] = (),
+) -> tuple[AutofixPatch, ...]:
+    case_filter = set(case_ids)
+    file_filter = {_normalize_path_key(file_path) for file_path in file_paths}
+    filtered: list[AutofixPatch] = []
+
+    for patch in patches:
+        if case_filter and patch.case_id not in case_filter:
+            continue
+        if file_filter and _normalize_path_key(patch.file) not in file_filter:
+            continue
+        filtered.append(patch)
+    return tuple(filtered)
 
 
 def _apply_autofix_group(
@@ -466,6 +497,10 @@ def _build_unified_diff(file_path: Path, original_text: str, updated_text: str) 
         )
     )
     return "\n".join(diff_lines)
+
+
+def _normalize_path_key(path: str | Path) -> str:
+    return str(Path(path).resolve(strict=False))
 
 
 def _render_text_from_lines(lines: list[str], *, trailing_newline: bool) -> str:

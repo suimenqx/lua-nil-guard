@@ -300,19 +300,21 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         )
 
     if command == "apply-autofix":
-        dry_run = False
-        positional: list[str] = []
-        for token in args[1:]:
-            if token == "--dry-run":
-                dry_run = True
-                continue
-            positional.append(token)
+        try:
+            dry_run, case_ids, file_paths, positional = _parse_autofix_selection_options(
+                args[1:],
+                allow_dry_run=True,
+            )
+        except ValueError as exc:
+            return 2, str(exc)
         if len(positional) != 1:
             return 2, "apply-autofix requires exactly one autofix manifest path"
         try:
             applied, conflicts = apply_autofix_manifest(
                 Path(positional[0]),
                 dry_run=dry_run,
+                case_ids=case_ids,
+                file_paths=file_paths,
             )
         except (ValueError, OSError) as exc:
             return 2, str(exc)
@@ -328,14 +330,20 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         return 0, "\n".join(lines)
 
     if command == "export-unified-diff":
-        if len(args) not in {2, 3}:
+        try:
+            _, case_ids, file_paths, positional = _parse_autofix_selection_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) not in {1, 2}:
             return 2, "export-unified-diff requires an autofix manifest path and optional output path"
-        manifest_path = Path(args[1])
-        output_path = Path(args[2]) if len(args) == 3 else None
+        manifest_path = Path(positional[0])
+        output_path = Path(positional[1]) if len(positional) == 2 else None
         try:
             diff_text, conflicts = export_autofix_unified_diff(
                 manifest_path,
                 output_path=output_path,
+                case_ids=case_ids,
+                file_paths=file_paths,
             )
         except (ValueError, OSError) as exc:
             return 2, str(exc)
@@ -403,8 +411,8 @@ def _usage() -> str:
             "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> <baseline>",
             "  lua-nil-review-agent export-prompts [--skill SKILL] [--allow-skill-fallback] <repository> [output]",
             "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> [output]",
-            "  lua-nil-review-agent apply-autofix [--dry-run] <autofix-manifest>",
-            "  lua-nil-review-agent export-unified-diff <autofix-manifest> [output]",
+            "  lua-nil-review-agent apply-autofix [--dry-run] [--case-id CASE_ID] [--file PATH] <autofix-manifest>",
+            "  lua-nil-review-agent export-unified-diff [--case-id CASE_ID] [--file PATH] <autofix-manifest> [output]",
             "",
             "Backend values: heuristic | codex | codeagent",
         ]
@@ -480,6 +488,41 @@ def _parse_export_options(args: list[str]) -> tuple[Path | None, bool, list[str]
         index += 1
 
     return skill_path, strict_skill, positional
+
+
+def _parse_autofix_selection_options(
+    args: list[str],
+    *,
+    allow_dry_run: bool = False,
+) -> tuple[bool, tuple[str, ...], tuple[Path, ...], list[str]]:
+    dry_run = False
+    case_ids: list[str] = []
+    file_paths: list[Path] = []
+    positional: list[str] = []
+    index = 0
+
+    while index < len(args):
+        token = args[index]
+        if allow_dry_run and token == "--dry-run":
+            dry_run = True
+            index += 1
+            continue
+        if token == "--case-id":
+            if index + 1 >= len(args):
+                raise ValueError("--case-id requires a value")
+            case_ids.append(args[index + 1])
+            index += 2
+            continue
+        if token == "--file":
+            if index + 1 >= len(args):
+                raise ValueError("--file requires a value")
+            file_paths.append(Path(args[index + 1]))
+            index += 2
+            continue
+        positional.append(token)
+        index += 1
+
+    return dry_run, tuple(case_ids), tuple(file_paths), positional
 
 
 if __name__ == "__main__":

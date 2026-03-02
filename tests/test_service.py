@@ -192,6 +192,91 @@ def test_export_autofix_unified_diff_renders_patch_without_writing_file(tmp_path
     assert target.read_text(encoding="utf-8") == original
 
 
+def test_apply_autofix_manifest_filters_by_case_id(tmp_path: Path) -> None:
+    first = tmp_path / "first.lua"
+    second = tmp_path / "second.lua"
+    first.write_text("return string.match(username, 'x')\n", encoding="utf-8")
+    second.write_text("return string.match(token, 'x')\n", encoding="utf-8")
+    manifest = tmp_path / "autofix.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": "case_first",
+                    "file": str(first),
+                    "action": "insert_before",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "replacement": "username = username or ''",
+                    "expected_original": "return string.match(username, 'x')",
+                },
+                {
+                    "case_id": "case_second",
+                    "file": str(second),
+                    "action": "insert_before",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "replacement": "token = token or ''",
+                    "expected_original": "return string.match(token, 'x')",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    applied, conflicts = apply_autofix_manifest(manifest, case_ids=("case_second",))
+
+    assert len(applied) == 1
+    assert not conflicts
+    assert applied[0].case_id == "case_second"
+    assert first.read_text(encoding="utf-8") == "return string.match(username, 'x')\n"
+    assert second.read_text(encoding="utf-8") == (
+        "token = token or ''\n"
+        "return string.match(token, 'x')\n"
+    )
+
+
+def test_export_autofix_unified_diff_filters_by_file_path(tmp_path: Path) -> None:
+    first = tmp_path / "first.lua"
+    second = tmp_path / "second.lua"
+    first.write_text("return string.match(username, 'x')\n", encoding="utf-8")
+    second.write_text("return string.match(token, 'x')\n", encoding="utf-8")
+    manifest = tmp_path / "autofix.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": "case_first",
+                    "file": str(first),
+                    "action": "insert_before",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "replacement": "username = username or ''",
+                    "expected_original": "return string.match(username, 'x')",
+                },
+                {
+                    "case_id": "case_second",
+                    "file": str(second),
+                    "action": "insert_before",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "replacement": "token = token or ''",
+                    "expected_original": "return string.match(token, 'x')",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    diff_text, conflicts = export_autofix_unified_diff(manifest, file_paths=(second,))
+
+    assert not conflicts
+    assert f"--- {second}" in diff_text
+    assert f"+++ {second}" in diff_text
+    assert "+token = token or ''" in diff_text
+    assert str(first) not in diff_text
+
+
 def test_apply_autofix_manifest_reports_conflicts_without_writing_file(tmp_path: Path) -> None:
     target = tmp_path / "demo.lua"
     original = "return string.match(user_name, 'x')\n"

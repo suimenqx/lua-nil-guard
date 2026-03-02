@@ -272,6 +272,49 @@ def test_cli_apply_autofix_reports_missing_manifest() -> None:
     assert "missing-autofix.json" in output
 
 
+def test_cli_apply_autofix_filters_by_case_id(tmp_path: Path) -> None:
+    first = tmp_path / "first.lua"
+    second = tmp_path / "second.lua"
+    first.write_text("return string.match(username, '^a')\n", encoding="utf-8")
+    second.write_text("return string.match(token, '^a')\n", encoding="utf-8")
+    manifest = tmp_path / "autofix.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": "case_first",
+                    "file": str(first),
+                    "action": "insert_before",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "replacement": "username = username or ''",
+                    "expected_original": "return string.match(username, '^a')",
+                },
+                {
+                    "case_id": "case_second",
+                    "file": str(second),
+                    "action": "insert_before",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "replacement": "token = token or ''",
+                    "expected_original": "return string.match(token, '^a')",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["apply-autofix", "--case-id", "case_second", str(manifest)])
+
+    assert exit_code == 0
+    assert "Applied patches: 1" in output
+    assert first.read_text(encoding="utf-8") == "return string.match(username, '^a')\n"
+    assert second.read_text(encoding="utf-8") == (
+        "token = token or ''\n"
+        "return string.match(token, '^a')\n"
+    )
+
+
 def test_cli_export_unified_diff_outputs_patch_text(tmp_path: Path) -> None:
     target = tmp_path / "demo.lua"
     target.write_text("return string.match(username, '^a')\n", encoding="utf-8")
@@ -328,6 +371,47 @@ def test_cli_export_unified_diff_blocks_on_conflicts(tmp_path: Path) -> None:
     assert "Unified diff export blocked." in output
     assert "Conflicts: 1" in output
     assert "anchor line no longer matches expected_original" in output
+
+
+def test_cli_export_unified_diff_filters_by_file(tmp_path: Path) -> None:
+    first = tmp_path / "first.lua"
+    second = tmp_path / "second.lua"
+    first.write_text("return string.match(username, '^a')\n", encoding="utf-8")
+    second.write_text("return string.match(token, '^a')\n", encoding="utf-8")
+    manifest = tmp_path / "autofix.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": "case_first",
+                    "file": str(first),
+                    "action": "insert_before",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "replacement": "username = username or ''",
+                    "expected_original": "return string.match(username, '^a')",
+                },
+                {
+                    "case_id": "case_second",
+                    "file": str(second),
+                    "action": "insert_before",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "replacement": "token = token or ''",
+                    "expected_original": "return string.match(token, '^a')",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["export-unified-diff", "--file", str(second), str(manifest)])
+
+    assert exit_code == 0
+    assert f"--- {second}" in output
+    assert f"+++ {second}" in output
+    assert "+token = token or ''" in output
+    assert str(first) not in output
 
 
 def test_cli_baseline_create_writes_baseline_file(tmp_path: Path) -> None:
