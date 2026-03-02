@@ -25,6 +25,7 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "Backend values: heuristic | codex | codeagent" in output
     assert "--allow-skill-fallback" in output
     assert "--backend-executable PATH" in output
+    assert "--backend-manifest PATH" in output
     assert "--backend-timeout SECONDS" in output
     assert "--backend-attempts N" in output
     assert "--backend-cache PATH" in output
@@ -1417,6 +1418,8 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
 
     skill_path = tmp_path / "custom-skill.md"
     skill_path.write_text("placeholder", encoding="utf-8")
+    manifest_path = tmp_path / "provider.json"
+    manifest_path.write_text("{}", encoding="utf-8")
 
     def fake_factory(
         name: str,
@@ -1443,7 +1446,15 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
         captured["config_overrides"] = config_overrides
         return None
 
+    def fake_register(manifest_path_arg, *, replace=False):
+        captured["backend_manifest_path"] = Path(manifest_path_arg)
+        captured["backend_manifest_replace"] = replace
+
     monkeypatch.setattr("lua_nil_review_agent.cli.create_adjudication_backend", fake_factory)
+    monkeypatch.setattr(
+        "lua_nil_review_agent.cli.register_manifest_backed_adjudication_backend",
+        fake_register,
+    )
 
     exit_code, output = run(
         [
@@ -1455,6 +1466,8 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
             "--allow-skill-fallback",
             "--backend-executable",
             "/tmp/codeagent-bin",
+            "--backend-manifest",
+            str(manifest_path),
             "--backend-timeout",
             "12.5",
             "--backend-attempts",
@@ -1476,6 +1489,8 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
     assert captured["skill_path"] == skill_path
     assert captured["strict_skill"] is False
     assert captured["executable"] == "/tmp/codeagent-bin"
+    assert captured["backend_manifest_path"] == manifest_path
+    assert captured["backend_manifest_replace"] is True
     assert captured["timeout_seconds"] == 12.5
     assert captured["max_attempts"] == 3
     assert captured["cache_path"] == (tmp_path / "codex-cache.json")

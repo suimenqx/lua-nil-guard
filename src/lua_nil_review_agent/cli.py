@@ -5,7 +5,11 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from .agent_backend import BackendError, create_adjudication_backend
+from .agent_backend import (
+    BackendError,
+    create_adjudication_backend,
+    register_manifest_backed_adjudication_backend,
+)
 from .baseline import BaselineStore, build_baseline, filter_new_findings
 from .parser_backend import get_parser_backend_info
 from .reporting import render_json_report, render_markdown_report
@@ -90,6 +94,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 skill_path,
                 strict_skill,
                 executable,
+                backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
                 backend_cache_path,
@@ -105,13 +110,14 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         try:
             verdicts = run_repository_review(
                 snapshot,
-                backend=create_adjudication_backend(
-                    backend_name,
-                    workdir=root,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
                     model=model,
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
                     cache_path=backend_cache_path,
@@ -130,6 +136,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 skill_path,
                 strict_skill,
                 executable,
+                backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
                 backend_cache_path,
@@ -145,13 +152,14 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         try:
             verdicts = run_repository_review(
                 snapshot,
-                backend=create_adjudication_backend(
-                    backend_name,
-                    workdir=root,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
                     model=model,
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
                     cache_path=backend_cache_path,
@@ -170,6 +178,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 skill_path,
                 strict_skill,
                 executable,
+                backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
                 backend_cache_path,
@@ -185,13 +194,14 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         try:
             summary = benchmark_repository_review(
                 snapshot,
-                backend=create_adjudication_backend(
-                    backend_name,
-                    workdir=root,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
                     model=model,
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
                     cache_path=backend_cache_path,
@@ -210,6 +220,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 skill_path,
                 strict_skill,
                 executable,
+                backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
                 backend_cache_path,
@@ -226,13 +237,14 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         try:
             summary = benchmark_repository_review(
                 snapshot,
-                backend=create_adjudication_backend(
-                    backend_name,
-                    workdir=root,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
                     model=model,
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
                     cache_path=backend_cache_path,
@@ -261,6 +273,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 skill_path,
                 strict_skill,
                 executable,
+                backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
                 backend_cache_path,
@@ -279,13 +292,14 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             comparison = benchmark_cache_compare(
                 snapshot,
                 cache_path=backend_cache_path,
-                backend_factory=lambda: create_adjudication_backend(
-                    backend_name,
-                    workdir=root,
+                backend_factory=lambda: _create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
                     model=model,
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
                     cache_path=backend_cache_path,
@@ -304,6 +318,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 skill_path,
                 strict_skill,
                 executable,
+                backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
                 backend_cache_path,
@@ -323,13 +338,14 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             comparison = benchmark_cache_compare(
                 snapshot,
                 cache_path=backend_cache_path,
-                backend_factory=lambda: create_adjudication_backend(
-                    backend_name,
-                    workdir=root,
+                backend_factory=lambda: _create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
                     model=model,
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
                     cache_path=backend_cache_path,
@@ -362,6 +378,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 skill_path,
                 strict_skill,
                 executable,
+                backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
                 backend_cache_path,
@@ -378,13 +395,14 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         try:
             verdicts = run_repository_review(
                 snapshot,
-                backend=create_adjudication_backend(
-                    backend_name,
-                    workdir=root,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
                     model=model,
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
                     cache_path=backend_cache_path,
@@ -411,6 +429,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 skill_path,
                 strict_skill,
                 executable,
+                backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
                 backend_cache_path,
@@ -427,13 +446,14 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         try:
             verdicts = run_repository_review(
                 snapshot,
-                backend=create_adjudication_backend(
-                    backend_name,
-                    workdir=root,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
                     model=model,
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
                     cache_path=backend_cache_path,
@@ -489,6 +509,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 skill_path,
                 strict_skill,
                 executable,
+                backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
                 backend_cache_path,
@@ -505,13 +526,14 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         try:
             verdicts = run_repository_review(
                 snapshot,
-                backend=create_adjudication_backend(
-                    backend_name,
-                    workdir=root,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
                     model=model,
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
                     cache_path=backend_cache_path,
@@ -570,6 +592,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 skill_path,
                 strict_skill,
                 executable,
+                backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
                 backend_cache_path,
@@ -586,13 +609,14 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         try:
             patches = export_autofix_patches(
                 snapshot,
-                backend=create_adjudication_backend(
-                    backend_name,
-                    workdir=root,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
                     model=model,
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
                     cache_path=backend_cache_path,
@@ -689,6 +713,36 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         )
 
     return 2, _usage()
+
+
+def _create_review_backend(
+    *,
+    backend_name: str,
+    root: Path,
+    model: str | None,
+    skill_path: Path | None,
+    strict_skill: bool,
+    executable: str | None,
+    backend_manifest_path: Path | None,
+    timeout_seconds: float | None,
+    max_attempts: int | None,
+    cache_path: Path | None,
+    config_overrides: tuple[str, ...],
+):
+    if backend_manifest_path is not None:
+        register_manifest_backed_adjudication_backend(backend_manifest_path, replace=True)
+    return create_adjudication_backend(
+        backend_name,
+        workdir=root,
+        model=model,
+        skill_path=skill_path,
+        strict_skill=strict_skill,
+        executable=executable,
+        timeout_seconds=timeout_seconds,
+        max_attempts=max_attempts,
+        cache_path=cache_path,
+        config_overrides=config_overrides,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1073,19 +1127,19 @@ def _usage() -> str:
             "  lua-nil-review-agent scan <repository>",
             "  lua-nil-review-agent clear-backend-cache <cache-file>",
             "  lua-nil-review-agent compare-benchmark-json <before> <after> [output]",
-            "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
-            "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
-            "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
-            "  lua-nil-review-agent benchmark-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
-            "  lua-nil-review-agent benchmark-cache-compare [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] --backend-cache PATH [--backend-config KEY=VALUE] <repository>",
-            "  lua-nil-review-agent benchmark-cache-compare-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] --backend-cache PATH [--backend-config KEY=VALUE] <repository> [output]",
-            "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <output>",
-            "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <baseline>",
+            "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent benchmark-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
+            "  lua-nil-review-agent benchmark-cache-compare [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] --backend-cache PATH [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent benchmark-cache-compare-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] --backend-cache PATH [--backend-config KEY=VALUE] <repository> [output]",
+            "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <output>",
+            "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <baseline>",
             "  lua-nil-review-agent refresh-summaries <repository> [output]",
             "  lua-nil-review-agent refresh-knowledge <repository> [output]",
-            "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <baseline>",
+            "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <baseline>",
             "  lua-nil-review-agent export-prompts [--skill SKILL] [--allow-skill-fallback] <repository> [output]",
-            "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
+            "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
             "  lua-nil-review-agent apply-autofix [--dry-run] [--case-id CASE_ID] [--file PATH] <autofix-manifest>",
             "  lua-nil-review-agent export-unified-diff [--case-id CASE_ID] [--file PATH] <autofix-manifest> [output]",
             "",
@@ -1096,12 +1150,25 @@ def _usage() -> str:
 
 def _parse_review_options(
     args: list[str],
-) -> tuple[str, str | None, Path | None, bool, str | None, float | None, int | None, Path | None, tuple[str, ...], list[str]]:
+) -> tuple[
+    str,
+    str | None,
+    Path | None,
+    bool,
+    str | None,
+    Path | None,
+    float | None,
+    int | None,
+    Path | None,
+    tuple[str, ...],
+    list[str],
+]:
     backend_name = "heuristic"
     model: str | None = None
     skill_path: Path | None = None
     strict_skill = True
     executable: str | None = None
+    backend_manifest_path: Path | None = None
     backend_timeout: float | None = None
     backend_attempts: int | None = None
     backend_cache_path: Path | None = None
@@ -1137,6 +1204,12 @@ def _parse_review_options(
             if index + 1 >= len(args):
                 raise ValueError("--backend-executable requires a value")
             executable = args[index + 1]
+            index += 2
+            continue
+        if token == "--backend-manifest":
+            if index + 1 >= len(args):
+                raise ValueError("--backend-manifest requires a value")
+            backend_manifest_path = Path(args[index + 1])
             index += 2
             continue
         if token == "--backend-timeout":
@@ -1185,6 +1258,7 @@ def _parse_review_options(
         skill_path,
         strict_skill,
         executable,
+        backend_manifest_path,
         backend_timeout,
         backend_attempts,
         backend_cache_path,
