@@ -567,6 +567,9 @@ def test_cli_compare_benchmark_json_reports_key_deltas(tmp_path: Path) -> None:
         json.dumps(
             {
                 "repository": "/tmp/repo",
+                "backend_name": "codeagent",
+                "backend_model": "gemini-2.5-pro",
+                "backend_executable": "/usr/bin/codeagent",
                 "total_cases": 18,
                 "exact_matches": 14,
                 "accuracy": 77.8,
@@ -588,6 +591,9 @@ def test_cli_compare_benchmark_json_reports_key_deltas(tmp_path: Path) -> None:
         json.dumps(
             {
                 "repository": "/tmp/repo",
+                "backend_name": "codeagent",
+                "backend_model": "gemini-2.5-pro-fast",
+                "backend_executable": "/opt/bin/codeagent",
                 "total_cases": 18,
                 "exact_matches": 17,
                 "accuracy": 94.4,
@@ -610,6 +616,11 @@ def test_cli_compare_benchmark_json_reports_key_deltas(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert "# Lua Nil Review Benchmark Comparison" in output
+    assert "Backend before: codeagent" in output
+    assert "Backend model before: gemini-2.5-pro" in output
+    assert "Backend model after: gemini-2.5-pro-fast" in output
+    assert "Backend executable before: /usr/bin/codeagent" in output
+    assert "Backend executable after: /opt/bin/codeagent" in output
     assert "Exact matches: 14 -> 17 (+3)" in output
     assert "False positive risks: 2 -> 0 (-2)" in output
     assert "Backend calls: 18 -> 6 (-12)" in output
@@ -728,6 +739,7 @@ def test_cli_compare_benchmark_json_accepts_cache_compare_payloads(tmp_path: Pat
     exit_code, output = run(["compare-benchmark-json", str(before_path), str(after_path)])
 
     assert exit_code == 0
+    assert "Repository before: /tmp/repo" in output
     assert "Exact matches: 12 -> 15 (+3)" in output
 
 

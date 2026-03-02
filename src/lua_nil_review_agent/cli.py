@@ -814,8 +814,23 @@ def _render_benchmark_json_comparison(*, before_path: Path, after_path: Path) ->
         f"After: {after_path}",
         f"Repository before: {before['repository']}",
         f"Repository after: {after['repository']}",
-        "",
     ]
+    _append_benchmark_metadata_comparison(lines, label="Backend", key="backend_name", before=before, after=after)
+    _append_benchmark_metadata_comparison(
+        lines,
+        label="Backend model",
+        key="backend_model",
+        before=before,
+        after=after,
+    )
+    _append_benchmark_metadata_comparison(
+        lines,
+        label="Backend executable",
+        key="backend_executable",
+        before=before,
+        after=after,
+    )
+    lines.append("")
     lines.extend(
         [
             _format_int_change("Exact matches", before["exact_matches"], after["exact_matches"]),
@@ -871,6 +886,22 @@ def _render_benchmark_json_comparison(*, before_path: Path, after_path: Path) ->
         ]
     )
     return "\n".join(lines)
+
+
+def _append_benchmark_metadata_comparison(
+    lines: list[str],
+    *,
+    label: str,
+    key: str,
+    before: dict[str, float | int | str | None],
+    after: dict[str, float | int | str | None],
+) -> None:
+    before_value = before.get(key)
+    after_value = after.get(key)
+    if before_value is None and after_value is None:
+        return
+    lines.append(f"{label} before: {before_value or '(unknown)'}")
+    lines.append(f"{label} after: {after_value or '(unknown)'}")
 
 
 def _serialize_benchmark_summary(root: Path, summary) -> dict[str, object]:  # noqa: ANN001
@@ -967,9 +998,12 @@ def _coerce_benchmark_summary_payload(
     payload: dict[str, object],
     *,
     path: Path,
-) -> dict[str, float | int | str]:
+) -> dict[str, float | int | str | None]:
     return {
         "repository": _require_payload_string(payload, "repository", path=path),
+        "backend_name": _optional_payload_string(payload, "backend_name", path=path),
+        "backend_model": _optional_payload_string(payload, "backend_model", path=path),
+        "backend_executable": _optional_payload_string(payload, "backend_executable", path=path),
         "exact_matches": _require_payload_int(payload, "exact_matches", path=path),
         "accuracy": _require_payload_float(payload, "accuracy", path=path),
         "missed_risks": _require_payload_int(payload, "missed_risks", path=path),
@@ -993,6 +1027,15 @@ def _require_payload_string(payload: dict[str, object], key: str, *, path: Path)
     value = payload.get(key)
     if not isinstance(value, str):
         raise ValueError(f"Benchmark JSON field {key!r} must be a string: {path}")
+    return value
+
+
+def _optional_payload_string(payload: dict[str, object], key: str, *, path: Path) -> str | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"Benchmark JSON field {key!r} must be a string when present: {path}")
     return value
 
 
