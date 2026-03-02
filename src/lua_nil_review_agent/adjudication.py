@@ -171,12 +171,16 @@ def _coalesce_fix(
     fallback_literal: str,
 ) -> str:
     expression = packet.target.expression
+    target_line = _find_target_line(packet, sink_rule)
     if _IDENTIFIER_RE.match(expression):
         return f"{expression} = {expression} or {fallback_literal}"
 
     alias = _suggest_local_alias(expression)
     if alias is not None:
-        alias_line = f"local {alias} = {expression} or {fallback_literal}"
+        alias_indent = _leading_indent(target_line) if target_line is not None else ""
+        alias_line = f"{alias_indent}local {alias} = {expression} or {fallback_literal}"
+        if target_line is not None and _is_elseif_line(target_line.strip()):
+            return alias_line
         snippet = _build_contextual_fix_snippet(packet, sink_rule, alias, fallback_literal)
         if snippet is not None:
             return snippet
@@ -324,6 +328,10 @@ def _is_function_open(stripped_line: str) -> bool:
         re.match(r"^(?:local\s+)?function\b", stripped_line)
         or re.search(r"(?:=\s*|return\s+)function\b", stripped_line)
     )
+
+
+def _is_elseif_line(stripped_line: str) -> bool:
+    return stripped_line.startswith("elseif ") and stripped_line.endswith(" then")
 
 
 def _find_repeat_start_index(lines: list[str], target_index: int) -> int | None:
