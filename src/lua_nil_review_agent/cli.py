@@ -58,6 +58,30 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             ]
         )
 
+    if command == "compare-benchmark-json":
+        if len(args) not in {3, 4}:
+            return 2, "compare-benchmark-json requires two input files and optional output path"
+        before_path = Path(args[1])
+        after_path = Path(args[2])
+        output_path = Path(args[3]) if len(args) == 4 else None
+        try:
+            report = _render_benchmark_json_comparison(
+                before_path=before_path,
+                after_path=after_path,
+            )
+        except (OSError, ValueError) as exc:
+            return 2, str(exc)
+        if output_path is None:
+            return 0, report
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(report, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Benchmark comparison export complete.",
+                f"Output: {output_path}",
+            ]
+        )
+
     if command == "report":
         try:
             (
@@ -773,6 +797,76 @@ def _render_benchmark_cache_comparison(root: Path, comparison) -> str:  # noqa: 
     return "\n".join(lines)
 
 
+def _render_benchmark_json_comparison(*, before_path: Path, after_path: Path) -> str:
+    before = _load_benchmark_json_payload(before_path)
+    after = _load_benchmark_json_payload(after_path)
+
+    lines = [
+        "# Lua Nil Review Benchmark Comparison",
+        "",
+        f"Before: {before_path}",
+        f"After: {after_path}",
+        f"Repository before: {before['repository']}",
+        f"Repository after: {after['repository']}",
+        "",
+    ]
+    lines.extend(
+        [
+            _format_int_change("Exact matches", before["exact_matches"], after["exact_matches"]),
+            _format_float_change("Accuracy", before["accuracy"], after["accuracy"], suffix="%"),
+            _format_int_change("Missed risks", before["missed_risks"], after["missed_risks"]),
+            _format_int_change(
+                "False positive risks",
+                before["false_positive_risks"],
+                after["false_positive_risks"],
+            ),
+            _format_int_change(
+                "Unresolved labeled cases",
+                before["unresolved_cases"],
+                after["unresolved_cases"],
+            ),
+            _format_int_change(
+                "Backend fallbacks",
+                before["backend_fallbacks"],
+                after["backend_fallbacks"],
+            ),
+            _format_int_change(
+                "Backend timeouts",
+                before["backend_timeouts"],
+                after["backend_timeouts"],
+            ),
+            _format_int_change(
+                "Backend cache hits",
+                before["backend_cache_hits"],
+                after["backend_cache_hits"],
+            ),
+            _format_int_change(
+                "Backend cache misses",
+                before["backend_cache_misses"],
+                after["backend_cache_misses"],
+            ),
+            _format_int_change(
+                "Backend calls",
+                before["backend_calls"],
+                after["backend_calls"],
+            ),
+            _format_float_change(
+                "Backend total latency",
+                before["backend_total_seconds"],
+                after["backend_total_seconds"],
+                suffix="s",
+            ),
+            _format_float_change(
+                "Backend average latency",
+                before["backend_average_seconds"],
+                after["backend_average_seconds"],
+                suffix="s",
+            ),
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _serialize_benchmark_summary(root: Path, summary) -> dict[str, object]:  # noqa: ANN001
     accuracy = 0.0
     if summary.total_cases:
@@ -831,12 +925,102 @@ def _serialize_benchmark_cache_comparison(root: Path, comparison) -> dict[str, o
     }
 
 
+def _load_benchmark_json_payload(path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid benchmark JSON: {path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Benchmark JSON must contain an object: {path}")
+
+    if _is_benchmark_summary_payload(payload):
+        normalized = payload
+    elif _is_benchmark_cache_compare_payload(payload):
+        warm = payload["warm"]
+        if not isinstance(warm, dict) or not _is_benchmark_summary_payload(warm):
+            raise ValueError(f"Benchmark cache comparison JSON missing warm summary: {path}")
+        normalized = warm
+    else:
+        raise ValueError(f"Unsupported benchmark JSON shape: {path}")
+
+    return _coerce_benchmark_summary_payload(normalized, path=path)
+
+
+def _is_benchmark_summary_payload(payload: dict[str, object]) -> bool:
+    return "total_cases" in payload and "exact_matches" in payload and "accuracy" in payload
+
+
+def _is_benchmark_cache_compare_payload(payload: dict[str, object]) -> bool:
+    return "cold" in payload and "warm" in payload
+
+
+def _coerce_benchmark_summary_payload(
+    payload: dict[str, object],
+    *,
+    path: Path,
+) -> dict[str, float | int | str]:
+    return {
+        "repository": _require_payload_string(payload, "repository", path=path),
+        "exact_matches": _require_payload_int(payload, "exact_matches", path=path),
+        "accuracy": _require_payload_float(payload, "accuracy", path=path),
+        "missed_risks": _require_payload_int(payload, "missed_risks", path=path),
+        "false_positive_risks": _require_payload_int(payload, "false_positive_risks", path=path),
+        "unresolved_cases": _require_payload_int(payload, "unresolved_cases", path=path),
+        "backend_fallbacks": _require_payload_int(payload, "backend_fallbacks", path=path),
+        "backend_timeouts": _require_payload_int(payload, "backend_timeouts", path=path),
+        "backend_cache_hits": _require_payload_int(payload, "backend_cache_hits", path=path),
+        "backend_cache_misses": _require_payload_int(payload, "backend_cache_misses", path=path),
+        "backend_calls": _require_payload_int(payload, "backend_calls", path=path),
+        "backend_total_seconds": _require_payload_float(payload, "backend_total_seconds", path=path),
+        "backend_average_seconds": _require_payload_float(
+            payload,
+            "backend_average_seconds",
+            path=path,
+        ),
+    }
+
+
+def _require_payload_string(payload: dict[str, object], key: str, *, path: Path) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str):
+        raise ValueError(f"Benchmark JSON field {key!r} must be a string: {path}")
+    return value
+
+
+def _require_payload_int(payload: dict[str, object], key: str, *, path: Path) -> int:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"Benchmark JSON field {key!r} must be an integer: {path}")
+    return value
+
+
+def _require_payload_float(payload: dict[str, object], key: str, *, path: Path) -> float:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"Benchmark JSON field {key!r} must be a number: {path}")
+    return float(value)
+
+
+def _format_int_change(label: str, before: int, after: int) -> str:
+    delta = after - before
+    return f"{label}: {before} -> {after} ({delta:+d})"
+
+
+def _format_float_change(label: str, before: float, after: float, *, suffix: str = "") -> str:
+    delta = after - before
+    return (
+        f"{label}: "
+        f"{before:.3f}{suffix} -> {after:.3f}{suffix} ({delta:+.3f}{suffix})"
+    )
+
+
 def _usage() -> str:
     return "\n".join(
         [
             "Usage:",
             "  lua-nil-review-agent scan <repository>",
             "  lua-nil-review-agent clear-backend-cache <cache-file>",
+            "  lua-nil-review-agent compare-benchmark-json <before> <after> [output]",
             "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",

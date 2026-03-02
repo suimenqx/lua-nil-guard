@@ -37,6 +37,7 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "benchmark-cache-compare" in output
     assert "benchmark-json" in output
     assert "benchmark-cache-compare-json" in output
+    assert "compare-benchmark-json" in output
 
 
 def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
@@ -534,6 +535,177 @@ def test_cli_benchmark_cache_compare_json_writes_output_file(
     assert "Benchmark cache comparison JSON export complete." in output
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["cache_cleared_entries"] == 0
+
+
+def test_cli_compare_benchmark_json_reports_key_deltas(tmp_path: Path) -> None:
+    before_path = tmp_path / "before.json"
+    after_path = tmp_path / "after.json"
+    before_path.write_text(
+        json.dumps(
+            {
+                "repository": "/tmp/repo",
+                "total_cases": 18,
+                "exact_matches": 14,
+                "accuracy": 77.8,
+                "missed_risks": 2,
+                "false_positive_risks": 2,
+                "unresolved_cases": 2,
+                "backend_fallbacks": 1,
+                "backend_timeouts": 1,
+                "backend_cache_hits": 0,
+                "backend_cache_misses": 18,
+                "backend_calls": 18,
+                "backend_total_seconds": 9.0,
+                "backend_average_seconds": 0.5,
+            }
+        ),
+        encoding="utf-8",
+    )
+    after_path.write_text(
+        json.dumps(
+            {
+                "repository": "/tmp/repo",
+                "total_cases": 18,
+                "exact_matches": 17,
+                "accuracy": 94.4,
+                "missed_risks": 1,
+                "false_positive_risks": 0,
+                "unresolved_cases": 1,
+                "backend_fallbacks": 0,
+                "backend_timeouts": 0,
+                "backend_cache_hits": 12,
+                "backend_cache_misses": 6,
+                "backend_calls": 6,
+                "backend_total_seconds": 2.4,
+                "backend_average_seconds": 0.4,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["compare-benchmark-json", str(before_path), str(after_path)])
+
+    assert exit_code == 0
+    assert "# Lua Nil Review Benchmark Comparison" in output
+    assert "Exact matches: 14 -> 17 (+3)" in output
+    assert "False positive risks: 2 -> 0 (-2)" in output
+    assert "Backend calls: 18 -> 6 (-12)" in output
+    assert "Backend total latency: 9.000s -> 2.400s (-6.600s)" in output
+
+
+def test_cli_compare_benchmark_json_writes_output_file(tmp_path: Path) -> None:
+    before_path = tmp_path / "before.json"
+    after_path = tmp_path / "after.json"
+    output_path = tmp_path / "compare.txt"
+    before_path.write_text(
+        json.dumps(
+            {
+                "repository": "/tmp/repo",
+                "total_cases": 1,
+                "exact_matches": 1,
+                "accuracy": 100.0,
+                "missed_risks": 0,
+                "false_positive_risks": 0,
+                "unresolved_cases": 0,
+                "backend_fallbacks": 0,
+                "backend_timeouts": 0,
+                "backend_cache_hits": 0,
+                "backend_cache_misses": 1,
+                "backend_calls": 1,
+                "backend_total_seconds": 0.5,
+                "backend_average_seconds": 0.5,
+            }
+        ),
+        encoding="utf-8",
+    )
+    after_path.write_text(
+        json.dumps(
+            {
+                "repository": "/tmp/repo",
+                "total_cases": 1,
+                "exact_matches": 1,
+                "accuracy": 100.0,
+                "missed_risks": 0,
+                "false_positive_risks": 0,
+                "unresolved_cases": 0,
+                "backend_fallbacks": 0,
+                "backend_timeouts": 0,
+                "backend_cache_hits": 1,
+                "backend_cache_misses": 0,
+                "backend_calls": 0,
+                "backend_total_seconds": 0.0,
+                "backend_average_seconds": 0.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(
+        ["compare-benchmark-json", str(before_path), str(after_path), str(output_path)]
+    )
+
+    assert exit_code == 0
+    assert "Benchmark comparison export complete." in output
+    text = output_path.read_text(encoding="utf-8")
+    assert "Backend cache hits: 0 -> 1 (+1)" in text
+
+
+def test_cli_compare_benchmark_json_accepts_cache_compare_payloads(tmp_path: Path) -> None:
+    before_path = tmp_path / "before.json"
+    after_path = tmp_path / "after.json"
+    before_path.write_text(
+        json.dumps(
+            {
+                "repository": "/tmp/repo",
+                "cache_path": "/tmp/cache.json",
+                "cache_cleared_entries": 0,
+                "cold": {"exact_matches": 10},
+                "warm": {
+                    "repository": "/tmp/repo",
+                    "total_cases": 18,
+                    "exact_matches": 12,
+                    "accuracy": 66.7,
+                    "missed_risks": 3,
+                    "false_positive_risks": 3,
+                    "unresolved_cases": 3,
+                    "backend_fallbacks": 1,
+                    "backend_timeouts": 0,
+                    "backend_cache_hits": 8,
+                    "backend_cache_misses": 10,
+                    "backend_calls": 10,
+                    "backend_total_seconds": 5.0,
+                    "backend_average_seconds": 0.5,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    after_path.write_text(
+        json.dumps(
+            {
+                "repository": "/tmp/repo",
+                "total_cases": 18,
+                "exact_matches": 15,
+                "accuracy": 83.3,
+                "missed_risks": 1,
+                "false_positive_risks": 2,
+                "unresolved_cases": 1,
+                "backend_fallbacks": 0,
+                "backend_timeouts": 0,
+                "backend_cache_hits": 12,
+                "backend_cache_misses": 6,
+                "backend_calls": 6,
+                "backend_total_seconds": 3.0,
+                "backend_average_seconds": 0.5,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["compare-benchmark-json", str(before_path), str(after_path)])
+
+    assert exit_code == 0
+    assert "Exact matches: 12 -> 15 (+3)" in output
 
 
 def test_cli_benchmark_cache_compare_requires_backend_cache(tmp_path: Path) -> None:
