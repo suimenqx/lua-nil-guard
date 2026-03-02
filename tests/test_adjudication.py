@@ -514,3 +514,104 @@ def test_adjudicate_packet_expands_else_branch_for_inner_target_line() -> None:
         "    return #items\n"
         "  end"
     )
+
+
+def test_adjudicate_packet_prefers_nested_block_snippet_inside_else_branch() -> None:
+    packet = EvidencePacket(
+        case_id="case_else_nested_for",
+        target=EvidenceTarget(
+            file="demo.lua",
+            line=4,
+            column=22,
+            sink="pairs",
+            arg_index=1,
+            expression="req.items",
+        ),
+        local_context=(
+            "  if ready then\n"
+            "    return nil\n"
+            "  else\n"
+            "    for _, item in pairs(req.items) do\n"
+            "      return item\n"
+            "    end\n"
+            "  end"
+        ),
+        related_functions=(),
+        function_summaries=(),
+        knowledge_facts=(),
+        static_reasoning={
+            "state": "unknown_static",
+            "origin_candidates": ("req.items",),
+            "observed_guards": (),
+        },
+    )
+    rule = SinkRule(
+        id="pairs.arg1",
+        kind="function_arg",
+        qualified_name="pairs",
+        arg_index=1,
+        nil_sensitive=True,
+        failure_mode="runtime_error",
+        default_severity="high",
+        safe_patterns=("x or {}",),
+    )
+
+    record = adjudicate_packet(packet, rule)
+
+    assert record.judge.status == "risky"
+    assert record.judge.suggested_fix == (
+        "    local items = req.items or {}\n"
+        "    for _, item in pairs(items) do\n"
+        "      return item\n"
+        "    end"
+    )
+
+
+def test_adjudicate_packet_keeps_nested_line_snippet_inside_else_branch_function() -> None:
+    packet = EvidencePacket(
+        case_id="case_else_nested_function",
+        target=EvidenceTarget(
+            file="demo.lua",
+            line=5,
+            column=14,
+            sink="#",
+            arg_index=1,
+            expression="req.items",
+        ),
+        local_context=(
+            "  if ready then\n"
+            "    return 0\n"
+            "  else\n"
+            "    local function measure()\n"
+            "      return #req.items\n"
+            "    end\n"
+            "    return measure()\n"
+            "  end"
+        ),
+        related_functions=(),
+        function_summaries=(),
+        knowledge_facts=(),
+        static_reasoning={
+            "state": "unknown_static",
+            "origin_candidates": ("req.items",),
+            "observed_guards": (),
+        },
+    )
+    rule = SinkRule(
+        id="length.operand",
+        kind="unary_operand",
+        qualified_name="#",
+        arg_index=1,
+        nil_sensitive=True,
+        failure_mode="runtime_error",
+        default_severity="high",
+        safe_patterns=("x or {}",),
+    )
+
+    record = adjudicate_packet(packet, rule)
+
+    assert record.judge.status == "risky"
+    assert record.judge.suggested_fix == (
+        "      local items = req.items or {}\n"
+        "      return #items"
+    )

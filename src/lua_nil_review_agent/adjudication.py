@@ -270,10 +270,6 @@ def _find_snippet_bounds(
         return None
 
     target_line = lines[target_index].strip()
-    else_bounds = _find_enclosing_else_branch_bounds(lines, target_index)
-    if else_bounds is not None:
-        return else_bounds
-
     if _is_repeat_until_line(target_line):
         start_index = _find_repeat_start_index(lines, target_index)
         if start_index is not None:
@@ -283,6 +279,10 @@ def _find_snippet_bounds(
     if _opens_block(target_line):
         end_index = _find_snippet_end_index(lines, target_index)
         return (target_index, target_index, end_index)
+
+    else_bounds = _find_enclosing_else_branch_bounds(lines, target_index)
+    if else_bounds is not None:
+        return else_bounds
 
     return (target_index, target_index, target_index)
 
@@ -412,13 +412,16 @@ def _find_enclosing_else_branch_bounds(
         if stripped == "end" and stack:
             stack.pop()
 
-    for entry in reversed(stack):
-        if entry["type"] != "if" or entry.get("branch") != "else":
-            continue
-        start_index = int(entry["branch_index"])
-        end_index = _find_snippet_end_index(lines, int(entry["start_index"]))
-        return (start_index, target_index, end_index)
-    return None
+    if not stack:
+        return None
+
+    entry = stack[-1]
+    if entry["type"] != "if" or entry.get("branch") != "else":
+        return None
+
+    start_index = int(entry["branch_index"])
+    end_index = _find_snippet_end_index(lines, int(entry["start_index"]))
+    return (start_index, target_index, end_index)
 
 
 def _pop_last_matching_block(stack: list[dict[str, int | str]], block_type: str) -> None:
