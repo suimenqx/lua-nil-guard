@@ -64,3 +64,52 @@ def test_collect_candidates_tracks_enclosing_function_name() -> None:
 
     assert len(candidates) == 1
     assert candidates[0].function_scope == "parse_name"
+
+
+def test_collect_candidates_finds_configured_receiver_sinks() -> None:
+    sink_rules = (
+        SinkRule(
+            id="member_access.receiver",
+            kind="receiver",
+            qualified_name="member_access",
+            arg_index=0,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("if x then ... end",),
+        ),
+    )
+    source = "\n".join(
+        [
+            "local profile = req.profile",
+            "return profile.name",
+        ]
+    )
+
+    candidates = collect_candidates(Path("foo/member.lua"), source, sink_rules)
+
+    assert len(candidates) == 2
+    expressions = {candidate.expression for candidate in candidates}
+    assert expressions == {"req", "profile"}
+    assert all(candidate.sink_rule_id == "member_access.receiver" for candidate in candidates)
+    assert all(candidate.sink_name == "member_access" for candidate in candidates)
+
+
+def test_collect_candidates_skips_member_access_used_as_direct_call_callee() -> None:
+    sink_rules = (
+        SinkRule(
+            id="member_access.receiver",
+            kind="receiver",
+            qualified_name="member_access",
+            arg_index=0,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("if x then ... end",),
+        ),
+    )
+    source = "return string.match(name, '^a')"
+
+    candidates = collect_candidates(Path("foo/member.lua"), source, sink_rules)
+
+    assert candidates == ()

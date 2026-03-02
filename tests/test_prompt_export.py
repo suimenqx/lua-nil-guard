@@ -429,3 +429,61 @@ def test_cli_export_prompts_reports_invalid_skill_contract_without_fallback(tmp_
 
     assert exit_code == 2
     assert "Unsupported skill_contract" in output
+
+
+def test_export_adjudication_tasks_supports_receiver_sinks(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "member_access.receiver",
+                    "kind": "receiver",
+                    "qualified_name": "member_access",
+                    "arg_index": 0,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["if x then ... end"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local profile = req.profile",
+                "return profile.name",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    tasks = export_adjudication_tasks(snapshot)
+
+    assert len(tasks) == 2
+    assert all(task["sink_rule_id"] == "member_access.receiver" for task in tasks)
+
+    prompt_by_expression: dict[str, str] = {}
+    for task in tasks:
+        if "- expression: req" in task["prompt"]:
+            prompt_by_expression["req"] = task["prompt"]
+        if "- expression: profile" in task["prompt"]:
+            prompt_by_expression["profile"] = task["prompt"]
+
+    assert "- sink: member_access" in prompt_by_expression["req"]
+    assert "- sink: member_access" in prompt_by_expression["profile"]
+    assert "- expression: profile" in prompt_by_expression["profile"]
