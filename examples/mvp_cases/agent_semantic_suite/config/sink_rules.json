@@ -58,5 +58,15 @@
     "failure_mode": "runtime_error",
     "default_severity": "high",
     "safe_patterns": ["x or {}", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "length.operand",
+    "kind": "unary_operand",
+    "qualified_name": "#",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or {}", "assert(x)", "if x then ... end"]
   }
 ]

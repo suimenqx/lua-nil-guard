@@ -49,6 +49,16 @@ class ReceiverAccess:
     column: int
 
 
+@dataclass(frozen=True, slots=True)
+class LengthOperand:
+    """A normalized Lua length-operator operand discovered by the active backend."""
+
+    operand: str
+    offset: int
+    line: int
+    column: int
+
+
 def get_parser_backend_info() -> ParserBackendInfo:
     """Return the active parser backend description."""
 
@@ -77,6 +87,17 @@ def collect_receiver_accesses(source: str) -> tuple[ReceiverAccess, ...]:
         if tree_sitter_accesses is not None:
             return tree_sitter_accesses
     return _collect_receiver_accesses_fallback(source)
+
+
+def collect_length_operands(source: str) -> tuple[LengthOperand, ...]:
+    """Collect length-operator operands using the active backend."""
+
+    language = _load_lua_language()
+    if language is not None:
+        tree_sitter_operands = _collect_length_operands_tree_sitter(source, language)
+        if tree_sitter_operands is not None:
+            return tree_sitter_operands
+    return _collect_length_operands_fallback(source)
 
 
 def _load_lua_language():
@@ -227,6 +248,34 @@ def _collect_receiver_accesses_tree_sitter(
     return tuple(accesses)
 
 
+def _collect_length_operands_tree_sitter(
+    source: str,
+    language,
+) -> tuple[LengthOperand, ...] | None:
+    try:
+        from tree_sitter import Parser
+    except Exception:
+        return None
+
+    parser = Parser()
+    parser.language = language
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
+    operands: list[LengthOperand] = []
+    stack = [tree.root_node]
+
+    while stack:
+        node = stack.pop()
+        if node.type == "unary_expression":
+            operand = _length_operand_from_tree_sitter_node(node, source_bytes)
+            if operand is not None:
+                operands.append(operand)
+        stack.extend(reversed(node.children))
+
+    operands.sort(key=lambda item: (item.line, item.column))
+    return tuple(operands)
+
+
 def _call_site_from_tree_sitter_node(node, source_bytes: bytes) -> CallSite | None:
     arguments_node = None
     for child in node.children:
@@ -287,6 +336,39 @@ def _receiver_access_from_tree_sitter_node(node, source_bytes: bytes) -> Receive
     )
 
 
+def _length_operand_from_tree_sitter_node(node, source_bytes: bytes) -> LengthOperand | None:
+    if len(node.children) < 2 or node.children[0].type != "#":
+        return None
+
+    named_children = list(node.named_children)
+    if not named_children:
+        return None
+
+    operand_node = named_children[0]
+    if operand_node.type == "parenthesized_expression":
+        nested = list(operand_node.named_children)
+        if len(nested) != 1:
+            return None
+        operand_node = nested[0]
+
+    operand_text = _decode_bytes(
+        source_bytes,
+        operand_node.start_byte,
+        operand_node.end_byte,
+    ).strip()
+    if not operand_text:
+        return None
+
+    start_point = node.start_point
+    offset = len(source_bytes[: node.start_byte].decode("utf-8"))
+    return LengthOperand(
+        operand=operand_text,
+        offset=offset,
+        line=start_point.row + 1,
+        column=start_point.column + 1,
+    )
+
+
 def _decode_bytes(source_bytes: bytes, start: int, end: int) -> str:
     return source_bytes[start:end].decode("utf-8")
 
@@ -339,6 +421,45 @@ def _collect_receiver_accesses_fallback(source: str) -> tuple[ReceiverAccess, ..
         index = max(index + 1, next_index)
 
     return tuple(accesses)
+
+
+def _collect_length_operands_fallback(source: str) -> tuple[LengthOperand, ...]:
+    operands: list[LengthOperand] = []
+    index = 0
+    quote: str | None = None
+    escaped = False
+
+    while index < len(source):
+        char = source[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            index += 1
+            continue
+
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            continue
+
+        if char != "#":
+            index += 1
+            continue
+
+        parsed = _parse_length_operand(source, index)
+        if parsed is None:
+            index += 1
+            continue
+
+        operand, next_index = parsed
+        operands.append(operand)
+        index = max(index + 1, next_index)
+
+    return tuple(operands)
 
 
 def _find_matching_paren(source: str, open_paren_index: int) -> int:
@@ -458,6 +579,63 @@ def _parse_access_chain(source: str, start: int) -> tuple[ReceiverAccess | None,
     if _is_immediately_called_text(source, index):
         return (None, index)
     return (last_access, index)
+
+
+def _parse_length_operand(source: str, operator_index: int) -> tuple[LengthOperand, int] | None:
+    index = operator_index + 1
+    while index < len(source) and source[index].isspace():
+        index += 1
+    if index >= len(source):
+        return None
+
+    if source[index] == "(":
+        close_index = _find_matching_paren(source, index)
+        if close_index == -1:
+            return None
+        operand_text = source[index + 1 : close_index].strip()
+        if not operand_text:
+            return None
+        line, column = _line_and_column(source, operator_index)
+        return (
+            LengthOperand(
+                operand=operand_text,
+                offset=operator_index,
+                line=line,
+                column=column,
+            ),
+            close_index + 1,
+        )
+
+    parsed = _parse_access_chain(source, index)
+    if parsed is None:
+        identifier, next_index = _read_identifier(source, index)
+        if identifier is None:
+            return None
+        line, column = _line_and_column(source, operator_index)
+        return (
+            LengthOperand(
+                operand=identifier,
+                offset=operator_index,
+                line=line,
+                column=column,
+            ),
+            next_index,
+        )
+
+    access, next_index = parsed
+    operand_text = access.expression if access is not None else source[index:next_index].strip()
+    if not operand_text:
+        return None
+    line, column = _line_and_column(source, operator_index)
+    return (
+        LengthOperand(
+            operand=operand_text,
+            offset=operator_index,
+            line=line,
+            column=column,
+        ),
+        next_index,
+    )
 
 
 def _read_identifier(source: str, start: int) -> tuple[str | None, int]:

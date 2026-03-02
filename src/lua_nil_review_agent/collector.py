@@ -4,7 +4,11 @@ import re
 from pathlib import Path
 
 from .models import CandidateCase, SinkRule
-from .parser_backend import collect_call_sites, collect_receiver_accesses
+from .parser_backend import (
+    collect_call_sites,
+    collect_length_operands,
+    collect_receiver_accesses,
+)
 
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -53,6 +57,31 @@ def collect_candidates(
             continue
 
         if sink_rule.kind != "receiver":
+            if sink_rule.kind != "unary_operand":
+                continue
+
+            for operand in collect_length_operands(source):
+                expression = operand.operand
+                line, column = operand.line, operand.column
+                function_scope = _find_enclosing_function(source[: operand.offset])
+                symbol = expression if _IDENTIFIER_RE.match(expression) else expression
+                case_id = f"{path_text}:{line}:{column}:{sink_rule.id}"
+
+                candidates.append(
+                    CandidateCase(
+                        case_id=case_id,
+                        file=path_text,
+                        line=line,
+                        column=column,
+                        sink_rule_id=sink_rule.id,
+                        sink_name=sink_rule.qualified_name,
+                        arg_index=sink_rule.arg_index,
+                        expression=expression,
+                        symbol=symbol,
+                        function_scope=function_scope,
+                        static_state="unknown_static",
+                    )
+                )
             continue
 
         for access in collect_receiver_accesses(source):

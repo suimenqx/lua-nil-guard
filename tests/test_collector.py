@@ -113,3 +113,33 @@ def test_collect_candidates_skips_member_access_used_as_direct_call_callee() -> 
     candidates = collect_candidates(Path("foo/member.lua"), source, sink_rules)
 
     assert candidates == ()
+
+
+def test_collect_candidates_finds_configured_length_operator_sinks() -> None:
+    sink_rules = (
+        SinkRule(
+            id="length.operand",
+            kind="unary_operand",
+            qualified_name="#",
+            arg_index=1,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("x or {}",),
+        ),
+    )
+    source = "\n".join(
+        [
+            "local items = req.items",
+            "return #items",
+        ]
+    )
+
+    candidates = collect_candidates(Path("foo/length.lua"), source, sink_rules)
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.sink_rule_id == "length.operand"
+    assert candidate.sink_name == "#"
+    assert candidate.expression == "items"
+    assert candidate.symbol == "items"

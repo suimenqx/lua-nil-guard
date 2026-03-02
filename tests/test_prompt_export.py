@@ -487,3 +487,52 @@ def test_export_adjudication_tasks_supports_receiver_sinks(tmp_path: Path) -> No
     assert "- sink: member_access" in prompt_by_expression["req"]
     assert "- sink: member_access" in prompt_by_expression["profile"]
     assert "- expression: profile" in prompt_by_expression["profile"]
+
+
+def test_export_adjudication_tasks_supports_length_operator_sinks(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "length.operand",
+                    "kind": "unary_operand",
+                    "qualified_name": "#",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or {}"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local items = req.items or {}",
+                "return #items",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    tasks = export_adjudication_tasks(snapshot)
+
+    assert len(tasks) == 1
+    assert tasks[0]["sink_rule_id"] == "length.operand"
+    assert "- sink: #" in tasks[0]["prompt"]
+    assert "- expression: items" in tasks[0]["prompt"]
