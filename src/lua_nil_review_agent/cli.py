@@ -535,6 +535,8 @@ def _render_benchmark_summary(root: Path, summary) -> str:  # noqa: ANN001
         f"Missed risks: {summary.missed_risks}",
         f"False positive risks: {summary.false_positive_risks}",
         f"Unresolved labeled cases: {summary.unresolved_cases}",
+        f"Backend fallbacks: {summary.backend_fallbacks}",
+        f"Backend timeouts: {summary.backend_timeouts}",
     ]
 
     mismatches = [case for case in summary.cases if not case.matches_expectation]

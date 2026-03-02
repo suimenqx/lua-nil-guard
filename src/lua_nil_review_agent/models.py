@@ -183,6 +183,7 @@ class BenchmarkCaseResult:
     expected_status: str
     actual_status: str
     matches_expectation: bool
+    backend_failure_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +201,8 @@ class BenchmarkSummary:
     false_positive_risks: int
     missed_risks: int
     unresolved_cases: int
+    backend_fallbacks: int
+    backend_timeouts: int
     cases: tuple[BenchmarkCaseResult, ...]
 
 

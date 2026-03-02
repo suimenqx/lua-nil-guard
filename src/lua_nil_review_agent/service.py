@@ -168,6 +168,7 @@ def benchmark_repository_review(
     for assessment, expected in labeled_assessments:
         verdict = verdict_by_case_id[assessment.candidate.case_id]
         actual = _normalize_benchmark_status(verdict.status)
+        backend_failure_reason = _extract_backend_failure_reason(verdict)
         cases.append(
             BenchmarkCaseResult(
                 case_id=assessment.candidate.case_id,
@@ -175,6 +176,7 @@ def benchmark_repository_review(
                 expected_status=expected,
                 actual_status=actual,
                 matches_expectation=actual == expected,
+                backend_failure_reason=backend_failure_reason,
             )
         )
 
@@ -204,6 +206,13 @@ def benchmark_repository_review(
             1
             for case in cases
             if case.actual_status == "uncertain" and case.expected_status in {"risky", "safe"}
+        ),
+        backend_fallbacks=sum(1 for case in cases if case.backend_failure_reason is not None),
+        backend_timeouts=sum(
+            1
+            for case in cases
+            if case.backend_failure_reason is not None
+            and "timed out" in case.backend_failure_reason.lower()
         ),
         cases=tuple(cases),
     )
@@ -573,6 +582,15 @@ def _normalize_benchmark_status(status: str) -> str:
     if status in {"safe", "safe_verified"}:
         return "safe"
     return "uncertain"
+
+
+def _extract_backend_failure_reason(verdict: Verdict) -> str | None:
+    if verdict.status != "uncertain":
+        return None
+    for item in verdict.counterarguments_considered:
+        if item.startswith("CLI backend command"):
+            return item
+    return None
 
 
 def _serialize_autofix_patch(patch: AutofixPatch) -> dict[str, object]:

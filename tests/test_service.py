@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import shutil
 
+from lua_nil_review_agent.agent_backend import BackendError, CodexCliBackend
 from lua_nil_review_agent.models import AdjudicationRecord, AutofixPatch, RoleOpinion, Verdict
 from lua_nil_review_agent.service import (
     apply_autofix_manifest,
@@ -186,7 +187,61 @@ def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -
     assert summary.false_positive_risks == 0
     assert summary.missed_risks == 0
     assert summary.unresolved_cases == 0
+    assert summary.backend_fallbacks == 0
+    assert summary.backend_timeouts == 0
     assert all(case.matches_expectation for case in summary.cases)
+
+
+def test_benchmark_repository_review_counts_backend_fallbacks(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "provable_risky_nil_literal.lua").write_text(
+        "local username = nil\nreturn string.match(username, '^a')\n",
+        encoding="utf-8",
+    )
+
+    def failing_runner(command, *, stdin_text, cwd):  # noqa: ANN001
+        raise BackendError("CLI backend command timed out after 5s")
+
+    snapshot = bootstrap_repository(tmp_path)
+    summary = benchmark_repository_review(
+        snapshot,
+        backend=CodexCliBackend(runner=failing_runner, workdir=tmp_path, max_attempts=1),
+    )
+
+    assert summary.total_cases == 1
+    assert summary.exact_matches == 0
+    assert summary.actual_uncertain == 1
+    assert summary.backend_fallbacks == 1
+    assert summary.backend_timeouts == 1
+    assert summary.cases[0].backend_failure_reason == "CLI backend command timed out after 5s"
 
 
 def test_export_autofix_patches_writes_reportable_patch_file(tmp_path: Path) -> None:
