@@ -251,7 +251,7 @@ def test_adjudicate_packet_uses_field_alias_for_dot_path_collection_expression()
             arg_index=1,
             expression="req.items",
         ),
-        local_context="for _, item in pairs(req.items) do\n  return item\nend",
+        local_context="  for _, item in pairs(req.items) do\n    return item\n  end",
         related_functions=(),
         function_summaries=(),
         knowledge_facts=(),
@@ -276,8 +276,8 @@ def test_adjudicate_packet_uses_field_alias_for_dot_path_collection_expression()
 
     assert record.judge.status == "risky"
     assert record.judge.suggested_fix == (
-        "local items = req.items or {}\n"
-        "for _, item in pairs(items) do"
+        "  local items = req.items or {}\n"
+        "  for _, item in pairs(items) do"
     )
 
 
@@ -330,7 +330,7 @@ def test_adjudicate_packet_rewrites_target_line_for_dot_path_string_expression()
             arg_index=1,
             expression="req.params.username",
         ),
-        local_context='return string.match(req.params.username, "^guest")',
+        local_context='  return string.match(req.params.username, "^guest")',
         related_functions=(),
         function_summaries=(),
         knowledge_facts=(),
@@ -355,6 +355,6 @@ def test_adjudicate_packet_rewrites_target_line_for_dot_path_string_expression()
 
     assert record.judge.status == "risky"
     assert record.judge.suggested_fix == (
-        "local username = req.params.username or ''\n"
-        'return string.match(username, "^guest")'
+        "  local username = req.params.username or ''\n"
+        '  return string.match(username, "^guest")'
     )

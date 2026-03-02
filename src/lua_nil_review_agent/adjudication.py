@@ -176,9 +176,11 @@ def _coalesce_fix(
 
     alias = _suggest_local_alias(expression)
     if alias is not None:
-        alias_line = f"local {alias} = {expression} or {fallback_literal}"
-        rewritten_line = _rewrite_target_line(packet, sink_rule, alias)
-        if rewritten_line is not None:
+        target_line = _find_target_line(packet, sink_rule)
+        alias_indent = _leading_indent(target_line) if target_line is not None else ""
+        alias_line = f"{alias_indent}local {alias} = {expression} or {fallback_literal}"
+        if target_line is not None:
+            rewritten_line = target_line.replace(expression, alias, 1)
             return f"{alias_line}\n{rewritten_line}"
         return alias_line
 
@@ -195,10 +197,9 @@ def _suggest_local_alias(expression: str) -> str | None:
     return alias
 
 
-def _rewrite_target_line(
+def _find_target_line(
     packet: EvidencePacket,
     sink_rule: SinkRule,
-    alias: str,
 ) -> str | None:
     expression = packet.target.expression
     for line in packet.local_context.splitlines():
@@ -208,5 +209,10 @@ def _rewrite_target_line(
             continue
         if sink_rule.kind == "unary_operand" and "#" not in line:
             continue
-        return line.replace(expression, alias, 1)
+        return line
     return None
+
+
+def _leading_indent(line: str) -> str:
+    stripped = line.lstrip(" \t")
+    return line[: len(line) - len(stripped)]
