@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import re
+
 from .models import AdjudicationRecord, EvidencePacket, RoleOpinion, SinkRule, Verdict
+
+
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def adjudicate_packet(packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
@@ -144,15 +149,21 @@ def _suggested_fix(packet: EvidencePacket, sink_rule: SinkRule) -> str | None:
     expression = packet.target.expression
 
     if sink_rule.qualified_name.startswith("string."):
-        return f"local safe_value = {expression} or ''"
+        return _coalesce_fix(expression, "''")
 
     if sink_rule.qualified_name in {"table.insert", "pairs", "ipairs"}:
-        return f"local safe_value = {expression} or {{}}"
+        return _coalesce_fix(expression, "{}")
 
     if sink_rule.kind == "unary_operand" and sink_rule.qualified_name == "#":
-        return f"local safe_value = {expression} or {{}}"
+        return _coalesce_fix(expression, "{}")
 
     if sink_rule.kind == "receiver" or sink_rule.qualified_name == "member_access":
         return f"if not {expression} then return nil end"
 
     return None
+
+
+def _coalesce_fix(expression: str, fallback_literal: str) -> str:
+    if _IDENTIFIER_RE.match(expression):
+        return f"{expression} = {expression} or {fallback_literal}"
+    return f"local safe_value = {expression} or {fallback_literal}"

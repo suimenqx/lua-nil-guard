@@ -84,7 +84,7 @@ def test_adjudicate_packet_reports_risk_when_no_safety_evidence_exists() -> None
     assert record.judge.status == "risky"
     assert record.judge.confidence == "medium"
     assert "no guard before string.match" in record.judge.risk_path[-1]
-    assert record.judge.suggested_fix == "local safe_value = username or ''"
+    assert record.judge.suggested_fix == "username = username or ''"
 
 
 def test_adjudicate_packet_uses_knowledge_facts_as_safety_support() -> None:
@@ -161,7 +161,7 @@ def test_adjudicate_packet_uses_table_fix_for_collection_sinks() -> None:
     record = adjudicate_packet(packet, rule)
 
     assert record.judge.status == "risky"
-    assert record.judge.suggested_fix == "local safe_value = names or {}"
+    assert record.judge.suggested_fix == "names = names or {}"
 
 
 def test_adjudicate_packet_uses_guard_fix_for_receiver_sinks() -> None:
@@ -237,4 +237,42 @@ def test_adjudicate_packet_uses_table_fix_for_length_sinks() -> None:
     record = adjudicate_packet(packet, rule)
 
     assert record.judge.status == "risky"
-    assert record.judge.suggested_fix == "local safe_value = items or {}"
+    assert record.judge.suggested_fix == "items = items or {}"
+
+
+def test_adjudicate_packet_keeps_safe_value_for_complex_collection_expression() -> None:
+    packet = EvidencePacket(
+        case_id="case_pairs",
+        target=EvidenceTarget(
+            file="demo.lua",
+            line=2,
+            column=18,
+            sink="pairs",
+            arg_index=1,
+            expression="req.items",
+        ),
+        local_context="for _, item in pairs(req.items) do\n  return item\nend",
+        related_functions=(),
+        function_summaries=(),
+        knowledge_facts=(),
+        static_reasoning={
+            "state": "unknown_static",
+            "origin_candidates": ("req.items",),
+            "observed_guards": (),
+        },
+    )
+    rule = SinkRule(
+        id="pairs.arg1",
+        kind="function_arg",
+        qualified_name="pairs",
+        arg_index=1,
+        nil_sensitive=True,
+        failure_mode="runtime_error",
+        default_severity="high",
+        safe_patterns=("x or {}",),
+    )
+
+    record = adjudicate_packet(packet, rule)
+
+    assert record.judge.status == "risky"
+    assert record.judge.suggested_fix == "local safe_value = req.items or {}"
