@@ -236,6 +236,59 @@ def test_cli_benchmark_json_outputs_machine_readable_summary(
     assert payload["backend_total_seconds"] == 0.75
 
 
+def test_cli_benchmark_json_writes_output_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        cli_module,
+        "benchmark_repository_review",
+        lambda snapshot, backend: BenchmarkSummary(
+            total_cases=1,
+            exact_matches=1,
+            expected_risky=0,
+            expected_safe=1,
+            expected_uncertain=0,
+            actual_risky=0,
+            actual_safe=1,
+            actual_uncertain=0,
+            false_positive_risks=0,
+            missed_risks=0,
+            unresolved_cases=0,
+            backend_fallbacks=0,
+            backend_timeouts=0,
+            backend_cache_hits=0,
+            backend_cache_misses=0,
+            backend_calls=0,
+            backend_total_seconds=0.0,
+            backend_average_seconds=0.0,
+            cases=(),
+        ),
+    )
+    output_path = tmp_path / "benchmark.json"
+
+    exit_code, output = run(["benchmark-json", str(tmp_path), str(output_path)])
+
+    assert exit_code == 0
+    assert "Benchmark JSON export complete." in output
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["total_cases"] == 1
+
+
 def test_cli_benchmark_cache_compare_reports_cold_and_warm_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -416,6 +469,73 @@ def test_cli_benchmark_cache_compare_json_outputs_machine_readable_comparison(
     assert payload["delta"]["backend_calls"] == -18
 
 
+def test_cli_benchmark_cache_compare_json_writes_output_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    base_summary = BenchmarkSummary(
+        total_cases=1,
+        exact_matches=1,
+        expected_risky=0,
+        expected_safe=1,
+        expected_uncertain=0,
+        actual_risky=0,
+        actual_safe=1,
+        actual_uncertain=0,
+        false_positive_risks=0,
+        missed_risks=0,
+        unresolved_cases=0,
+        backend_fallbacks=0,
+        backend_timeouts=0,
+        backend_cache_hits=0,
+        backend_cache_misses=1,
+        backend_calls=1,
+        backend_total_seconds=0.5,
+        backend_average_seconds=0.5,
+        cases=(),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "benchmark_cache_compare",
+        lambda snapshot, cache_path, backend_factory: BenchmarkCacheComparison(
+            cache_path=str(cache_path),
+            cache_cleared_entries=0,
+            cold=base_summary,
+            warm=base_summary,
+        ),
+    )
+    output_path = tmp_path / "compare.json"
+
+    exit_code, output = run(
+        [
+            "benchmark-cache-compare-json",
+            "--backend-cache",
+            str(tmp_path / "codex-cache.json"),
+            str(tmp_path),
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert "Benchmark cache comparison JSON export complete." in output
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["cache_cleared_entries"] == 0
+
+
 def test_cli_benchmark_cache_compare_requires_backend_cache(tmp_path: Path) -> None:
     (tmp_path / "config").mkdir()
     (tmp_path / "src").mkdir()
@@ -435,6 +555,27 @@ def test_cli_benchmark_cache_compare_requires_backend_cache(tmp_path: Path) -> N
 
     assert exit_code == 2
     assert output == "benchmark-cache-compare requires --backend-cache PATH"
+
+
+def test_cli_benchmark_cache_compare_json_requires_backend_cache(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["benchmark-cache-compare-json", str(tmp_path)])
+
+    assert exit_code == 2
+    assert output == "benchmark-cache-compare-json requires --backend-cache PATH"
 
 
 def test_cli_report_outputs_markdown_findings(tmp_path: Path) -> None:

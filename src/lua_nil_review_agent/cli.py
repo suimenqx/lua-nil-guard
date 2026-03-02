@@ -194,9 +194,10 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
-        if len(positional) != 1:
-            return 2, "benchmark-json requires exactly one repository path"
+        if len(positional) not in {1, 2}:
+            return 2, "benchmark-json requires a repository path and optional output path"
         root = Path(positional[0])
+        output_path = Path(positional[1]) if len(positional) == 2 else None
         snapshot = bootstrap_repository(root)
         try:
             summary = benchmark_repository_review(
@@ -216,7 +217,17 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
             return 2, str(exc)
-        return 0, json.dumps(_serialize_benchmark_summary(snapshot.root, summary), indent=2, sort_keys=True)
+        payload = json.dumps(_serialize_benchmark_summary(snapshot.root, summary), indent=2, sort_keys=True)
+        if output_path is None:
+            return 0, payload
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(payload, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Benchmark JSON export complete.",
+                f"Output: {output_path}",
+            ]
+        )
 
     if command == "benchmark-cache-compare":
         try:
@@ -277,11 +288,12 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
-        if len(positional) != 1:
-            return 2, "benchmark-cache-compare-json requires exactly one repository path"
+        if len(positional) not in {1, 2}:
+            return 2, "benchmark-cache-compare-json requires a repository path and optional output path"
         if backend_cache_path is None:
             return 2, "benchmark-cache-compare-json requires --backend-cache PATH"
         root = Path(positional[0])
+        output_path = Path(positional[1]) if len(positional) == 2 else None
         snapshot = bootstrap_repository(root)
         try:
             comparison = benchmark_cache_compare(
@@ -302,10 +314,20 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
             return 2, str(exc)
-        return 0, json.dumps(
+        payload = json.dumps(
             _serialize_benchmark_cache_comparison(snapshot.root, comparison),
             indent=2,
             sort_keys=True,
+        )
+        if output_path is None:
+            return 0, payload
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(payload, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Benchmark cache comparison JSON export complete.",
+                f"Output: {output_path}",
+            ]
         )
 
     if command == "baseline-create":
@@ -818,9 +840,9 @@ def _usage() -> str:
             "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
-            "  lua-nil-review-agent benchmark-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent benchmark-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
             "  lua-nil-review-agent benchmark-cache-compare [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] --backend-cache PATH [--backend-config KEY=VALUE] <repository>",
-            "  lua-nil-review-agent benchmark-cache-compare-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] --backend-cache PATH [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent benchmark-cache-compare-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] --backend-cache PATH [--backend-config KEY=VALUE] <repository> [output]",
             "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <output>",
             "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <baseline>",
             "  lua-nil-review-agent refresh-summaries <repository> [output]",
