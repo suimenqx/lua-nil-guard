@@ -142,6 +142,30 @@ def test_cli_validate_backend_manifest_reports_summary(tmp_path: Path) -> None:
     assert f"Manifest: {manifest_path}" in output
     assert "Name: claude-code" in output
     assert "Protocol: stdout_envelope_cli" in output
+    assert "Protocol backend: CodeAgentCliBackend" in output
+    assert "Runtime compatibility: supported" in output
+
+
+def test_cli_validate_backend_manifest_rejects_unsupported_protocol(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "provider.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "claude-sdk",
+                "protocol": "sdk_api",
+                "default_executable": "claude-sdk",
+                "default_timeout_seconds": 30.0,
+                "default_max_attempts": 2,
+                "default_fallback_to_uncertain_on_error": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["validate-backend-manifest", str(manifest_path)])
+
+    assert exit_code == 2
+    assert output == "Unknown CLI protocol backend: sdk_api"
 
 
 def test_cli_register_backend_manifest_calls_registry(
@@ -184,6 +208,7 @@ def test_cli_register_backend_manifest_calls_registry(
     assert captured["path"] == manifest_path
     assert captured["replace"] is True
     assert "Backend manifest registered." in output
+    assert "Protocol backend: CodeAgentCliBackend" in output
     assert "Registration scope: current process invocation" in output
 
 

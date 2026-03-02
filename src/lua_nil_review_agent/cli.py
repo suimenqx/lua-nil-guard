@@ -8,6 +8,7 @@ from typing import Sequence
 from .agent_backend import (
     BackendError,
     create_adjudication_backend,
+    get_cli_protocol_backend,
     register_manifest_backed_adjudication_backend,
 )
 from .agent_driver_manifest import load_agent_provider_spec_manifest_file
@@ -69,11 +70,13 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         manifest_path = Path(args[1])
         try:
             provider_spec = load_agent_provider_spec_manifest_file(manifest_path)
+            protocol_backend = get_cli_protocol_backend(provider_spec.protocol)
         except (OSError, ValueError) as exc:
             return 2, str(exc)
         return 0, _render_backend_manifest_summary(
             provider_spec,
             manifest_path=manifest_path,
+            protocol_backend_name=protocol_backend.__name__,
             registered=False,
         )
 
@@ -93,11 +96,13 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 manifest_path,
                 replace=replace,
             )
+            protocol_backend = get_cli_protocol_backend(provider_spec.protocol)
         except (OSError, ValueError) as exc:
             return 2, str(exc)
         return 0, _render_backend_manifest_summary(
             provider_spec,
             manifest_path=manifest_path,
+            protocol_backend_name=protocol_backend.__name__,
             registered=True,
         )
 
@@ -788,23 +793,28 @@ def _render_backend_manifest_summary(
     provider_spec,  # noqa: ANN001
     *,
     manifest_path: Path,
+    protocol_backend_name: str,
     registered: bool,
 ) -> str:
+    capabilities = provider_spec.capabilities
     lines = [
         "Backend manifest registered." if registered else "Backend manifest valid.",
         f"Manifest: {manifest_path}",
         f"Name: {provider_spec.name}",
         f"Protocol: {provider_spec.protocol}",
+        f"Protocol backend: {protocol_backend_name}",
+        "Runtime compatibility: supported",
         f"Default executable: {provider_spec.default_executable}",
         f"Default timeout: {provider_spec.default_timeout_seconds}",
         f"Default attempts: {provider_spec.default_max_attempts}",
-        "Capabilities:",
-        f"  model override: {provider_spec.capabilities.supports_model_override}",
-        f"  config overrides: {provider_spec.capabilities.supports_config_overrides}",
-        f"  backend cache: {provider_spec.capabilities.supports_backend_cache}",
-        f"  output schema: {provider_spec.capabilities.supports_output_schema}",
-        f"  output file: {provider_spec.capabilities.supports_output_file}",
-        f"  stdout json: {provider_spec.capabilities.supports_stdout_json}",
+        "Runtime-consumed capabilities:",
+        f"  model override: {getattr(capabilities, 'supports_model_override', False)}",
+        f"  config overrides: {getattr(capabilities, 'supports_config_overrides', False)}",
+        f"  backend cache: {getattr(capabilities, 'supports_backend_cache', False)}",
+        f"  output schema: {getattr(capabilities, 'supports_output_schema', False)}",
+        f"  output file: {getattr(capabilities, 'supports_output_file', False)}",
+        f"  stdout json: {getattr(capabilities, 'supports_stdout_json', False)}",
+        f"  tool-free prompting: {getattr(capabilities, 'supports_tool_free_prompting', True)}",
     ]
     if registered:
         lines.append("Registration scope: current process invocation")
