@@ -208,6 +208,70 @@ def test_analyze_candidate_treats_early_return_guard_as_safe() -> None:
     assert result.origin_candidates == ("req.params.username",)
 
 
+def test_analyze_candidate_keeps_early_return_guard_active_across_non_assignments() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "if not username then",
+            "  return nil",
+            "end",
+            "log('ready')",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_7b",
+        file="demo.lua",
+        line=6,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "safe_static"
+    assert result.observed_guards == ("if not username then return",)
+    assert result.origin_candidates == ("req.params.username",)
+
+
+def test_analyze_candidate_invalidates_early_return_guard_after_reassignment() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "if not username then",
+            "  return nil",
+            "end",
+            "username = req.params.fallback_name",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_7c",
+        file="demo.lua",
+        line=6,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
+    assert result.origin_candidates == ("req.params.fallback_name",)
+
+
 def test_analyze_candidate_invalidates_positive_guard_after_reassignment() -> None:
     source = "\n".join(
         [

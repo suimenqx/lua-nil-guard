@@ -107,15 +107,51 @@ def _has_active_positive_guard(lines: list[str], symbol: str) -> bool:
 
 
 def _has_early_exit_guard(lines: list[str], symbol: str) -> bool:
-    compact_lines = [line.strip() for line in lines if line.strip()]
-    if len(compact_lines) < 3:
-        return False
+    stack: list[str] = []
+    valid_guard_depths: list[int] = []
 
-    if compact_lines[-1] != "end":
-        return False
-    if not _is_early_exit_statement(compact_lines[-2]):
-        return False
-    return _is_negative_guard_for_symbol(compact_lines[-3], symbol)
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        if stack and stack[-1] == "neg_guard_pending":
+            if _is_early_exit_statement(stripped):
+                stack[-1] = "neg_guard_exit"
+                continue
+            if stripped != "end":
+                stack[-1] = "if"
+
+        if valid_guard_depths and _assigns_symbol(stripped, symbol):
+            valid_guard_depths.clear()
+
+        if _is_negative_guard_for_symbol(stripped, symbol):
+            stack.append("neg_guard_pending")
+            continue
+        if _is_if_open_for_symbol(stripped, symbol):
+            stack.append("symbol_if")
+            continue
+        if _is_if_open(stripped):
+            stack.append("if")
+            continue
+        if _is_elseif_line(stripped):
+            if stack and stack[-1] in {"if", "symbol_if", "neg_guard_pending", "neg_guard_exit"}:
+                stack[-1] = "symbol_if" if _is_elseif_for_symbol(stripped, symbol) else "if"
+            continue
+        if stripped == "else":
+            if stack and stack[-1] in {"if", "symbol_if", "neg_guard_pending", "neg_guard_exit"}:
+                stack[-1] = "if"
+            continue
+        if _opens_non_if_block(stripped):
+            stack.append("block")
+            continue
+        if _closes_block(stripped) and stack:
+            closing = stack.pop()
+            if closing == "neg_guard_exit":
+                valid_guard_depths.append(len(stack))
+
+    current_depth = len(stack)
+    return any(depth <= current_depth for depth in valid_guard_depths)
 
 
 def _has_assert(lines: list[str], symbol: str) -> bool:
