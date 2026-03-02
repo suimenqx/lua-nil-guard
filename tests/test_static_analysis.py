@@ -88,3 +88,31 @@ def test_analyze_candidate_leaves_unguarded_value_unknown() -> None:
     assert result.state == "unknown_static"
     assert result.observed_guards == ()
     assert result.origin_candidates == ("req.params.username",)
+
+
+def test_analyze_candidate_does_not_treat_nil_branch_ternary_as_defaulted() -> None:
+    source = "\n".join(
+        [
+            'local username = req.force_nil and nil or "admin"',
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_4",
+        file="demo.lua",
+        line=2,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
+    assert result.origin_candidates == ('req.force_nil and nil or "admin"',)

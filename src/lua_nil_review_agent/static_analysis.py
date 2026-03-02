@@ -27,7 +27,7 @@ def analyze_candidate(source: str, candidate: CandidateCase) -> StaticAnalysisRe
         observed_guards.append(f"if {candidate.symbol} then")
     if _has_assert(prior_lines, candidate.symbol):
         observed_guards.append(f"assert({candidate.symbol})")
-    if origin is not None and " or " in origin:
+    if _has_defaulting_origin(origin):
         observed_guards.append(f"{candidate.symbol} = {candidate.symbol} or ...")
 
     state = "safe_static" if observed_guards else "unknown_static"
@@ -59,3 +59,15 @@ def _has_guard(lines: list[str], symbol: str) -> bool:
 def _has_assert(lines: list[str], symbol: str) -> bool:
     pattern = re.compile(rf"\bassert\s*\(\s*{re.escape(symbol)}(?:\s*[,)\]])")
     return any(pattern.search(line) for line in lines)
+
+
+def _has_defaulting_origin(origin: str | None) -> bool:
+    if origin is None:
+        return False
+    if " or " not in origin:
+        return False
+    # Lua's common ternary idiom `cond and nil or value` can still yield nil on a
+    # reachable branch, so it is not equivalent to a non-nil defaulting guard.
+    if " and nil or " in origin:
+        return False
+    return True
