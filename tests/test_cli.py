@@ -35,6 +35,8 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "export-unified-diff" in output
     assert "clear-backend-cache" in output
     assert "benchmark-cache-compare" in output
+    assert "benchmark-json" in output
+    assert "benchmark-cache-compare-json" in output
 
 
 def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
@@ -179,6 +181,61 @@ def test_cli_benchmark_reports_labeled_accuracy(tmp_path: Path, monkeypatch: pyt
     assert "Backend average latency: 0.000s" in output
 
 
+def test_cli_benchmark_json_outputs_machine_readable_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        cli_module,
+        "benchmark_repository_review",
+        lambda snapshot, backend: BenchmarkSummary(
+            total_cases=2,
+            exact_matches=1,
+            expected_risky=1,
+            expected_safe=1,
+            expected_uncertain=0,
+            actual_risky=1,
+            actual_safe=0,
+            actual_uncertain=1,
+            false_positive_risks=0,
+            missed_risks=0,
+            unresolved_cases=1,
+            backend_fallbacks=0,
+            backend_timeouts=0,
+            backend_cache_hits=1,
+            backend_cache_misses=1,
+            backend_calls=1,
+            backend_total_seconds=0.75,
+            backend_average_seconds=0.75,
+            cases=(),
+        ),
+    )
+
+    exit_code, output = run(["benchmark-json", str(tmp_path)])
+
+    payload = json.loads(output)
+    assert exit_code == 0
+    assert payload["repository"] == str(tmp_path)
+    assert payload["total_cases"] == 2
+    assert payload["exact_matches"] == 1
+    assert payload["backend_calls"] == 1
+    assert payload["backend_total_seconds"] == 0.75
+
+
 def test_cli_benchmark_cache_compare_reports_cold_and_warm_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -268,6 +325,95 @@ def test_cli_benchmark_cache_compare_reports_cold_and_warm_runs(
     assert "Delta (warm - cold):" in output
     assert "Cache hits: +18" in output
     assert "Backend calls: -18" in output
+
+
+def test_cli_benchmark_cache_compare_json_outputs_machine_readable_comparison(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cold = BenchmarkSummary(
+        total_cases=18,
+        exact_matches=18,
+        expected_risky=5,
+        expected_safe=8,
+        expected_uncertain=5,
+        actual_risky=5,
+        actual_safe=8,
+        actual_uncertain=5,
+        false_positive_risks=0,
+        missed_risks=0,
+        unresolved_cases=0,
+        backend_fallbacks=0,
+        backend_timeouts=0,
+        backend_cache_hits=0,
+        backend_cache_misses=18,
+        backend_calls=18,
+        backend_total_seconds=9.0,
+        backend_average_seconds=0.5,
+        cases=(),
+    )
+    warm = BenchmarkSummary(
+        total_cases=18,
+        exact_matches=18,
+        expected_risky=5,
+        expected_safe=8,
+        expected_uncertain=5,
+        actual_risky=5,
+        actual_safe=8,
+        actual_uncertain=5,
+        false_positive_risks=0,
+        missed_risks=0,
+        unresolved_cases=0,
+        backend_fallbacks=0,
+        backend_timeouts=0,
+        backend_cache_hits=18,
+        backend_cache_misses=0,
+        backend_calls=0,
+        backend_total_seconds=0.0,
+        backend_average_seconds=0.0,
+        cases=(),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "benchmark_cache_compare",
+        lambda snapshot, cache_path, backend_factory: BenchmarkCacheComparison(
+            cache_path=str(cache_path),
+            cache_cleared_entries=3,
+            cold=cold,
+            warm=warm,
+        ),
+    )
+
+    exit_code, output = run(
+        [
+            "benchmark-cache-compare-json",
+            "--backend-cache",
+            str(tmp_path / "codex-cache.json"),
+            str(tmp_path),
+        ]
+    )
+
+    payload = json.loads(output)
+    assert exit_code == 0
+    assert payload["repository"] == str(tmp_path)
+    assert payload["cache_cleared_entries"] == 3
+    assert payload["cold"]["backend_calls"] == 18
+    assert payload["warm"]["backend_calls"] == 0
+    assert payload["delta"]["backend_calls"] == -18
 
 
 def test_cli_benchmark_cache_compare_requires_backend_cache(tmp_path: Path) -> None:

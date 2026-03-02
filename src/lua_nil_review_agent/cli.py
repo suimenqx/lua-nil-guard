@@ -178,6 +178,46 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, str(exc)
         return 0, _render_benchmark_summary(snapshot.root, summary)
 
+    if command == "benchmark-json":
+        try:
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_timeout,
+                backend_attempts,
+                backend_cache_path,
+                backend_config_overrides,
+                positional,
+            ) = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 1:
+            return 2, "benchmark-json requires exactly one repository path"
+        root = Path(positional[0])
+        snapshot = bootstrap_repository(root)
+        try:
+            summary = benchmark_repository_review(
+                snapshot,
+                backend=create_adjudication_backend(
+                    backend_name,
+                    workdir=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                    executable=executable,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
+                    cache_path=backend_cache_path,
+                    config_overrides=backend_config_overrides,
+                ),
+            )
+        except (SkillRuntimeError, BackendError, ValueError) as exc:
+            return 2, str(exc)
+        return 0, json.dumps(_serialize_benchmark_summary(snapshot.root, summary), indent=2, sort_keys=True)
+
     if command == "benchmark-cache-compare":
         try:
             (
@@ -220,6 +260,53 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         except (SkillRuntimeError, BackendError, ValueError) as exc:
             return 2, str(exc)
         return 0, _render_benchmark_cache_comparison(snapshot.root, comparison)
+
+    if command == "benchmark-cache-compare-json":
+        try:
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_timeout,
+                backend_attempts,
+                backend_cache_path,
+                backend_config_overrides,
+                positional,
+            ) = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 1:
+            return 2, "benchmark-cache-compare-json requires exactly one repository path"
+        if backend_cache_path is None:
+            return 2, "benchmark-cache-compare-json requires --backend-cache PATH"
+        root = Path(positional[0])
+        snapshot = bootstrap_repository(root)
+        try:
+            comparison = benchmark_cache_compare(
+                snapshot,
+                cache_path=backend_cache_path,
+                backend_factory=lambda: create_adjudication_backend(
+                    backend_name,
+                    workdir=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                    executable=executable,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
+                    cache_path=backend_cache_path,
+                    config_overrides=backend_config_overrides,
+                ),
+            )
+        except (SkillRuntimeError, BackendError, ValueError) as exc:
+            return 2, str(exc)
+        return 0, json.dumps(
+            _serialize_benchmark_cache_comparison(snapshot.root, comparison),
+            indent=2,
+            sort_keys=True,
+        )
 
     if command == "baseline-create":
         try:
@@ -590,33 +677,31 @@ def _render_scan_summary(root: Path, assessments: tuple[object, ...]) -> str:
 
 
 def _render_benchmark_summary(root: Path, summary) -> str:  # noqa: ANN001
-    accuracy = 0.0
-    if summary.total_cases:
-        accuracy = (summary.exact_matches / summary.total_cases) * 100
+    payload = _serialize_benchmark_summary(root, summary)
 
     lines = [
         "# Lua Nil Review Benchmark",
         "",
-        f"Repository: {root}",
-        f"Total labeled cases: {summary.total_cases}",
-        f"Exact matches: {summary.exact_matches}",
-        f"Accuracy: {accuracy:.1f}%",
-        f"Expected risky: {summary.expected_risky}",
-        f"Expected safe: {summary.expected_safe}",
-        f"Expected uncertain: {summary.expected_uncertain}",
-        f"Actual risky: {summary.actual_risky}",
-        f"Actual safe: {summary.actual_safe}",
-        f"Actual uncertain: {summary.actual_uncertain}",
-        f"Missed risks: {summary.missed_risks}",
-        f"False positive risks: {summary.false_positive_risks}",
-        f"Unresolved labeled cases: {summary.unresolved_cases}",
-        f"Backend fallbacks: {summary.backend_fallbacks}",
-        f"Backend timeouts: {summary.backend_timeouts}",
-        f"Backend cache hits: {summary.backend_cache_hits}",
-        f"Backend cache misses: {summary.backend_cache_misses}",
-        f"Backend calls: {summary.backend_calls}",
-        f"Backend total latency: {summary.backend_total_seconds:.3f}s",
-        f"Backend average latency: {summary.backend_average_seconds:.3f}s",
+        f"Repository: {payload['repository']}",
+        f"Total labeled cases: {payload['total_cases']}",
+        f"Exact matches: {payload['exact_matches']}",
+        f"Accuracy: {payload['accuracy']:.1f}%",
+        f"Expected risky: {payload['expected_risky']}",
+        f"Expected safe: {payload['expected_safe']}",
+        f"Expected uncertain: {payload['expected_uncertain']}",
+        f"Actual risky: {payload['actual_risky']}",
+        f"Actual safe: {payload['actual_safe']}",
+        f"Actual uncertain: {payload['actual_uncertain']}",
+        f"Missed risks: {payload['missed_risks']}",
+        f"False positive risks: {payload['false_positive_risks']}",
+        f"Unresolved labeled cases: {payload['unresolved_cases']}",
+        f"Backend fallbacks: {payload['backend_fallbacks']}",
+        f"Backend timeouts: {payload['backend_timeouts']}",
+        f"Backend cache hits: {payload['backend_cache_hits']}",
+        f"Backend cache misses: {payload['backend_cache_misses']}",
+        f"Backend calls: {payload['backend_calls']}",
+        f"Backend total latency: {payload['backend_total_seconds']:.3f}s",
+        f"Backend average latency: {payload['backend_average_seconds']:.3f}s",
     ]
 
     mismatches = [case for case in summary.cases if not case.matches_expectation]
@@ -632,36 +717,96 @@ def _render_benchmark_summary(root: Path, summary) -> str:  # noqa: ANN001
 
 
 def _render_benchmark_cache_comparison(root: Path, comparison) -> str:  # noqa: ANN001
-    cold = comparison.cold
-    warm = comparison.warm
+    payload = _serialize_benchmark_cache_comparison(root, comparison)
+    cold = payload["cold"]
+    warm = payload["warm"]
+    delta = payload["delta"]
 
     lines = [
         "# Lua Nil Review Cache Comparison",
         "",
-        f"Repository: {root}",
-        f"Cache file: {comparison.cache_path}",
-        f"Cleared entries before cold run: {comparison.cache_cleared_entries}",
+        f"Repository: {payload['repository']}",
+        f"Cache file: {payload['cache_path']}",
+        f"Cleared entries before cold run: {payload['cache_cleared_entries']}",
         "",
         "Cold run:",
-        f"- Exact matches: {cold.exact_matches}/{cold.total_cases}",
-        f"- Backend cache hits: {cold.backend_cache_hits}",
-        f"- Backend cache misses: {cold.backend_cache_misses}",
-        f"- Backend calls: {cold.backend_calls}",
-        f"- Backend total latency: {cold.backend_total_seconds:.3f}s",
+        f"- Exact matches: {cold['exact_matches']}/{cold['total_cases']}",
+        f"- Backend cache hits: {cold['backend_cache_hits']}",
+        f"- Backend cache misses: {cold['backend_cache_misses']}",
+        f"- Backend calls: {cold['backend_calls']}",
+        f"- Backend total latency: {cold['backend_total_seconds']:.3f}s",
         "",
         "Warm run:",
-        f"- Exact matches: {warm.exact_matches}/{warm.total_cases}",
-        f"- Backend cache hits: {warm.backend_cache_hits}",
-        f"- Backend cache misses: {warm.backend_cache_misses}",
-        f"- Backend calls: {warm.backend_calls}",
-        f"- Backend total latency: {warm.backend_total_seconds:.3f}s",
+        f"- Exact matches: {warm['exact_matches']}/{warm['total_cases']}",
+        f"- Backend cache hits: {warm['backend_cache_hits']}",
+        f"- Backend cache misses: {warm['backend_cache_misses']}",
+        f"- Backend calls: {warm['backend_calls']}",
+        f"- Backend total latency: {warm['backend_total_seconds']:.3f}s",
         "",
         "Delta (warm - cold):",
-        f"- Cache hits: {warm.backend_cache_hits - cold.backend_cache_hits:+d}",
-        f"- Backend calls: {warm.backend_calls - cold.backend_calls:+d}",
-        f"- Total latency: {warm.backend_total_seconds - cold.backend_total_seconds:+.3f}s",
+        f"- Cache hits: {delta['backend_cache_hits']:+d}",
+        f"- Backend calls: {delta['backend_calls']:+d}",
+        f"- Total latency: {delta['backend_total_seconds']:+.3f}s",
     ]
     return "\n".join(lines)
+
+
+def _serialize_benchmark_summary(root: Path, summary) -> dict[str, object]:  # noqa: ANN001
+    accuracy = 0.0
+    if summary.total_cases:
+        accuracy = (summary.exact_matches / summary.total_cases) * 100
+    return {
+        "repository": str(root),
+        "total_cases": summary.total_cases,
+        "exact_matches": summary.exact_matches,
+        "accuracy": accuracy,
+        "expected_risky": summary.expected_risky,
+        "expected_safe": summary.expected_safe,
+        "expected_uncertain": summary.expected_uncertain,
+        "actual_risky": summary.actual_risky,
+        "actual_safe": summary.actual_safe,
+        "actual_uncertain": summary.actual_uncertain,
+        "false_positive_risks": summary.false_positive_risks,
+        "missed_risks": summary.missed_risks,
+        "unresolved_cases": summary.unresolved_cases,
+        "backend_fallbacks": summary.backend_fallbacks,
+        "backend_timeouts": summary.backend_timeouts,
+        "backend_cache_hits": summary.backend_cache_hits,
+        "backend_cache_misses": summary.backend_cache_misses,
+        "backend_calls": summary.backend_calls,
+        "backend_total_seconds": summary.backend_total_seconds,
+        "backend_average_seconds": summary.backend_average_seconds,
+        "cases": [
+            {
+                "case_id": case.case_id,
+                "file": case.file,
+                "expected_status": case.expected_status,
+                "actual_status": case.actual_status,
+                "matches_expectation": case.matches_expectation,
+                "backend_failure_reason": case.backend_failure_reason,
+            }
+            for case in summary.cases
+        ],
+    }
+
+
+def _serialize_benchmark_cache_comparison(root: Path, comparison) -> dict[str, object]:  # noqa: ANN001
+    cold = _serialize_benchmark_summary(root, comparison.cold)
+    warm = _serialize_benchmark_summary(root, comparison.warm)
+    return {
+        "repository": str(root),
+        "cache_path": comparison.cache_path,
+        "cache_cleared_entries": comparison.cache_cleared_entries,
+        "cold": cold,
+        "warm": warm,
+        "delta": {
+            "backend_cache_hits": warm["backend_cache_hits"] - cold["backend_cache_hits"],
+            "backend_cache_misses": warm["backend_cache_misses"] - cold["backend_cache_misses"],
+            "backend_calls": warm["backend_calls"] - cold["backend_calls"],
+            "backend_total_seconds": warm["backend_total_seconds"] - cold["backend_total_seconds"],
+            "exact_matches": warm["exact_matches"] - cold["exact_matches"],
+        },
+    }
 
 
 def _usage() -> str:
@@ -673,7 +818,9 @@ def _usage() -> str:
             "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent benchmark-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  lua-nil-review-agent benchmark-cache-compare [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] --backend-cache PATH [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent benchmark-cache-compare-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] --backend-cache PATH [--backend-config KEY=VALUE] <repository>",
             "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <output>",
             "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <baseline>",
             "  lua-nil-review-agent refresh-summaries <repository> [output]",
