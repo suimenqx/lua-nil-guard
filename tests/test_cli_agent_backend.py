@@ -567,6 +567,70 @@ def test_codeagent_cli_backend_uses_codeagent_executable_by_default(tmp_path: Pa
     assert record.judge.status == "safe"
 
 
+def test_codeagent_cli_backend_passes_config_overrides_to_prompt_command(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_runner(
+        command: tuple[str, ...],
+        *,
+        stdin_text: str,
+        cwd: Path | None,
+    ) -> str:
+        captured["command"] = command
+        return json.dumps(
+            {
+                "response": json.dumps(
+                    {
+                        "prosecutor": {
+                            "role": "prosecutor",
+                            "status": "uncertain",
+                            "confidence": "low",
+                            "risk_path": [],
+                            "safety_evidence": [],
+                            "missing_evidence": ["stub"],
+                            "recommended_next_action": "expand_context",
+                            "suggested_fix": None,
+                        },
+                        "defender": {
+                            "role": "defender",
+                            "status": "safe",
+                            "confidence": "high",
+                            "risk_path": [],
+                            "safety_evidence": ["guard"],
+                            "missing_evidence": [],
+                            "recommended_next_action": "suppress",
+                            "suggested_fix": None,
+                        },
+                        "judge": {
+                            "status": "safe",
+                            "confidence": "high",
+                            "risk_path": [],
+                            "safety_evidence": ["guard"],
+                            "counterarguments_considered": [],
+                            "suggested_fix": None,
+                            "needs_human": False,
+                        },
+                    }
+                )
+            }
+        )
+
+    backend = CodeAgentCliBackend(
+        runner=fake_runner,
+        workdir=tmp_path,
+        config_overrides=("features.fast=true", "reasoning.effort='low'"),
+    )
+    record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    command = captured["command"]
+    assert command.count("-c") == 2
+    first = command.index("-c")
+    second = command.index("-c", first + 1)
+    assert command[first + 1] == "features.fast=true"
+    assert command[second + 1] == "reasoning.effort='low'"
+    assert record.judge.status == "safe"
+
+
 def test_codeagent_cli_backend_accepts_markdown_wrapped_json_response() -> None:
     def fake_runner(
         command: tuple[str, ...],
@@ -622,6 +686,26 @@ def test_codeagent_cli_backend_accepts_markdown_wrapped_json_response() -> None:
     record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
 
     assert record.judge.status == "risky"
+
+
+def test_codeagent_cli_backend_falls_back_to_uncertain_after_exhausted_retries() -> None:
+    attempts = {"count": 0}
+
+    def failing_runner(
+        command: tuple[str, ...],
+        *,
+        stdin_text: str,
+        cwd: Path | None,
+    ) -> str:
+        attempts["count"] += 1
+        raise BackendError("temporary codeagent failure")
+
+    backend = CodeAgentCliBackend(runner=failing_runner)
+    record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    assert attempts["count"] == 2
+    assert record.judge.status == "uncertain"
+    assert record.judge.counterarguments_considered == ("temporary codeagent failure",)
 
 
 def test_codeagent_cli_backend_simulates_headless_json_subprocess(tmp_path: Path) -> None:
@@ -731,6 +815,25 @@ def test_create_adjudication_backend_passes_config_overrides() -> None:
 
     assert isinstance(backend, CodexCliBackend)
     assert backend.config_overrides == ("features.fast=true",)
+
+
+def test_create_adjudication_backend_passes_config_overrides_to_codeagent() -> None:
+    backend = create_adjudication_backend(
+        "codeagent",
+        config_overrides=("features.fast=true",),
+    )
+
+    assert isinstance(backend, CodeAgentCliBackend)
+    assert backend.config_overrides == ("features.fast=true",)
+
+
+def test_create_adjudication_backend_uses_codex_like_defaults_for_codeagent() -> None:
+    backend = create_adjudication_backend("codeagent")
+
+    assert isinstance(backend, CodeAgentCliBackend)
+    assert backend.timeout_seconds == 45.0
+    assert backend.max_attempts == 2
+    assert backend.fallback_to_uncertain_on_error is True
 
 
 def test_create_adjudication_backend_passes_cache_path(tmp_path: Path) -> None:

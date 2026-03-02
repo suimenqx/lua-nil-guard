@@ -459,8 +459,10 @@ class CodeAgentCliBackend(CliAgentBackend):
         strict_skill: bool = True,
         model: str | None = None,
         executable: str = "codeagent",
-        timeout_seconds: float | None = None,
-        max_attempts: int = 1,
+        timeout_seconds: float | None = 45.0,
+        max_attempts: int = 2,
+        fallback_to_uncertain_on_error: bool = True,
+        config_overrides: tuple[str, ...] = (),
         cache_path: str | Path | None = None,
     ) -> None:
         super().__init__(
@@ -470,16 +472,19 @@ class CodeAgentCliBackend(CliAgentBackend):
             strict_skill=strict_skill,
             timeout_seconds=timeout_seconds,
             max_attempts=max_attempts,
+            fallback_to_uncertain_on_error=fallback_to_uncertain_on_error,
             cache_path=cache_path,
         )
         self.model = model
         self.executable = executable
+        self.config_overrides = config_overrides
 
     def _cache_identity(self) -> dict[str, object]:
         return {
             "backend": self.__class__.__name__,
             "model": self.model,
             "executable": self.executable,
+            "config_overrides": self.config_overrides,
         }
 
     def _adjudicate_once(
@@ -516,6 +521,8 @@ class CodeAgentCliBackend(CliAgentBackend):
             "--output-format",
             "json",
         ]
+        for override in self.config_overrides:
+            command.extend(["-c", override])
         if self.model is not None:
             command.extend(["-m", self.model])
         command.extend(["-p", prompt])
@@ -585,6 +592,8 @@ def create_adjudication_backend(
             options["max_attempts"] = max_attempts
         if cache_path is not None:
             options["cache_path"] = cache_path
+        if config_overrides:
+            options["config_overrides"] = config_overrides
         return CodeAgentCliBackend(
             runner=runner,
             workdir=workdir,
