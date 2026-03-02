@@ -29,10 +29,10 @@ def render_markdown_report(
                 f"- confidence: {verdict.confidence}",
                 f"- risk_path: {'; '.join(verdict.risk_path) if verdict.risk_path else '(none)'}",
                 f"- counterarguments_considered: {'; '.join(verdict.counterarguments_considered) if verdict.counterarguments_considered else '(none)'}",
-                f"- suggested_fix: {verdict.suggested_fix or '(none)'}",
-                "",
             ]
         )
+        _append_suggested_fix(lines, verdict.suggested_fix)
+        lines.append("")
 
     return "\n".join(lines).rstrip()
 
@@ -60,3 +60,21 @@ def render_json_report(
         if should_report(verdict, policy, audit_mode=audit_mode)
     ]
     return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def _append_suggested_fix(lines: list[str], suggested_fix: str | None) -> None:
+    if not suggested_fix:
+        lines.append("- suggested_fix: (none)")
+        return
+    if "\n" not in suggested_fix:
+        lines.append(f"- suggested_fix: {suggested_fix}")
+        return
+
+    lines.extend(
+        [
+            "- suggested_fix:",
+            "```lua",
+            suggested_fix,
+            "```",
+        ]
+    )

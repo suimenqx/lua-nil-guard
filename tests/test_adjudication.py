@@ -275,7 +275,10 @@ def test_adjudicate_packet_uses_field_alias_for_dot_path_collection_expression()
     record = adjudicate_packet(packet, rule)
 
     assert record.judge.status == "risky"
-    assert record.judge.suggested_fix == "local items = req.items or {}"
+    assert record.judge.suggested_fix == (
+        "local items = req.items or {}\n"
+        "for _, item in pairs(items) do"
+    )
 
 
 def test_adjudicate_packet_keeps_safe_value_for_non_aliasable_collection_expression() -> None:
@@ -314,3 +317,44 @@ def test_adjudicate_packet_keeps_safe_value_for_non_aliasable_collection_express
 
     assert record.judge.status == "risky"
     assert record.judge.suggested_fix == "local safe_value = req.items_by_id[user_id] or {}"
+
+
+def test_adjudicate_packet_rewrites_target_line_for_dot_path_string_expression() -> None:
+    packet = EvidencePacket(
+        case_id="case_string_field",
+        target=EvidenceTarget(
+            file="demo.lua",
+            line=2,
+            column=10,
+            sink="string.match",
+            arg_index=1,
+            expression="req.params.username",
+        ),
+        local_context='return string.match(req.params.username, "^guest")',
+        related_functions=(),
+        function_summaries=(),
+        knowledge_facts=(),
+        static_reasoning={
+            "state": "unknown_static",
+            "origin_candidates": ("req.params.username",),
+            "observed_guards": (),
+        },
+    )
+    rule = SinkRule(
+        id="string.match.arg1",
+        kind="function_arg",
+        qualified_name="string.match",
+        arg_index=1,
+        nil_sensitive=True,
+        failure_mode="runtime_error",
+        default_severity="high",
+        safe_patterns=("x or ''",),
+    )
+
+    record = adjudicate_packet(packet, rule)
+
+    assert record.judge.status == "risky"
+    assert record.judge.suggested_fix == (
+        "local username = req.params.username or ''\n"
+        'return string.match(username, "^guest")'
+    )

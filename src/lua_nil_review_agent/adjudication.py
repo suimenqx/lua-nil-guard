@@ -149,30 +149,38 @@ def _looks_like_safety_fact(fact: str) -> bool:
 
 
 def _suggested_fix(packet: EvidencePacket, sink_rule: SinkRule) -> str | None:
-    expression = packet.target.expression
-
     if sink_rule.qualified_name.startswith("string."):
-        return _coalesce_fix(expression, "''")
+        return _coalesce_fix(packet, sink_rule, "''")
 
     if sink_rule.qualified_name in {"table.insert", "pairs", "ipairs"}:
-        return _coalesce_fix(expression, "{}")
+        return _coalesce_fix(packet, sink_rule, "{}")
 
     if sink_rule.kind == "unary_operand" and sink_rule.qualified_name == "#":
-        return _coalesce_fix(expression, "{}")
+        return _coalesce_fix(packet, sink_rule, "{}")
 
+    expression = packet.target.expression
     if sink_rule.kind == "receiver" or sink_rule.qualified_name == "member_access":
         return f"if not {expression} then return nil end"
 
     return None
 
 
-def _coalesce_fix(expression: str, fallback_literal: str) -> str:
+def _coalesce_fix(
+    packet: EvidencePacket,
+    sink_rule: SinkRule,
+    fallback_literal: str,
+) -> str:
+    expression = packet.target.expression
     if _IDENTIFIER_RE.match(expression):
         return f"{expression} = {expression} or {fallback_literal}"
 
     alias = _suggest_local_alias(expression)
     if alias is not None:
-        return f"local {alias} = {expression} or {fallback_literal}"
+        alias_line = f"local {alias} = {expression} or {fallback_literal}"
+        rewritten_line = _rewrite_target_line(packet, sink_rule, alias)
+        if rewritten_line is not None:
+            return f"{alias_line}\n{rewritten_line}"
+        return alias_line
 
     return f"local safe_value = {expression} or {fallback_literal}"
 
@@ -185,3 +193,20 @@ def _suggest_local_alias(expression: str) -> str | None:
     if not _IDENTIFIER_RE.match(alias):
         return None
     return alias
+
+
+def _rewrite_target_line(
+    packet: EvidencePacket,
+    sink_rule: SinkRule,
+    alias: str,
+) -> str | None:
+    expression = packet.target.expression
+    for line in packet.local_context.splitlines():
+        if expression not in line:
+            continue
+        if sink_rule.kind == "function_arg" and sink_rule.qualified_name not in line:
+            continue
+        if sink_rule.kind == "unary_operand" and "#" not in line:
+            continue
+        return line.replace(expression, alias, 1)
+    return None
