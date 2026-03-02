@@ -1,5 +1,13 @@
 """Foundational package for the Lua nil risk review agent."""
 
+from .agent_driver_models import (
+    BUILTIN_AGENT_PROVIDER_SPECS,
+    CODEAGENT_PROVIDER_SPEC,
+    CODEX_PROVIDER_SPEC,
+    AgentCapabilities,
+    AgentProviderSpec,
+    get_builtin_agent_provider_spec,
+)
 from .agent_backend import (
     AdjudicationBackend,
     BackendError,
@@ -74,6 +82,8 @@ __all__ = [
     "AdjudicationRecord",
     "AdjudicationBackend",
     "ADJUDICATOR_SKILL_CONTRACT",
+    "AgentCapabilities",
+    "AgentProviderSpec",
     "AutofixPatch",
     "BackendError",
     "BenchmarkCacheComparison",
@@ -85,7 +95,10 @@ __all__ = [
     "CandidateCase",
     "ConfidencePolicy",
     "ConfigError",
+    "BUILTIN_AGENT_PROVIDER_SPECS",
+    "CODEAGENT_PROVIDER_SPEC",
     "CodeAgentCliBackend",
+    "CODEX_PROVIDER_SPEC",
     "EvidencePacket",
     "EvidenceTarget",
     "FunctionSummary",
@@ -124,6 +137,7 @@ __all__ = [
     "fallback_adjudicator_skill_header",
     "facts_for_subject",
     "filter_new_findings",
+    "get_builtin_agent_provider_spec",
     "load_confidence_policy",
     "load_adjudicator_skill",
     "load_sink_rules",

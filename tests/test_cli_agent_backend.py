@@ -5,6 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from lua_nil_review_agent.agent_driver_models import (
+    CODEAGENT_PROVIDER_SPEC,
+    CODEX_PROVIDER_SPEC,
+    get_builtin_agent_provider_spec,
+)
 from lua_nil_review_agent.agent_backend import (
     BackendError,
     CliAgentBackend,
@@ -780,6 +785,18 @@ def test_create_adjudication_backend_builds_selected_backend() -> None:
     assert isinstance(codeagent, CodeAgentCliBackend)
 
 
+def test_builtin_provider_specs_describe_supported_cli_protocols() -> None:
+    assert get_builtin_agent_provider_spec("codex") == CODEX_PROVIDER_SPEC
+    assert CODEX_PROVIDER_SPEC.protocol == "schema_file_cli"
+    assert CODEX_PROVIDER_SPEC.capabilities.supports_output_schema is True
+    assert CODEX_PROVIDER_SPEC.capabilities.supports_output_file is True
+
+    assert get_builtin_agent_provider_spec("codeagent") == CODEAGENT_PROVIDER_SPEC
+    assert CODEAGENT_PROVIDER_SPEC.protocol == "stdout_envelope_cli"
+    assert CODEAGENT_PROVIDER_SPEC.capabilities.supports_stdout_json is True
+    assert CODEAGENT_PROVIDER_SPEC.capabilities.supports_output_file is False
+
+
 def test_create_adjudication_backend_passes_skill_path_to_cli_backend(tmp_path: Path) -> None:
     skill_path = _write_minimal_skill(tmp_path / "factory-skill.md", name="factory-skill")
     backend = create_adjudication_backend("codex", skill_path=skill_path)
@@ -831,9 +848,23 @@ def test_create_adjudication_backend_uses_codex_like_defaults_for_codeagent() ->
     backend = create_adjudication_backend("codeagent")
 
     assert isinstance(backend, CodeAgentCliBackend)
+    assert backend.provider_spec == CODEAGENT_PROVIDER_SPEC
     assert backend.timeout_seconds == 45.0
     assert backend.max_attempts == 2
     assert backend.fallback_to_uncertain_on_error is True
+
+
+def test_create_adjudication_backend_attaches_builtin_provider_specs() -> None:
+    codex = create_adjudication_backend("codex")
+    codeagent = create_adjudication_backend("codeagent")
+
+    assert isinstance(codex, CodexCliBackend)
+    assert codex.provider_spec == CODEX_PROVIDER_SPEC
+    assert codex.executable == CODEX_PROVIDER_SPEC.default_executable
+
+    assert isinstance(codeagent, CodeAgentCliBackend)
+    assert codeagent.provider_spec == CODEAGENT_PROVIDER_SPEC
+    assert codeagent.executable == CODEAGENT_PROVIDER_SPEC.default_executable
 
 
 def test_create_adjudication_backend_passes_cache_path(tmp_path: Path) -> None:

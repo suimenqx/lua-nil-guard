@@ -9,6 +9,11 @@ import tempfile
 import time
 from typing import Protocol
 
+from .agent_driver_models import (
+    CODEAGENT_PROVIDER_SPEC,
+    CODEX_PROVIDER_SPEC,
+    AgentProviderSpec,
+)
 from .adjudication import adjudicate_packet
 from .models import AdjudicationRecord, EvidencePacket, RoleOpinion, SinkRule, Verdict
 from .prompting import build_adjudication_prompt
@@ -382,35 +387,51 @@ class CodexCliBackend(CliAgentBackend):
         strict_skill: bool = True,
         model: str | None = None,
         sandbox: str = "read-only",
-        executable: str = "codex",
-        timeout_seconds: float | None = 45.0,
-        max_attempts: int = 2,
-        fallback_to_uncertain_on_error: bool = True,
+        executable: str | None = None,
+        timeout_seconds: float | None = None,
+        max_attempts: int | None = None,
+        fallback_to_uncertain_on_error: bool | None = None,
         config_overrides: tuple[str, ...] = (),
         cache_path: str | Path | None = None,
+        provider_spec: AgentProviderSpec | None = None,
     ) -> None:
+        self.provider_spec = provider_spec or CODEX_PROVIDER_SPEC
+        resolved_timeout = (
+            self.provider_spec.default_timeout_seconds
+            if timeout_seconds is None
+            else timeout_seconds
+        )
+        resolved_attempts = (
+            self.provider_spec.default_max_attempts if max_attempts is None else max_attempts
+        )
+        resolved_fallback = (
+            self.provider_spec.default_fallback_to_uncertain_on_error
+            if fallback_to_uncertain_on_error is None
+            else fallback_to_uncertain_on_error
+        )
         super().__init__(
             runner=runner,
             workdir=workdir,
             skill_path=skill_path,
             strict_skill=strict_skill,
-            timeout_seconds=timeout_seconds,
-            max_attempts=max_attempts,
-            fallback_to_uncertain_on_error=fallback_to_uncertain_on_error,
+            timeout_seconds=resolved_timeout,
+            max_attempts=resolved_attempts,
+            fallback_to_uncertain_on_error=resolved_fallback,
             cache_path=cache_path,
         )
         self.model = model
         self.sandbox = sandbox
-        self.executable = executable
+        self.executable = executable or self.provider_spec.default_executable
         self.config_overrides = config_overrides
 
     def _cache_identity(self) -> dict[str, object]:
         return {
-            "backend": self.__class__.__name__,
+            "backend": self.provider_spec.name,
             "model": self.model,
             "sandbox": self.sandbox,
             "executable": self.executable,
             "config_overrides": self.config_overrides,
+            "protocol": self.provider_spec.protocol,
         }
 
     def build_command(
@@ -458,33 +479,49 @@ class CodeAgentCliBackend(CliAgentBackend):
         skill_path: str | Path | None = None,
         strict_skill: bool = True,
         model: str | None = None,
-        executable: str = "codeagent",
-        timeout_seconds: float | None = 45.0,
-        max_attempts: int = 2,
-        fallback_to_uncertain_on_error: bool = True,
+        executable: str | None = None,
+        timeout_seconds: float | None = None,
+        max_attempts: int | None = None,
+        fallback_to_uncertain_on_error: bool | None = None,
         config_overrides: tuple[str, ...] = (),
         cache_path: str | Path | None = None,
+        provider_spec: AgentProviderSpec | None = None,
     ) -> None:
+        self.provider_spec = provider_spec or CODEAGENT_PROVIDER_SPEC
+        resolved_timeout = (
+            self.provider_spec.default_timeout_seconds
+            if timeout_seconds is None
+            else timeout_seconds
+        )
+        resolved_attempts = (
+            self.provider_spec.default_max_attempts if max_attempts is None else max_attempts
+        )
+        resolved_fallback = (
+            self.provider_spec.default_fallback_to_uncertain_on_error
+            if fallback_to_uncertain_on_error is None
+            else fallback_to_uncertain_on_error
+        )
         super().__init__(
             runner=runner,
             workdir=workdir,
             skill_path=skill_path,
             strict_skill=strict_skill,
-            timeout_seconds=timeout_seconds,
-            max_attempts=max_attempts,
-            fallback_to_uncertain_on_error=fallback_to_uncertain_on_error,
+            timeout_seconds=resolved_timeout,
+            max_attempts=resolved_attempts,
+            fallback_to_uncertain_on_error=resolved_fallback,
             cache_path=cache_path,
         )
         self.model = model
-        self.executable = executable
+        self.executable = executable or self.provider_spec.default_executable
         self.config_overrides = config_overrides
 
     def _cache_identity(self) -> dict[str, object]:
         return {
-            "backend": self.__class__.__name__,
+            "backend": self.provider_spec.name,
             "model": self.model,
             "executable": self.executable,
             "config_overrides": self.config_overrides,
+            "protocol": self.provider_spec.protocol,
         }
 
     def _adjudicate_once(

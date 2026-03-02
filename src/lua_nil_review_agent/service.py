@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from .adjudication import attach_autofix_patch
+from .agent_driver_models import AgentProviderSpec
 from .agent_backend import AdjudicationBackend, HeuristicAdjudicationBackend
 from .collector import collect_candidates
 from .config_loader import load_confidence_policy, load_sink_rules
@@ -677,6 +678,9 @@ def _backend_float_metric(backend: object, name: str) -> float:
 
 
 def _backend_name(backend: object) -> str:
+    provider_spec = getattr(backend, "provider_spec", None)
+    if isinstance(provider_spec, AgentProviderSpec):
+        return provider_spec.name
     name = backend.__class__.__name__
     if name == "HeuristicAdjudicationBackend":
         return "heuristic"
