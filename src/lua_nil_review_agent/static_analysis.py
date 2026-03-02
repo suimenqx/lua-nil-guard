@@ -79,6 +79,10 @@ def _has_active_positive_guard(lines: list[str], symbol: str) -> bool:
         if not stripped:
             continue
 
+        if "symbol_if" in stack and _assigns_symbol(stripped, symbol):
+            stack = ["if" if entry == "symbol_if" else entry for entry in stack]
+            continue
+
         if _is_if_open_for_symbol(stripped, symbol):
             stack.append("symbol_if")
             continue
@@ -216,3 +220,20 @@ def _is_early_exit_statement(stripped_line: str) -> bool:
         or stripped_line.startswith("error(")
         or stripped_line.startswith("assert(false")
     )
+
+
+def _assigns_symbol(stripped_line: str, symbol: str) -> bool:
+    single_pattern = re.compile(
+        rf"^(?:local\s+)?{re.escape(symbol)}\s*=\s*.+$",
+    )
+    if single_pattern.match(stripped_line):
+        return True
+
+    multi_pattern = re.compile(
+        r"^(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)+)\s*=\s*.+$",
+    )
+    match = multi_pattern.match(stripped_line)
+    if match is None:
+        return False
+    names = [name.strip() for name in match.group(1).split(",")]
+    return symbol in names
