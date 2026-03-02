@@ -336,6 +336,39 @@ def test_analyze_candidate_invalidates_positive_guard_after_reassignment() -> No
     assert result.origin_candidates == ("req.params.fallback_name",)
 
 
+def test_analyze_candidate_keeps_positive_guard_on_sibling_branch_after_reassignment() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "if username then",
+            "  if ready then",
+            "    username = req.params.fallback_name",
+            "  else",
+            "    return string.match(username, '^a')",
+            "  end",
+            "end",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_8b",
+        file="demo.lua",
+        line=6,
+        column=12,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "safe_static"
+    assert result.observed_guards == ("if username then",)
+
+
 def test_analyze_candidate_allows_re_guard_after_reassignment() -> None:
     source = "\n".join(
         [

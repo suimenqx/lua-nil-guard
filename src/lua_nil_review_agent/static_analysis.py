@@ -73,37 +73,50 @@ def _find_last_assignment(lines: list[str], symbol: str) -> str | None:
 
 
 def _has_active_positive_guard(lines: list[str], symbol: str) -> bool:
-    stack: list[str] = []
+    stack: list[dict[str, int | str]] = []
+    invalidated_paths: list[tuple[int, ...]] = []
+
     for line in lines:
         stripped = line.strip()
         if not stripped:
             continue
 
-        if "symbol_if" in stack and _assigns_symbol(stripped, symbol):
-            stack = ["if" if entry == "symbol_if" else entry for entry in stack]
+        if any(entry["type"] == "symbol_if" for entry in stack) and _assigns_symbol(stripped, symbol):
+            invalidated_paths.append(_current_if_branch_path(stack))
             continue
 
         if _is_if_open_for_symbol(stripped, symbol):
-            stack.append("symbol_if")
+            stack.append({"type": "symbol_if", "branch": 0})
             continue
         if _is_if_open(stripped):
-            stack.append("if")
+            stack.append({"type": "if_family", "branch": 0})
             continue
         if _is_elseif_line(stripped):
-            if stack and stack[-1] in {"if", "symbol_if"}:
-                stack[-1] = "symbol_if" if _is_elseif_for_symbol(stripped, symbol) else "if"
+            if stack and stack[-1]["type"] in {"if_family", "symbol_if"}:
+                stack[-1]["type"] = "symbol_if" if _is_elseif_for_symbol(stripped, symbol) else "if_family"
+                stack[-1]["branch"] = int(stack[-1]["branch"]) + 1
             continue
         if stripped == "else":
-            if stack and stack[-1] in {"if", "symbol_if"}:
-                stack[-1] = "if"
+            if stack and stack[-1]["type"] in {"if_family", "symbol_if"}:
+                stack[-1]["type"] = "if_family"
+                stack[-1]["branch"] = int(stack[-1]["branch"]) + 1
             continue
         if _opens_non_if_block(stripped):
-            stack.append("block")
+            stack.append({"type": "block"})
             continue
         if _closes_block(stripped) and stack:
             stack.pop()
 
-    return "symbol_if" in stack
+    current_path = _current_if_branch_path(stack)
+    for guard_path in _active_positive_guard_paths(stack):
+        if any(
+            _branch_path_is_prefix(guard_path, invalidated_path)
+            and _branch_path_is_prefix(invalidated_path, current_path)
+            for invalidated_path in invalidated_paths
+        ):
+            continue
+        return True
+    return False
 
 
 def _has_early_exit_guard(lines: list[str], symbol: str) -> bool:
@@ -281,7 +294,7 @@ def _current_if_branch_path(stack: list[dict[str, int | str]]) -> tuple[int, ...
     return tuple(
         int(entry["branch"])
         for entry in stack
-        if entry["type"] in {"if_family", "neg_guard_pending", "neg_guard_exit"}
+        if entry["type"] in {"if_family", "symbol_if", "neg_guard_pending", "neg_guard_exit"}
     )
 
 
@@ -289,3 +302,15 @@ def _branch_path_is_prefix(path: tuple[int, ...], current_path: tuple[int, ...])
     if len(path) > len(current_path):
         return False
     return current_path[: len(path)] == path
+
+
+def _active_positive_guard_paths(stack: list[dict[str, int | str]]) -> tuple[tuple[int, ...], ...]:
+    paths: list[tuple[int, ...]] = []
+    current: list[int] = []
+    for entry in stack:
+        if entry["type"] not in {"if_family", "symbol_if"}:
+            continue
+        current.append(int(entry["branch"]))
+        if entry["type"] == "symbol_if":
+            paths.append(tuple(current))
+    return tuple(paths)
