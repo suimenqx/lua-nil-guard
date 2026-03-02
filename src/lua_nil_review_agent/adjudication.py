@@ -40,9 +40,7 @@ def _prosecutor_opinion(packet: EvidencePacket, sink_rule: SinkRule) -> RoleOpin
         safety_evidence=(),
         missing_evidence=(),
         recommended_next_action="report",
-        suggested_fix=f"local safe_value = {packet.target.expression} or ''"
-        if sink_rule.qualified_name.startswith("string.")
-        else None,
+        suggested_fix=_suggested_fix(packet, sink_rule),
     )
 
 
@@ -140,3 +138,21 @@ def _has_explicit_safety_fact(packet: EvidencePacket) -> bool:
 def _looks_like_safety_fact(fact: str) -> bool:
     lowered = fact.lower()
     return "always returns string" in lowered or "always returns table" in lowered or "non-nil" in lowered
+
+
+def _suggested_fix(packet: EvidencePacket, sink_rule: SinkRule) -> str | None:
+    expression = packet.target.expression
+
+    if sink_rule.qualified_name.startswith("string."):
+        return f"local safe_value = {expression} or ''"
+
+    if sink_rule.qualified_name in {"table.insert", "pairs", "ipairs"}:
+        return f"local safe_value = {expression} or {{}}"
+
+    if sink_rule.kind == "unary_operand" and sink_rule.qualified_name == "#":
+        return f"local safe_value = {expression} or {{}}"
+
+    if sink_rule.kind == "receiver" or sink_rule.qualified_name == "member_access":
+        return f"if not {expression} then return nil end"
+
+    return None
