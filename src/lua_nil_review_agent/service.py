@@ -195,6 +195,9 @@ def benchmark_repository_review(
     backend_average_seconds = 0.0
     if backend_calls:
         backend_average_seconds = backend_total_seconds / backend_calls
+    backend_name = _backend_name(adjudication_backend)
+    backend_model = _backend_optional_string(adjudication_backend, "model")
+    backend_executable = _backend_optional_string(adjudication_backend, "executable")
 
     return BenchmarkSummary(
         total_cases=len(cases),
@@ -228,6 +231,9 @@ def benchmark_repository_review(
         backend_calls=backend_calls,
         backend_total_seconds=backend_total_seconds,
         backend_average_seconds=backend_average_seconds,
+        backend_name=backend_name,
+        backend_model=backend_model,
+        backend_executable=backend_executable,
         cases=tuple(cases),
     )
 
@@ -668,6 +674,24 @@ def _backend_float_metric(backend: object, name: str) -> float:
     if isinstance(value, (int, float)) and value >= 0:
         return float(value)
     return 0.0
+
+
+def _backend_name(backend: object) -> str:
+    name = backend.__class__.__name__
+    if name == "HeuristicAdjudicationBackend":
+        return "heuristic"
+    if name == "CodexCliBackend":
+        return "codex"
+    if name == "CodeAgentCliBackend":
+        return "codeagent"
+    return name
+
+
+def _backend_optional_string(backend: object, name: str) -> str | None:
+    value = getattr(backend, name, None)
+    if isinstance(value, str):
+        return value
+    return None
 
 
 def _serialize_autofix_patch(patch: AutofixPatch) -> dict[str, object]:

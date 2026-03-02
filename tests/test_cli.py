@@ -169,6 +169,7 @@ def test_cli_benchmark_reports_labeled_accuracy(tmp_path: Path, monkeypatch: pyt
     assert exit_code == 0
     assert "# Lua Nil Review Benchmark" in output
     assert "Total labeled cases: 18" in output
+    assert "Backend: FileLabelBackend" in output
     assert "Exact matches: 18" in output
     assert "Accuracy: 100.0%" in output
     assert "Missed risks: 0" in output
@@ -222,6 +223,9 @@ def test_cli_benchmark_json_outputs_machine_readable_summary(
             backend_calls=1,
             backend_total_seconds=0.75,
             backend_average_seconds=0.75,
+            backend_name="codeagent",
+            backend_model="codeagent-main",
+            backend_executable="/tmp/codeagent",
             cases=(),
         ),
     )
@@ -231,6 +235,7 @@ def test_cli_benchmark_json_outputs_machine_readable_summary(
     payload = json.loads(output)
     assert exit_code == 0
     assert payload["repository"] == str(tmp_path)
+    assert payload["backend_name"] == "codeagent"
     assert payload["total_cases"] == 2
     assert payload["exact_matches"] == 1
     assert payload["backend_calls"] == 1
@@ -277,6 +282,9 @@ def test_cli_benchmark_json_writes_output_file(
             backend_calls=0,
             backend_total_seconds=0.0,
             backend_average_seconds=0.0,
+            backend_name="codeagent",
+            backend_model=None,
+            backend_executable=None,
             cases=(),
         ),
     )
@@ -327,6 +335,9 @@ def test_cli_benchmark_cache_compare_reports_cold_and_warm_runs(
         backend_calls=18,
         backend_total_seconds=9.0,
         backend_average_seconds=0.5,
+        backend_name="codeagent",
+        backend_model="codeagent-a",
+        backend_executable="/tmp/codeagent-a",
         cases=(),
     )
     warm_summary = BenchmarkSummary(
@@ -348,6 +359,9 @@ def test_cli_benchmark_cache_compare_reports_cold_and_warm_runs(
         backend_calls=0,
         backend_total_seconds=0.0,
         backend_average_seconds=0.0,
+        backend_name="codeagent",
+        backend_model="codeagent-b",
+        backend_executable="/tmp/codeagent-b",
         cases=(),
     )
 
@@ -418,6 +432,9 @@ def test_cli_benchmark_cache_compare_json_outputs_machine_readable_comparison(
         backend_calls=18,
         backend_total_seconds=9.0,
         backend_average_seconds=0.5,
+        backend_name="codeagent",
+        backend_model="codeagent-a",
+        backend_executable="/tmp/codeagent-a",
         cases=(),
     )
     warm = BenchmarkSummary(
@@ -439,6 +456,9 @@ def test_cli_benchmark_cache_compare_json_outputs_machine_readable_comparison(
         backend_calls=0,
         backend_total_seconds=0.0,
         backend_average_seconds=0.0,
+        backend_name="codeagent",
+        backend_model="codeagent-b",
+        backend_executable="/tmp/codeagent-b",
         cases=(),
     )
     monkeypatch.setattr(
@@ -507,6 +527,9 @@ def test_cli_benchmark_cache_compare_json_writes_output_file(
         backend_calls=1,
         backend_total_seconds=0.5,
         backend_average_seconds=0.5,
+        backend_name="codeagent",
+        backend_model="codeagent-main",
+        backend_executable="/tmp/codeagent",
         cases=(),
     )
     monkeypatch.setattr(

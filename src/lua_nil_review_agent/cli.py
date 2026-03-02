@@ -729,6 +729,7 @@ def _render_benchmark_summary(root: Path, summary) -> str:  # noqa: ANN001
         "# Lua Nil Review Benchmark",
         "",
         f"Repository: {payload['repository']}",
+        f"Backend: {payload['backend_name']}",
         f"Total labeled cases: {payload['total_cases']}",
         f"Exact matches: {payload['exact_matches']}",
         f"Accuracy: {payload['accuracy']:.1f}%",
@@ -749,6 +750,11 @@ def _render_benchmark_summary(root: Path, summary) -> str:  # noqa: ANN001
         f"Backend total latency: {payload['backend_total_seconds']:.3f}s",
         f"Backend average latency: {payload['backend_average_seconds']:.3f}s",
     ]
+    if payload["backend_model"] is not None:
+        lines.insert(4, f"Backend model: {payload['backend_model']}")
+    if payload["backend_executable"] is not None:
+        insert_at = 5 if payload["backend_model"] is not None else 4
+        lines.insert(insert_at, f"Backend executable: {payload['backend_executable']}")
 
     mismatches = [case for case in summary.cases if not case.matches_expectation]
     if mismatches:
@@ -873,6 +879,9 @@ def _serialize_benchmark_summary(root: Path, summary) -> dict[str, object]:  # n
         accuracy = (summary.exact_matches / summary.total_cases) * 100
     return {
         "repository": str(root),
+        "backend_name": summary.backend_name,
+        "backend_model": summary.backend_model,
+        "backend_executable": summary.backend_executable,
         "total_cases": summary.total_cases,
         "exact_matches": summary.exact_matches,
         "accuracy": accuracy,

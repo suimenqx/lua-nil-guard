@@ -208,6 +208,9 @@ class BenchmarkSummary:
     backend_calls: int
     backend_total_seconds: float
     backend_average_seconds: float
+    backend_name: str
+    backend_model: str | None
+    backend_executable: str | None
     cases: tuple[BenchmarkCaseResult, ...]
 
 
