@@ -52,7 +52,7 @@ def test_build_adjudication_prompt_includes_evidence_and_hard_rules() -> None:
     assert "foo/bar.lua" in prompt
     assert "string.match" in prompt
     assert "req.params may be nil" in prompt
-    assert "Skill: lua-nil-adjudicator" in prompt
+    assert "Adjudication policy: lua-nil-adjudicator" in prompt
     assert "Required review order:" in prompt
     assert "Unknown is not risk." in prompt
     assert "Absence of proof is not proof of bug." in prompt

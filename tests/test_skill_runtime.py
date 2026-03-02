@@ -51,8 +51,8 @@ def test_load_skill_definition_parses_frontmatter_and_sections(tmp_path: Path) -
 def test_compile_adjudicator_skill_header_contains_canonical_constraints() -> None:
     header = compile_adjudicator_skill_header()
 
-    assert "Skill: lua-nil-adjudicator" in header
-    assert f"Skill contract: {ADJUDICATOR_SKILL_CONTRACT}" in header
+    assert "Adjudication policy: lua-nil-adjudicator" in header
+    assert f"Policy contract: {ADJUDICATOR_SKILL_CONTRACT}" in header
     assert "Unknown is not risk." in header
     assert "Absence of proof is not proof of bug." in header
     assert "Do not assume undocumented business guarantees." in header
@@ -79,7 +79,7 @@ def test_compile_adjudicator_skill_header_can_fallback_when_skill_is_invalid(tmp
     header = compile_adjudicator_skill_header(invalid_skill, strict=False)
 
     assert header == fallback_adjudicator_skill_header()
-    assert "Skill: lua-nil-adjudicator" in header
+    assert "Adjudication policy: lua-nil-adjudicator" in header
 
 
 def test_compile_adjudicator_skill_header_rejects_incompatible_contract(tmp_path: Path) -> None:

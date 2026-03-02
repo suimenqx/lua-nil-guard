@@ -84,7 +84,7 @@ def test_cli_agent_backend_uses_custom_skill_path(tmp_path: Path) -> None:
     backend = DemoCliBackend(runner=fake_runner, skill_path=skill_path)
     backend.adjudicate(_sample_packet(), _sample_sink_rule())
 
-    assert "Skill: custom-adjudicator" in str(captured["stdin_text"])
+    assert "Adjudication policy: custom-adjudicator" in str(captured["stdin_text"])
 
 
 def test_cli_agent_backend_parses_structured_json_response(tmp_path: Path) -> None:
@@ -147,8 +147,9 @@ def test_cli_agent_backend_parses_structured_json_response(tmp_path: Path) -> No
     schema_path = Path(captured["command"][captured["command"].index("--schema") + 1])
     assert tmp_path in output_path.parents
     assert tmp_path in schema_path.parents
-    assert "Skill: lua-nil-adjudicator" in str(captured["stdin_text"])
+    assert "Adjudication policy: lua-nil-adjudicator" in str(captured["stdin_text"])
     assert "Unknown is not risk." in str(captured["stdin_text"])
+    assert "Do not execute shell commands, open files, or inspect the repository." in str(captured["stdin_text"])
 
 
 def test_cli_agent_backend_rejects_invalid_json_output() -> None:
@@ -352,7 +353,8 @@ def test_codeagent_cli_backend_uses_codeagent_executable_by_default(tmp_path: Pa
     assert "-p" in command
     assert "-m" in command
     prompt_argument = command[command.index("-p") + 1]
-    assert "Skill: lua-nil-adjudicator" in prompt_argument
+    assert "Adjudication policy: lua-nil-adjudicator" in prompt_argument
+    assert "Use only the prompt payload as admissible evidence." in prompt_argument
     assert captured["stdin_text"] == ""
     assert captured["cwd"] == tmp_path
     assert record.judge.status == "safe"

@@ -146,6 +146,9 @@ class CliAgentBackend:
                 "- suggested_fix",
                 "- needs_human",
                 "",
+                "Do not execute shell commands, open files, or inspect the repository.",
+                "Use only the prompt payload as admissible evidence.",
+                "",
                 "Output JSON only. Do not include markdown fences or extra text.",
             ]
         )

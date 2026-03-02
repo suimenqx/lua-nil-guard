@@ -46,9 +46,9 @@ def fallback_adjudicator_skill_header() -> str:
 
     return "\n".join(
         [
-            "Skill: lua-nil-adjudicator",
-            f"Skill contract: {ADJUDICATOR_SKILL_CONTRACT}",
-            "Skill purpose: Strictly adjudicate whether a possibly nil value can reach a nil-sensitive Lua sink with explicit path evidence, strong false-positive control, and machine-readable verdicts.",
+            "Adjudication policy: lua-nil-adjudicator",
+            f"Policy contract: {ADJUDICATOR_SKILL_CONTRACT}",
+            "Policy purpose: Strictly adjudicate whether a possibly nil value can reach a nil-sensitive Lua sink with explicit path evidence, strong false-positive control, and machine-readable verdicts.",
             "",
             "Goal:",
             "Produce a precise verdict with minimal false positives.",
@@ -126,9 +126,9 @@ def compile_adjudicator_skill_header(
             raise SkillRuntimeError(f"Skill is missing required sections: {', '.join(missing)}")
 
         lines = [
-            f"Skill: {skill.name}",
-            f"Skill contract: {ADJUDICATOR_SKILL_CONTRACT}",
-            f"Skill purpose: {skill.description}",
+            f"Adjudication policy: {skill.name}",
+            f"Policy contract: {ADJUDICATOR_SKILL_CONTRACT}",
+            f"Policy purpose: {skill.description}",
         ]
         for title in required_sections:
             lines.append("")

@@ -174,7 +174,7 @@ def test_agent_semantic_suite_prompt_export_contains_agent_useful_evidence(tmp_p
     tasks = export_adjudication_tasks(snapshot)
     prompt_by_file = {Path(task["file"]).name: task["prompt"] for task in tasks}
 
-    assert "Skill: lua-nil-adjudicator" in prompt_by_file["provable_risky_nil_branch.lua"]
+    assert "Adjudication policy: lua-nil-adjudicator" in prompt_by_file["provable_risky_nil_branch.lua"]
     assert "req.force_nil and nil or \"admin\"" in prompt_by_file["provable_risky_nil_branch.lua"]
     assert "sink: string.gsub" in prompt_by_file["provable_risky_gsub_nil.lua"]
     assert "sink: ipairs" in prompt_by_file["provable_risky_ipairs_nil.lua"]

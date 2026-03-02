@@ -52,7 +52,7 @@ def test_export_adjudication_tasks_builds_prompt_payloads(tmp_path: Path) -> Non
 
     assert len(tasks) == 1
     assert tasks[0]["case_id"]
-    assert "Skill: lua-nil-adjudicator" in tasks[0]["prompt"]
+    assert "Adjudication policy: lua-nil-adjudicator" in tasks[0]["prompt"]
     assert "Unknown is not risk." in tasks[0]["prompt"]
     assert tasks[0]["sink_rule_id"] == "string.match.arg1"
 
@@ -137,7 +137,7 @@ def test_export_adjudication_tasks_accepts_custom_skill_path(tmp_path: Path) -> 
     tasks = export_adjudication_tasks(snapshot, skill_path=skill_path)
 
     assert len(tasks) == 1
-    assert "Skill: export-skill" in tasks[0]["prompt"]
+    assert "Adjudication policy: export-skill" in tasks[0]["prompt"]
 
 
 def test_cli_export_prompts_writes_json_file(tmp_path: Path) -> None:
@@ -273,7 +273,7 @@ def test_cli_export_prompts_accepts_skill_option(tmp_path: Path) -> None:
     assert exit_code == 0
     assert "Prompt tasks: 1" in output
     payload = json.loads(output_path.read_text(encoding="utf-8"))
-    assert "Skill: cli-export-skill" in payload[0]["prompt"]
+    assert "Adjudication policy: cli-export-skill" in payload[0]["prompt"]
 
 
 def test_cli_export_prompts_allows_skill_fallback(tmp_path: Path) -> None:
@@ -346,7 +346,7 @@ def test_cli_export_prompts_allows_skill_fallback(tmp_path: Path) -> None:
     assert exit_code == 0
     assert "Prompt tasks: 1" in output
     payload = json.loads(output_path.read_text(encoding="utf-8"))
-    assert "Skill: lua-nil-adjudicator" in payload[0]["prompt"]
+    assert "Adjudication policy: lua-nil-adjudicator" in payload[0]["prompt"]
 
 
 def test_cli_export_prompts_reports_invalid_skill_contract_without_fallback(tmp_path: Path) -> None:
