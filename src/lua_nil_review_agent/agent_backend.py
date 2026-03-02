@@ -13,6 +13,12 @@ from .agent_driver_models import (
     CODEAGENT_PROVIDER_SPEC,
     CODEX_PROVIDER_SPEC,
     AgentProviderSpec,
+    get_builtin_agent_provider_spec,
+)
+from .agent_protocols import (
+    SchemaFileCliProtocol,
+    StdoutEnvelopeCliProtocol,
+    get_cli_protocol_builder,
 )
 from .adjudication import adjudicate_packet
 from .models import AdjudicationRecord, EvidencePacket, RoleOpinion, SinkRule, Verdict
@@ -396,6 +402,7 @@ class CodexCliBackend(CliAgentBackend):
         provider_spec: AgentProviderSpec | None = None,
     ) -> None:
         self.provider_spec = provider_spec or CODEX_PROVIDER_SPEC
+        self.cli_protocol = get_cli_protocol_builder(self.provider_spec.protocol)
         resolved_timeout = (
             self.provider_spec.default_timeout_seconds
             if timeout_seconds is None
@@ -441,31 +448,32 @@ class CodexCliBackend(CliAgentBackend):
         output_path: Path,
         cwd: Path | None,
     ) -> tuple[str, ...]:
-        command: list[str] = [
-            self.executable,
-            "exec",
-            "--skip-git-repo-check",
-            "--sandbox",
-            self.sandbox,
-            "--color",
-            "never",
-        ]
-        for override in self.config_overrides:
-            command.extend(["-c", override])
-        command.extend(
-            [
-            "--output-schema",
-            str(schema_path),
-            "-o",
-            str(output_path),
-            ]
+        protocol = self.cli_protocol
+        if not isinstance(protocol, SchemaFileCliProtocol):
+            raise BackendError(
+                f"Provider {self.provider_spec.name} requires schema_file_cli, got {self.provider_spec.protocol}"
+            )
+        return protocol.build_command(
+            executable=self.executable,
+            base_args=(
+                "exec",
+                "--skip-git-repo-check",
+                "--sandbox",
+                self.sandbox,
+                "--color",
+                "never",
+            ),
+            config_overrides=self.config_overrides,
+            schema_path=schema_path,
+            output_path=output_path,
+            schema_flag="--output-schema",
+            output_flag="-o",
+            cwd=cwd,
+            cwd_flag="-C",
+            model=self.model,
+            model_flag="-m",
+            stdin_sentinel="-",
         )
-        if cwd is not None:
-            command.extend(["-C", str(cwd)])
-        if self.model is not None:
-            command.extend(["-m", self.model])
-        command.append("-")
-        return tuple(command)
 
 
 class CodeAgentCliBackend(CliAgentBackend):
@@ -488,6 +496,7 @@ class CodeAgentCliBackend(CliAgentBackend):
         provider_spec: AgentProviderSpec | None = None,
     ) -> None:
         self.provider_spec = provider_spec or CODEAGENT_PROVIDER_SPEC
+        self.cli_protocol = get_cli_protocol_builder(self.provider_spec.protocol)
         resolved_timeout = (
             self.provider_spec.default_timeout_seconds
             if timeout_seconds is None
@@ -553,17 +562,21 @@ class CodeAgentCliBackend(CliAgentBackend):
         prompt: str,
         cwd: Path | None,
     ) -> tuple[str, ...]:
-        command: list[str] = [
-            self.executable,
-            "--output-format",
-            "json",
-        ]
-        for override in self.config_overrides:
-            command.extend(["-c", override])
-        if self.model is not None:
-            command.extend(["-m", self.model])
-        command.extend(["-p", prompt])
-        return tuple(command)
+        del cwd
+        protocol = self.cli_protocol
+        if not isinstance(protocol, StdoutEnvelopeCliProtocol):
+            raise BackendError(
+                f"Provider {self.provider_spec.name} requires stdout_envelope_cli, got {self.provider_spec.protocol}"
+            )
+        return protocol.build_command(
+            executable=self.executable,
+            base_args=("--output-format", "json"),
+            config_overrides=self.config_overrides,
+            model=self.model,
+            model_flag="-m",
+            prompt=prompt,
+            prompt_flag="-p",
+        )
 
     def parse_wrapped_response(self, raw: str, *, case_id: str) -> AdjudicationRecord:
         try:
@@ -603,6 +616,7 @@ def create_adjudication_backend(
     if normalized == "heuristic":
         return HeuristicAdjudicationBackend()
     if normalized == "codex":
+        provider_spec = get_builtin_agent_provider_spec(normalized)
         options: dict[str, object] = {}
         if timeout_seconds is not None:
             options["timeout_seconds"] = timeout_seconds
@@ -618,10 +632,12 @@ def create_adjudication_backend(
             model=model,
             skill_path=skill_path,
             strict_skill=strict_skill,
-            executable=executable or "codex",
+            executable=executable or provider_spec.default_executable,
+            provider_spec=provider_spec,
             **options,
         )
     if normalized == "codeagent":
+        provider_spec = get_builtin_agent_provider_spec(normalized)
         options = {}
         if timeout_seconds is not None:
             options["timeout_seconds"] = timeout_seconds
@@ -637,7 +653,8 @@ def create_adjudication_backend(
             model=model,
             skill_path=skill_path,
             strict_skill=strict_skill,
-            executable=executable or "codeagent",
+            executable=executable or provider_spec.default_executable,
+            provider_spec=provider_spec,
             **options,
         )
     raise ValueError(f"Unknown adjudication backend: {name}")

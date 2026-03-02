@@ -8,6 +8,12 @@ from .agent_driver_models import (
     AgentProviderSpec,
     get_builtin_agent_provider_spec,
 )
+from .agent_protocols import (
+    CLI_PROTOCOL_BUILDERS,
+    SchemaFileCliProtocol,
+    StdoutEnvelopeCliProtocol,
+    get_cli_protocol_builder,
+)
 from .agent_backend import (
     AdjudicationBackend,
     BackendError,
@@ -91,6 +97,7 @@ __all__ = [
     "BenchmarkSummary",
     "BaselineStore",
     "CliAgentBackend",
+    "CLI_PROTOCOL_BUILDERS",
     "CandidateAssessment",
     "CandidateCase",
     "ConfidencePolicy",
@@ -108,9 +115,11 @@ __all__ = [
     "HeuristicAdjudicationBackend",
     "RoleOpinion",
     "RepositorySnapshot",
+    "SchemaFileCliProtocol",
     "SinkRule",
     "SkillDefinition",
     "SkillRuntimeError",
+    "StdoutEnvelopeCliProtocol",
     "SummaryStore",
     "StaticAnalysisResult",
     "Verdict",
@@ -138,6 +147,7 @@ __all__ = [
     "facts_for_subject",
     "filter_new_findings",
     "get_builtin_agent_provider_spec",
+    "get_cli_protocol_builder",
     "load_confidence_policy",
     "load_adjudicator_skill",
     "load_sink_rules",
