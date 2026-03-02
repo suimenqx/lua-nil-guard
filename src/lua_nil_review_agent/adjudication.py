@@ -242,16 +242,21 @@ def _build_contextual_fix_snippet(
         return None
 
     start_index, target_index, end_index = bounds
-    anchor_line = lines[start_index]
-    alias_indent = _leading_indent(anchor_line)
+    target_line = lines[target_index]
+    alias_indent = _leading_indent(target_line)
     alias_line = f"{alias_indent}local {alias} = {packet.target.expression} or {fallback_literal}"
+    insert_after_start = _is_else_line(lines[start_index].strip())
 
-    snippet_lines = [alias_line]
+    snippet_lines: list[str] = []
+    if not insert_after_start:
+        snippet_lines.append(alias_line)
     for index in range(start_index, end_index + 1):
         current = lines[index]
         if index == target_index:
             current = current.replace(packet.target.expression, alias, 1)
         snippet_lines.append(current)
+        if insert_after_start and index == start_index:
+            snippet_lines.append(alias_line)
     return "\n".join(snippet_lines)
 
 
@@ -265,6 +270,10 @@ def _find_snippet_bounds(
         return None
 
     target_line = lines[target_index].strip()
+    else_bounds = _find_enclosing_else_branch_bounds(lines, target_index)
+    if else_bounds is not None:
+        return else_bounds
+
     if _is_repeat_until_line(target_line):
         start_index = _find_repeat_start_index(lines, target_index)
         if start_index is not None:
@@ -330,8 +339,16 @@ def _is_function_open(stripped_line: str) -> bool:
     )
 
 
+def _is_if_open(stripped_line: str) -> bool:
+    return stripped_line.startswith("if ") and stripped_line.endswith(" then")
+
+
 def _is_elseif_line(stripped_line: str) -> bool:
     return stripped_line.startswith("elseif ") and stripped_line.endswith(" then")
+
+
+def _is_else_line(stripped_line: str) -> bool:
+    return stripped_line == "else"
 
 
 def _find_repeat_start_index(lines: list[str], target_index: int) -> int | None:
@@ -346,3 +363,66 @@ def _find_repeat_start_index(lines: list[str], target_index: int) -> int | None:
             if depth == 0:
                 return index
     return None
+
+
+def _find_enclosing_else_branch_bounds(
+    lines: list[str],
+    target_index: int,
+) -> tuple[int, int, int] | None:
+    stack: list[dict[str, int | str]] = []
+
+    for index in range(target_index):
+        stripped = lines[index].strip()
+
+        if _is_if_open(stripped):
+            stack.append(
+                {
+                    "type": "if",
+                    "start_index": index,
+                    "branch": "if",
+                    "branch_index": index,
+                }
+            )
+            continue
+
+        if _is_elseif_line(stripped):
+            if stack and stack[-1]["type"] == "if":
+                stack[-1]["branch"] = "elseif"
+                stack[-1]["branch_index"] = index
+            continue
+
+        if _is_else_line(stripped):
+            if stack and stack[-1]["type"] == "if":
+                stack[-1]["branch"] = "else"
+                stack[-1]["branch_index"] = index
+            continue
+
+        if _is_repeat_open(stripped):
+            stack.append({"type": "repeat", "start_index": index})
+            continue
+
+        if _opens_block(stripped):
+            stack.append({"type": "block", "start_index": index})
+            continue
+
+        if _is_repeat_until_line(stripped):
+            _pop_last_matching_block(stack, "repeat")
+            continue
+
+        if stripped == "end" and stack:
+            stack.pop()
+
+    for entry in reversed(stack):
+        if entry["type"] != "if" or entry.get("branch") != "else":
+            continue
+        start_index = int(entry["branch_index"])
+        end_index = _find_snippet_end_index(lines, int(entry["start_index"]))
+        return (start_index, target_index, end_index)
+    return None
+
+
+def _pop_last_matching_block(stack: list[dict[str, int | str]], block_type: str) -> None:
+    while stack:
+        entry = stack.pop()
+        if entry["type"] == block_type:
+            return

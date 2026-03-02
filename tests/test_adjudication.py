@@ -465,3 +465,52 @@ def test_adjudicate_packet_falls_back_to_indented_alias_for_elseif_condition() -
 
     assert record.judge.status == "risky"
     assert record.judge.suggested_fix == "  local items = req.items or {}"
+
+
+def test_adjudicate_packet_expands_else_branch_for_inner_target_line() -> None:
+    packet = EvidencePacket(
+        case_id="case_else_branch",
+        target=EvidenceTarget(
+            file="demo.lua",
+            line=4,
+            column=12,
+            sink="#",
+            arg_index=1,
+            expression="req.items",
+        ),
+        local_context=(
+            "  if ready then\n"
+            "    return 0\n"
+            "  else\n"
+            "    return #req.items\n"
+            "  end"
+        ),
+        related_functions=(),
+        function_summaries=(),
+        knowledge_facts=(),
+        static_reasoning={
+            "state": "unknown_static",
+            "origin_candidates": ("req.items",),
+            "observed_guards": (),
+        },
+    )
+    rule = SinkRule(
+        id="length.operand",
+        kind="unary_operand",
+        qualified_name="#",
+        arg_index=1,
+        nil_sensitive=True,
+        failure_mode="runtime_error",
+        default_severity="high",
+        safe_patterns=("x or {}",),
+    )
+
+    record = adjudicate_packet(packet, rule)
+
+    assert record.judge.status == "risky"
+    assert record.judge.suggested_fix == (
+        "  else\n"
+        "    local items = req.items or {}\n"
+        "    return #items\n"
+        "  end"
+    )
