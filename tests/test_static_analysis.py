@@ -116,3 +116,31 @@ def test_analyze_candidate_does_not_treat_nil_branch_ternary_as_defaulted() -> N
     assert result.state == "unknown_static"
     assert result.observed_guards == ()
     assert result.origin_candidates == ('req.force_nil and nil or "admin"',)
+
+
+def test_analyze_candidate_tracks_single_call_origin_for_multi_assignment() -> None:
+    source = "\n".join(
+        [
+            "local display_name, tag = normalize_pair(req.params.display_name)",
+            "return string.match(display_name, '^g')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_5",
+        file="demo.lua",
+        line=2,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="display_name",
+        symbol="display_name",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
+    assert result.origin_candidates == ("normalize_pair(req.params.display_name)",)

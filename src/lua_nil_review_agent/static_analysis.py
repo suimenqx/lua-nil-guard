@@ -40,14 +40,33 @@ def analyze_candidate(source: str, candidate: CandidateCase) -> StaticAnalysisRe
 
 
 def _find_last_assignment(lines: list[str], symbol: str) -> str | None:
-    pattern = re.compile(
+    single_pattern = re.compile(
         rf"^\s*(?:local\s+)?{re.escape(symbol)}\s*=\s*(.+?)\s*$",
+    )
+    multi_pattern = re.compile(
+        r"^\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)+)\s*=\s*(.+?)\s*$",
     )
 
     for line in reversed(lines):
-        match = pattern.match(line)
+        match = single_pattern.match(line)
         if match:
             return match.group(1)
+        match = multi_pattern.match(line)
+        if match:
+            names = [name.strip() for name in match.group(1).split(",")]
+            if symbol not in names:
+                continue
+
+            values = _split_top_level_values(match.group(2))
+            if not values:
+                continue
+
+            position = names.index(symbol)
+            if position < len(values):
+                return values[position]
+            if len(values) == 1:
+                # A single function call can populate multiple targets in Lua.
+                return values[0]
     return None
 
 
@@ -71,3 +90,39 @@ def _has_defaulting_origin(origin: str | None) -> bool:
     if " and nil or " in origin:
         return False
     return True
+
+
+def _split_top_level_values(values_text: str) -> list[str]:
+    values: list[str] = []
+    start = 0
+    depth = 0
+    quote: str | None = None
+    escaped = False
+
+    for index, char in enumerate(values_text):
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char in "([{":
+            depth += 1
+            continue
+        if char in ")]}":
+            depth = max(0, depth - 1)
+            continue
+        if char == "," and depth == 0:
+            values.append(values_text[start:index].strip())
+            start = index + 1
+
+    tail = values_text[start:].strip()
+    if tail:
+        values.append(tail)
+    return values

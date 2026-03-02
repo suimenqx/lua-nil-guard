@@ -140,15 +140,17 @@ def test_agent_semantic_suite_strict_backend_distinguishes_risky_safe_and_uncert
 
     statuses = {verdict.case_id: verdict.status for verdict in verdicts}
 
-    assert len(facts) == 1
-    assert facts[0].subject == "normalize_name"
-    assert len(verdicts) == 8
+    fact_subjects = {fact.subject for fact in facts}
+
+    assert fact_subjects == {"normalize_name", "normalize_pair"}
+    assert len(verdicts) == 9
     assert any("provable_risky_nil_literal.lua" in case_id and status == "risky_verified" for case_id, status in statuses.items())
     assert any("provable_risky_nil_branch.lua" in case_id and status == "risky_verified" for case_id, status in statuses.items())
     assert any("provable_safe_if_guard.lua" in case_id and status == "safe_verified" for case_id, status in statuses.items())
     assert any("provable_safe_assert.lua" in case_id and status == "safe_verified" for case_id, status in statuses.items())
     assert any("provable_safe_default.lua" in case_id and status == "safe_verified" for case_id, status in statuses.items())
     assert any("provable_safe_normalized.lua" in case_id and status == "safe" for case_id, status in statuses.items())
+    assert any("provable_safe_multi_return.lua" in case_id and status == "safe" for case_id, status in statuses.items())
     assert any("provable_uncertain_field.lua" in case_id and status == "uncertain" for case_id, status in statuses.items())
     assert any("provable_uncertain_wrapper.lua" in case_id and status == "uncertain" for case_id, status in statuses.items())
 
@@ -167,6 +169,8 @@ def test_agent_semantic_suite_prompt_export_contains_agent_useful_evidence(tmp_p
     assert "req.force_nil and nil or \"admin\"" in prompt_by_file["provable_risky_nil_branch.lua"]
     assert "observed_guards: assert(token)" in prompt_by_file["provable_safe_assert.lua"]
     assert "normalize_name returns non-nil value" in prompt_by_file["provable_safe_normalized.lua"]
+    assert "Related functions:\nnormalize_pair" in prompt_by_file["provable_safe_multi_return.lua"]
+    assert "normalize_pair returns non-nil value" in prompt_by_file["provable_safe_multi_return.lua"]
     assert "Related functions:\npassthrough_name" in prompt_by_file["provable_uncertain_wrapper.lua"]
     assert "Knowledge facts:\n(none)" in prompt_by_file["provable_uncertain_wrapper.lua"]
 

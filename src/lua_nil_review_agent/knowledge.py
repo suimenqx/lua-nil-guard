@@ -68,12 +68,56 @@ def derive_facts_from_summaries(summaries: tuple[FunctionSummary, ...]) -> tuple
 
 def _returns_non_nil_value(summary: FunctionSummary) -> bool:
     for returned in summary.returns:
-        if returned.startswith(("'", '"', "{")):
+        first_value = _first_return_value(returned)
+        if first_value.startswith(("'", '"', "{")):
             return True
-        if returned in summary.params:
+        if first_value in summary.params:
             for guard in summary.guards:
-                if guard.startswith(f"{returned} = {returned} or "):
+                if guard.startswith(f"{first_value} = {first_value} or "):
                     return True
-            if summary.params[returned] == "non_nil_required":
+            if summary.params[first_value] == "non_nil_required":
                 return True
     return False
+
+
+def _first_return_value(returned: str) -> str:
+    values = _split_top_level_values(returned)
+    if not values:
+        return returned.strip()
+    return values[0]
+
+
+def _split_top_level_values(values_text: str) -> list[str]:
+    values: list[str] = []
+    start = 0
+    depth = 0
+    quote: str | None = None
+    escaped = False
+
+    for index, char in enumerate(values_text):
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char in "([{":
+            depth += 1
+            continue
+        if char in ")]}":
+            depth = max(0, depth - 1)
+            continue
+        if char == "," and depth == 0:
+            values.append(values_text[start:index].strip())
+            start = index + 1
+
+    tail = values_text[start:].strip()
+    if tail:
+        values.append(tail)
+    return values
