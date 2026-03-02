@@ -49,7 +49,11 @@ def _find_last_assignment(lines: list[str], symbol: str) -> str | None:
         r"^\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)+)\s*=\s*(.+?)\s*$",
     )
 
-    for line in reversed(lines):
+    line_paths, final_path = _scan_branch_paths(lines)
+
+    for line, path in zip(reversed(lines), reversed(line_paths)):
+        if not _branch_path_is_prefix(path, final_path):
+            continue
         match = single_pattern.match(line)
         if match:
             return match.group(1)
@@ -288,6 +292,36 @@ def _assigns_symbol(stripped_line: str, symbol: str) -> bool:
         return False
     names = [name.strip() for name in match.group(1).split(",")]
     return symbol in names
+
+
+def _scan_branch_paths(lines: list[str]) -> tuple[tuple[tuple[int, ...], ...], tuple[int, ...]]:
+    stack: list[dict[str, int | str]] = []
+    line_paths: list[tuple[int, ...]] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped:
+            if _is_elseif_line(stripped):
+                if stack and stack[-1]["type"] == "if_family":
+                    stack[-1]["branch"] = int(stack[-1]["branch"]) + 1
+            elif stripped == "else":
+                if stack and stack[-1]["type"] == "if_family":
+                    stack[-1]["branch"] = int(stack[-1]["branch"]) + 1
+
+        line_paths.append(_current_if_branch_path(stack))
+
+        if not stripped:
+            continue
+        if _is_if_open(stripped):
+            stack.append({"type": "if_family", "branch": 0})
+            continue
+        if _opens_non_if_block(stripped):
+            stack.append({"type": "block"})
+            continue
+        if _closes_block(stripped) and stack:
+            stack.pop()
+
+    return tuple(line_paths), _current_if_branch_path(stack)
 
 
 def _current_if_branch_path(stack: list[dict[str, int | str]]) -> tuple[int, ...]:

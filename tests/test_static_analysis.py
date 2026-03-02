@@ -369,6 +369,67 @@ def test_analyze_candidate_keeps_positive_guard_on_sibling_branch_after_reassign
     assert result.observed_guards == ("if username then",)
 
 
+def test_analyze_candidate_ignores_branch_local_origin_after_merge() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "if ready then",
+            "  username = req.params.fallback_name",
+            "end",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_8c",
+        file="demo.lua",
+        line=5,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "unknown_static"
+    assert result.origin_candidates == ("req.params.username",)
+
+
+def test_analyze_candidate_ignores_then_branch_origin_in_else_branch() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "if ready then",
+            "  username = req.params.primary_name",
+            "else",
+            "  return string.match(username, '^a')",
+            "end",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_8d",
+        file="demo.lua",
+        line=5,
+        column=10,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "unknown_static"
+    assert result.origin_candidates == ("req.params.username",)
+
+
 def test_analyze_candidate_allows_re_guard_after_reassignment() -> None:
     source = "\n".join(
         [
