@@ -219,7 +219,7 @@ def test_export_autofix_patches_writes_reportable_patch_file(tmp_path: Path) -> 
         encoding="utf-8",
     )
     (src_dir / "demo.lua").write_text(
-        "local username = req.params.username\nreturn string.match(username, 'x')",
+        "local username = nil\nreturn string.match(username, 'x')",
         encoding="utf-8",
     )
 

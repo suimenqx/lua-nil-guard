@@ -6,7 +6,7 @@ from pathlib import Path
 from lua_nil_review_agent.service import bootstrap_repository, run_repository_review
 
 
-def test_run_repository_review_produces_verified_risk_for_unguarded_sink(tmp_path: Path) -> None:
+def test_run_repository_review_produces_verified_risk_for_locally_proven_nil_sink(tmp_path: Path) -> None:
     (tmp_path / "config").mkdir()
     (tmp_path / "src").mkdir()
     (tmp_path / "config" / "sink_rules.json").write_text(
@@ -39,7 +39,7 @@ def test_run_repository_review_produces_verified_risk_for_unguarded_sink(tmp_pat
     (tmp_path / "src" / "demo.lua").write_text(
         "\n".join(
             [
-                "local username = req.params.username",
+                "local username = nil",
                 "return string.match(username, '^a')",
             ]
         ),

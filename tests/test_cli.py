@@ -173,7 +173,7 @@ def test_cli_report_outputs_markdown_findings(tmp_path: Path) -> None:
     (tmp_path / "src" / "demo.lua").write_text(
         "\n".join(
             [
-                "local username = req.params.username",
+                "local username = nil",
                 "return string.match(username, '^a')",
             ]
         ),
@@ -220,7 +220,7 @@ def test_cli_export_autofix_outputs_machine_readable_patches(tmp_path: Path) -> 
     (tmp_path / "src" / "demo.lua").write_text(
         "\n".join(
             [
-                "local username = req.params.username",
+                "local username = nil",
                 "return string.match(username, '^a')",
             ]
         ),
@@ -515,7 +515,7 @@ def test_cli_baseline_create_writes_baseline_file(tmp_path: Path) -> None:
     (tmp_path / "src" / "demo.lua").write_text(
         "\n".join(
             [
-                "local username = req.params.username",
+                "local username = nil",
                 "return string.match(username, '^a')",
             ]
         ),
@@ -563,7 +563,7 @@ def test_cli_report_new_applies_baseline_filter(tmp_path: Path) -> None:
     (tmp_path / "src" / "demo.lua").write_text(
         "\n".join(
             [
-                "local username = req.params.username",
+                "local username = nil",
                 "return string.match(username, '^a')",
             ]
         ),
@@ -713,7 +713,7 @@ def test_cli_ci_check_fails_when_new_findings_exist(tmp_path: Path) -> None:
     (tmp_path / "src" / "demo.lua").write_text(
         "\n".join(
             [
-                "local username = req.params.username",
+                "local username = nil",
                 "return string.match(username, '^a')",
             ]
         ),

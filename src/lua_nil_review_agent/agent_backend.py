@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 import subprocess
 import tempfile
@@ -26,7 +27,44 @@ class HeuristicAdjudicationBackend:
     """Default local backend used when no external agent is configured."""
 
     def adjudicate(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
-        return adjudicate_packet(packet, sink_rule)
+        record = adjudicate_packet(packet, sink_rule)
+        if record.judge.status != "risky":
+            return record
+        if _has_local_risk_proof(packet):
+            return record
+
+        origins = _tuple_field(packet, "origin_candidates")
+        prosecutor = RoleOpinion(
+            role="prosecutor",
+            status="uncertain",
+            confidence="low",
+            risk_path=origins,
+            safety_evidence=(),
+            missing_evidence=("origin may be nil, but no code-proven nil path exists",),
+            recommended_next_action="expand_context",
+            suggested_fix=None,
+        )
+        defender = replace(
+            record.defender,
+            status="uncertain",
+            confidence="low",
+            missing_evidence=("no explicit guard or trusted non-nil contract found",),
+        )
+        judge = Verdict(
+            case_id=packet.case_id,
+            status="uncertain",
+            confidence="medium",
+            risk_path=origins,
+            safety_evidence=(),
+            counterarguments_considered=("insufficient local proof either way",),
+            suggested_fix=None,
+            needs_human=True,
+        )
+        return AdjudicationRecord(
+            prosecutor=prosecutor,
+            defender=defender,
+            judge=judge,
+        )
 
 
 class CliAgentBackend:
@@ -387,6 +425,20 @@ def _default_runner(
             f"CLI backend command failed with exit code {result.returncode}: {result.stderr.strip()}"
         )
     return result.stdout
+
+
+def _has_local_risk_proof(packet: EvidencePacket) -> bool:
+    origins = _tuple_field(packet, "origin_candidates")
+    if any(origin.strip() == "nil" for origin in origins):
+        return True
+    return " and nil or " in packet.local_context
+
+
+def _tuple_field(packet: EvidencePacket, key: str) -> tuple[str, ...]:
+    value = packet.static_reasoning.get(key, ())
+    if isinstance(value, tuple):
+        return value
+    return ()
 
 
 def _parse_role_opinion(payload: object) -> RoleOpinion:

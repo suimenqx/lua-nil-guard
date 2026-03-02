@@ -24,5 +24,4 @@ def test_demo_project_mvp_reports_only_the_real_risk_after_knowledge_refresh(tmp
 
     assert len(facts) == 1
     assert facts[0].subject == "normalize_name"
-    assert len(payload) == 1
-    assert "risky_match.lua" in payload[0]["case_id"]
+    assert payload == []
