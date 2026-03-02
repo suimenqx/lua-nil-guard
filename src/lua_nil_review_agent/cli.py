@@ -12,6 +12,7 @@ from .reporting import render_json_report, render_markdown_report
 from .skill_runtime import SkillRuntimeError
 from .service import (
     apply_autofix_manifest,
+    benchmark_cache_compare,
     benchmark_repository_review,
     bootstrap_repository,
     clear_backend_cache,
@@ -176,6 +177,49 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         except (SkillRuntimeError, BackendError, ValueError) as exc:
             return 2, str(exc)
         return 0, _render_benchmark_summary(snapshot.root, summary)
+
+    if command == "benchmark-cache-compare":
+        try:
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_timeout,
+                backend_attempts,
+                backend_cache_path,
+                backend_config_overrides,
+                positional,
+            ) = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 1:
+            return 2, "benchmark-cache-compare requires exactly one repository path"
+        if backend_cache_path is None:
+            return 2, "benchmark-cache-compare requires --backend-cache PATH"
+        root = Path(positional[0])
+        snapshot = bootstrap_repository(root)
+        try:
+            comparison = benchmark_cache_compare(
+                snapshot,
+                cache_path=backend_cache_path,
+                backend_factory=lambda: create_adjudication_backend(
+                    backend_name,
+                    workdir=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                    executable=executable,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
+                    cache_path=backend_cache_path,
+                    config_overrides=backend_config_overrides,
+                ),
+            )
+        except (SkillRuntimeError, BackendError, ValueError) as exc:
+            return 2, str(exc)
+        return 0, _render_benchmark_cache_comparison(snapshot.root, comparison)
 
     if command == "baseline-create":
         try:
@@ -587,6 +631,39 @@ def _render_benchmark_summary(root: Path, summary) -> str:  # noqa: ANN001
     return "\n".join(lines)
 
 
+def _render_benchmark_cache_comparison(root: Path, comparison) -> str:  # noqa: ANN001
+    cold = comparison.cold
+    warm = comparison.warm
+
+    lines = [
+        "# Lua Nil Review Cache Comparison",
+        "",
+        f"Repository: {root}",
+        f"Cache file: {comparison.cache_path}",
+        f"Cleared entries before cold run: {comparison.cache_cleared_entries}",
+        "",
+        "Cold run:",
+        f"- Exact matches: {cold.exact_matches}/{cold.total_cases}",
+        f"- Backend cache hits: {cold.backend_cache_hits}",
+        f"- Backend cache misses: {cold.backend_cache_misses}",
+        f"- Backend calls: {cold.backend_calls}",
+        f"- Backend total latency: {cold.backend_total_seconds:.3f}s",
+        "",
+        "Warm run:",
+        f"- Exact matches: {warm.exact_matches}/{warm.total_cases}",
+        f"- Backend cache hits: {warm.backend_cache_hits}",
+        f"- Backend cache misses: {warm.backend_cache_misses}",
+        f"- Backend calls: {warm.backend_calls}",
+        f"- Backend total latency: {warm.backend_total_seconds:.3f}s",
+        "",
+        "Delta (warm - cold):",
+        f"- Cache hits: {warm.backend_cache_hits - cold.backend_cache_hits:+d}",
+        f"- Backend calls: {warm.backend_calls - cold.backend_calls:+d}",
+        f"- Total latency: {warm.backend_total_seconds - cold.backend_total_seconds:+.3f}s",
+    ]
+    return "\n".join(lines)
+
+
 def _usage() -> str:
     return "\n".join(
         [
@@ -596,6 +673,7 @@ def _usage() -> str:
             "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent benchmark-cache-compare [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] --backend-cache PATH [--backend-config KEY=VALUE] <repository>",
             "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <output>",
             "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <baseline>",
             "  lua-nil-review-agent refresh-summaries <repository> [output]",

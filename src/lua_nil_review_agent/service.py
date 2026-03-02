@@ -4,6 +4,7 @@ import difflib
 import json
 import re
 from pathlib import Path
+from typing import Callable
 
 from .adjudication import attach_autofix_patch
 from .agent_backend import AdjudicationBackend, HeuristicAdjudicationBackend
@@ -12,6 +13,7 @@ from .config_loader import load_confidence_policy, load_sink_rules
 from .knowledge import KnowledgeBase, derive_facts_from_summaries, facts_for_subject
 from .models import (
     AutofixPatch,
+    BenchmarkCacheComparison,
     BenchmarkCaseResult,
     BenchmarkSummary,
     CandidateAssessment,
@@ -227,6 +229,36 @@ def benchmark_repository_review(
         backend_total_seconds=backend_total_seconds,
         backend_average_seconds=backend_average_seconds,
         cases=tuple(cases),
+    )
+
+
+def benchmark_cache_compare(
+    snapshot: RepositorySnapshot,
+    *,
+    backend_factory: Callable[[], AdjudicationBackend],
+    cache_path: str | Path,
+    knowledge_path: str | Path | None = None,
+) -> BenchmarkCacheComparison:
+    """Run benchmark twice to compare cold-start and warm-cache backend behavior."""
+
+    cleared_entries = clear_backend_cache(cache_path)
+    cold_backend = backend_factory()
+    cold = benchmark_repository_review(
+        snapshot,
+        backend=cold_backend,
+        knowledge_path=knowledge_path,
+    )
+    warm_backend = backend_factory()
+    warm = benchmark_repository_review(
+        snapshot,
+        backend=warm_backend,
+        knowledge_path=knowledge_path,
+    )
+    return BenchmarkCacheComparison(
+        cache_path=str(Path(cache_path)),
+        cache_cleared_entries=cleared_entries,
+        cold=cold,
+        warm=warm,
     )
 
 

@@ -8,6 +8,7 @@ from lua_nil_review_agent.agent_backend import BackendError, CodexCliBackend
 from lua_nil_review_agent.models import AdjudicationRecord, AutofixPatch, RoleOpinion, Verdict
 from lua_nil_review_agent.service import (
     apply_autofix_manifest,
+    benchmark_cache_compare,
     benchmark_repository_review,
     bootstrap_repository,
     clear_backend_cache,
@@ -278,6 +279,46 @@ def test_benchmark_repository_review_reports_backend_cache_metrics(tmp_path: Pat
     assert summary.backend_calls == 4
     assert summary.backend_total_seconds == 1.25
     assert summary.backend_average_seconds == 0.3125
+
+
+def test_benchmark_cache_compare_runs_cold_and_warm_passes(tmp_path: Path) -> None:
+    project_root = Path(__file__).resolve().parents[1] / "examples" / "mvp_cases" / "agent_semantic_suite"
+    runtime_root = tmp_path / "agent_semantic_suite"
+    shutil.copytree(project_root, runtime_root)
+    cache_path = tmp_path / "codex-cache.json"
+    cache_path.write_text(json.dumps({"stale": {"judge": {"status": "safe"}}}), encoding="utf-8")
+
+    snapshot = bootstrap_repository(runtime_root)
+    backends: list[StrictEvidenceBackend] = []
+
+    def make_backend() -> StrictEvidenceBackend:
+        backend = StrictEvidenceBackend()
+        if not backends:
+            backend.cache_hits = 0
+            backend.cache_misses = 18
+            backend.backend_call_count = 18
+            backend.backend_total_seconds = 9.0
+        else:
+            backend.cache_hits = 18
+            backend.cache_misses = 0
+            backend.backend_call_count = 0
+            backend.backend_total_seconds = 0.0
+        backends.append(backend)
+        return backend
+
+    comparison = benchmark_cache_compare(
+        snapshot,
+        backend_factory=make_backend,
+        cache_path=cache_path,
+    )
+
+    assert comparison.cache_cleared_entries == 1
+    assert comparison.cold.backend_cache_hits == 0
+    assert comparison.cold.backend_cache_misses == 18
+    assert comparison.cold.backend_calls == 18
+    assert comparison.warm.backend_cache_hits == 18
+    assert comparison.warm.backend_cache_misses == 0
+    assert comparison.warm.backend_calls == 0
 
 
 def test_clear_backend_cache_removes_cache_file_and_counts_entries(tmp_path: Path) -> None:

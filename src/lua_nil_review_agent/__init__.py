@@ -18,6 +18,7 @@ from .knowledge import KnowledgeBase, derive_facts_from_summaries, facts_for_sub
 from .models import (
     AdjudicationRecord,
     AutofixPatch,
+    BenchmarkCacheComparison,
     BenchmarkCaseResult,
     BenchmarkSummary,
     CandidateAssessment,
@@ -52,6 +53,7 @@ from .skill_runtime import (
 from .service import (
     apply_autofix_manifest,
     benchmark_repository_review,
+    benchmark_cache_compare,
     bootstrap_repository,
     clear_backend_cache,
     export_adjudication_tasks,
@@ -74,6 +76,7 @@ __all__ = [
     "ADJUDICATOR_SKILL_CONTRACT",
     "AutofixPatch",
     "BackendError",
+    "BenchmarkCacheComparison",
     "BenchmarkCaseResult",
     "BenchmarkSummary",
     "BaselineStore",
@@ -102,6 +105,7 @@ __all__ = [
     "adjudicate_packet",
     "apply_autofix_manifest",
     "benchmark_repository_review",
+    "benchmark_cache_compare",
     "bootstrap_repository",
     "build_baseline",
     "build_adjudication_prompt",

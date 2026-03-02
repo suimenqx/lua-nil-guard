@@ -9,7 +9,13 @@ import pytest
 import lua_nil_review_agent.cli as cli_module
 from lua_nil_review_agent.agent_backend import BackendError
 from lua_nil_review_agent.cli import run
-from lua_nil_review_agent.models import AdjudicationRecord, RoleOpinion, Verdict
+from lua_nil_review_agent.models import (
+    AdjudicationRecord,
+    BenchmarkCacheComparison,
+    BenchmarkSummary,
+    RoleOpinion,
+    Verdict,
+)
 
 
 def test_cli_help_lists_supported_backends() -> None:
@@ -28,6 +34,7 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "apply-autofix" in output
     assert "export-unified-diff" in output
     assert "clear-backend-cache" in output
+    assert "benchmark-cache-compare" in output
 
 
 def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
@@ -170,6 +177,118 @@ def test_cli_benchmark_reports_labeled_accuracy(tmp_path: Path, monkeypatch: pyt
     assert "Backend calls: 0" in output
     assert "Backend total latency: 0.000s" in output
     assert "Backend average latency: 0.000s" in output
+
+
+def test_cli_benchmark_cache_compare_reports_cold_and_warm_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fake_summary = BenchmarkSummary(
+        total_cases=18,
+        exact_matches=18,
+        expected_risky=5,
+        expected_safe=8,
+        expected_uncertain=5,
+        actual_risky=5,
+        actual_safe=8,
+        actual_uncertain=5,
+        false_positive_risks=0,
+        missed_risks=0,
+        unresolved_cases=0,
+        backend_fallbacks=0,
+        backend_timeouts=0,
+        backend_cache_hits=0,
+        backend_cache_misses=18,
+        backend_calls=18,
+        backend_total_seconds=9.0,
+        backend_average_seconds=0.5,
+        cases=(),
+    )
+    warm_summary = BenchmarkSummary(
+        total_cases=18,
+        exact_matches=18,
+        expected_risky=5,
+        expected_safe=8,
+        expected_uncertain=5,
+        actual_risky=5,
+        actual_safe=8,
+        actual_uncertain=5,
+        false_positive_risks=0,
+        missed_risks=0,
+        unresolved_cases=0,
+        backend_fallbacks=0,
+        backend_timeouts=0,
+        backend_cache_hits=18,
+        backend_cache_misses=0,
+        backend_calls=0,
+        backend_total_seconds=0.0,
+        backend_average_seconds=0.0,
+        cases=(),
+    )
+
+    monkeypatch.setattr(
+        cli_module,
+        "benchmark_cache_compare",
+        lambda snapshot, cache_path, backend_factory: BenchmarkCacheComparison(
+            cache_path=str(cache_path),
+            cache_cleared_entries=2,
+            cold=fake_summary,
+            warm=warm_summary,
+        ),
+    )
+
+    exit_code, output = run(
+        [
+            "benchmark-cache-compare",
+            "--backend-cache",
+            str(tmp_path / "codex-cache.json"),
+            str(tmp_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert "# Lua Nil Review Cache Comparison" in output
+    assert "Cleared entries before cold run: 2" in output
+    assert "Cold run:" in output
+    assert "Warm run:" in output
+    assert "Delta (warm - cold):" in output
+    assert "Cache hits: +18" in output
+    assert "Backend calls: -18" in output
+
+
+def test_cli_benchmark_cache_compare_requires_backend_cache(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["benchmark-cache-compare", str(tmp_path)])
+
+    assert exit_code == 2
+    assert output == "benchmark-cache-compare requires --backend-cache PATH"
 
 
 def test_cli_report_outputs_markdown_findings(tmp_path: Path) -> None:

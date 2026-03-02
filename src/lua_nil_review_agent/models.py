@@ -211,6 +211,16 @@ class BenchmarkSummary:
     cases: tuple[BenchmarkCaseResult, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class BenchmarkCacheComparison:
+    """A two-pass benchmark result for cold and warm backend cache runs."""
+
+    cache_path: str
+    cache_cleared_entries: int
+    cold: BenchmarkSummary
+    warm: BenchmarkSummary
+
+
 def with_candidate_state(candidate: CandidateCase, state: str) -> CandidateCase:
     """Return a candidate copy with an updated static state."""
 
