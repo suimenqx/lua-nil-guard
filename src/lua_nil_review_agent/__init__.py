@@ -17,6 +17,7 @@ from .config_loader import ConfigError, load_confidence_policy, load_sink_rules
 from .knowledge import KnowledgeBase, derive_facts_from_summaries, facts_for_subject
 from .models import (
     AdjudicationRecord,
+    AutofixPatch,
     CandidateAssessment,
     CandidateCase,
     ConfidencePolicy,
@@ -64,6 +65,7 @@ __all__ = [
     "AdjudicationRecord",
     "AdjudicationBackend",
     "ADJUDICATOR_SKILL_CONTRACT",
+    "AutofixPatch",
     "BackendError",
     "BaselineStore",
     "CliAgentBackend",

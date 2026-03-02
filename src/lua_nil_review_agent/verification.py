@@ -18,6 +18,7 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
             counterarguments_considered=verdict.counterarguments_considered,
             suggested_fix=verdict.suggested_fix,
             needs_human=False,
+            autofix_patch=verdict.autofix_patch,
         )
 
     if verdict.status == "safe" and observed_guards:
@@ -30,6 +31,7 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
             counterarguments_considered=verdict.counterarguments_considered,
             suggested_fix=None,
             needs_human=False,
+            autofix_patch=None,
         )
 
     return verdict

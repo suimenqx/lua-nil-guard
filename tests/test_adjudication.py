@@ -85,6 +85,11 @@ def test_adjudicate_packet_reports_risk_when_no_safety_evidence_exists() -> None
     assert record.judge.confidence == "medium"
     assert "no guard before string.match" in record.judge.risk_path[-1]
     assert record.judge.suggested_fix == "username = username or ''"
+    assert record.judge.autofix_patch is not None
+    assert record.judge.autofix_patch.action == "insert_before"
+    assert record.judge.autofix_patch.start_line == 2
+    assert record.judge.autofix_patch.end_line == 2
+    assert record.judge.autofix_patch.replacement == "username = username or ''"
 
 
 def test_adjudicate_packet_uses_knowledge_facts_as_safety_support() -> None:
@@ -249,6 +254,10 @@ def test_adjudicate_packet_uses_contextual_fix_for_dot_path_receiver_sinks() -> 
         "  end\n"
         "  return profile.name"
     )
+    assert record.judge.autofix_patch is not None
+    assert record.judge.autofix_patch.action == "replace_range"
+    assert record.judge.autofix_patch.start_line == 4
+    assert record.judge.autofix_patch.end_line == 4
 
 
 def test_adjudicate_packet_expands_else_branch_for_receiver_fix() -> None:
@@ -396,6 +405,10 @@ def test_adjudicate_packet_uses_field_alias_for_dot_path_collection_expression()
         "    return use_item()\n"
         "  end"
     )
+    assert record.judge.autofix_patch is not None
+    assert record.judge.autofix_patch.action == "replace_range"
+    assert record.judge.autofix_patch.start_line == 2
+    assert record.judge.autofix_patch.end_line == 9
 
 
 def test_adjudicate_packet_keeps_safe_value_for_non_aliasable_collection_expression() -> None:
@@ -434,6 +447,7 @@ def test_adjudicate_packet_keeps_safe_value_for_non_aliasable_collection_express
 
     assert record.judge.status == "risky"
     assert record.judge.suggested_fix == "local safe_value = req.items_by_id[user_id] or {}"
+    assert record.judge.autofix_patch is None
 
 
 def test_adjudicate_packet_rewrites_target_line_for_dot_path_string_expression() -> None:

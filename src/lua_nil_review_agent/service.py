@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+from .adjudication import attach_autofix_patch
 from .agent_backend import AdjudicationBackend, HeuristicAdjudicationBackend
 from .collector import collect_candidates
 from .config_loader import load_confidence_policy, load_sink_rules
@@ -132,7 +133,12 @@ def run_repository_review(
                 packet,
                 sink_rule_by_id[assessment.candidate.sink_rule_id],
             )
-            verdicts.append(verify_verdict(adjudication.judge, packet))
+            verdict = attach_autofix_patch(
+                adjudication.judge,
+                packet,
+                sink_rule_by_id[assessment.candidate.sink_rule_id],
+            )
+            verdicts.append(verify_verdict(verdict, packet))
     return tuple(verdicts)
 
 

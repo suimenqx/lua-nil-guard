@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from lua_nil_review_agent.models import ConfidencePolicy, Verdict
+from lua_nil_review_agent.models import AutofixPatch, ConfidencePolicy, Verdict
 from lua_nil_review_agent.reporting import render_json_report, render_markdown_report
 
 
@@ -55,12 +55,22 @@ def test_render_json_report_outputs_machine_readable_findings() -> None:
         counterarguments_considered=("No normalizer found",),
         suggested_fix="local safe_name = username or ''",
         needs_human=False,
+        autofix_patch=AutofixPatch(
+            case_id="case_201",
+            file="demo.lua",
+            action="insert_before",
+            start_line=8,
+            end_line=8,
+            replacement="username = username or ''",
+        ),
     )
 
     payload = json.loads(render_json_report((risky,), policy))
 
     assert payload[0]["case_id"] == "case_201"
     assert payload[0]["status"] == "risky_verified"
+    assert payload[0]["autofix_patch"]["action"] == "insert_before"
+    assert payload[0]["autofix_patch"]["start_line"] == 8
 
 
 def test_render_markdown_report_formats_multiline_fix_as_code_block() -> None:

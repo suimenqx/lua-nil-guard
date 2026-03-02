@@ -71,6 +71,18 @@ class EvidencePacket:
 
 
 @dataclass(frozen=True, slots=True)
+class AutofixPatch:
+    """A machine-applicable patch derived from a verified fix suggestion."""
+
+    case_id: str
+    file: str
+    action: str
+    start_line: int
+    end_line: int
+    replacement: str
+
+
+@dataclass(frozen=True, slots=True)
 class Verdict:
     """A final or intermediate adjudication result for a case."""
 
@@ -82,6 +94,7 @@ class Verdict:
     counterarguments_considered: tuple[str, ...]
     suggested_fix: str | None
     needs_human: bool
+    autofix_patch: AutofixPatch | None = None
 
 
 @dataclass(frozen=True, slots=True)

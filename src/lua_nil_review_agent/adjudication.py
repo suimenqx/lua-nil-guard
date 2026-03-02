@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 import re
 
-from .models import AdjudicationRecord, EvidencePacket, RoleOpinion, SinkRule, Verdict
+from .models import AdjudicationRecord, AutofixPatch, EvidencePacket, RoleOpinion, SinkRule, Verdict
 
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -17,12 +18,27 @@ def adjudicate_packet(packet: EvidencePacket, sink_rule: SinkRule) -> Adjudicati
 
     prosecutor = _prosecutor_opinion(packet, sink_rule)
     defender = _defender_opinion(packet)
-    judge = _judge_verdict(packet, prosecutor, defender)
+    judge = _judge_verdict(packet, sink_rule, prosecutor, defender)
     return AdjudicationRecord(
         prosecutor=prosecutor,
         defender=defender,
-        judge=judge,
+        judge=attach_autofix_patch(judge, packet, sink_rule),
     )
+
+
+def attach_autofix_patch(
+    verdict: Verdict,
+    packet: EvidencePacket,
+    sink_rule: SinkRule,
+) -> Verdict:
+    """Attach a machine-applicable autofix patch when the current verdict supports one."""
+
+    if verdict.autofix_patch is not None or verdict.suggested_fix is None:
+        return verdict
+    patch = _build_autofix_patch(packet, sink_rule, verdict.suggested_fix)
+    if patch is None:
+        return verdict
+    return replace(verdict, autofix_patch=patch)
 
 
 def _prosecutor_opinion(packet: EvidencePacket, sink_rule: SinkRule) -> RoleOpinion:
@@ -94,6 +110,7 @@ def _defender_opinion(packet: EvidencePacket) -> RoleOpinion:
 
 def _judge_verdict(
     packet: EvidencePacket,
+    sink_rule: SinkRule,
     prosecutor: RoleOpinion,
     defender: RoleOpinion,
 ) -> Verdict:
@@ -187,6 +204,54 @@ def _coalesce_fix(
         return alias_line
 
     return f"local safe_value = {expression} or {fallback_literal}"
+
+
+def _build_autofix_patch(
+    packet: EvidencePacket,
+    sink_rule: SinkRule,
+    suggested_fix: str | None,
+) -> AutofixPatch | None:
+    if not suggested_fix:
+        return None
+
+    target_line = _find_target_line(packet, sink_rule)
+    if target_line is None:
+        return None
+
+    if "\n" not in suggested_fix:
+        expression = packet.target.expression
+        stripped = target_line.strip()
+        if _is_elseif_line(stripped):
+            return None
+        if not _IDENTIFIER_RE.match(expression):
+            return None
+        expected_prefix = f"{expression} = {expression} or "
+        if not suggested_fix.startswith(expected_prefix):
+            return None
+        return AutofixPatch(
+            case_id=packet.case_id,
+            file=packet.target.file,
+            action="insert_before",
+            start_line=packet.target.line,
+            end_line=packet.target.line,
+            replacement=suggested_fix,
+        )
+
+    bounds = _find_snippet_bounds(packet, sink_rule)
+    if bounds is None:
+        return None
+
+    start_index, target_index, end_index = bounds
+    start_line = packet.target.line - (target_index - start_index)
+    end_line = packet.target.line + (end_index - target_index)
+    return AutofixPatch(
+        case_id=packet.case_id,
+        file=packet.target.file,
+        action="replace_range",
+        start_line=start_line,
+        end_line=end_line,
+        replacement=suggested_fix,
+    )
 
 
 def _receiver_fix(
