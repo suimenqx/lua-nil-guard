@@ -18,6 +18,7 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "--backend-executable PATH" in output
     assert "export-autofix" in output
     assert "apply-autofix" in output
+    assert "export-unified-diff" in output
 
 
 def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
@@ -269,6 +270,64 @@ def test_cli_apply_autofix_reports_missing_manifest() -> None:
 
     assert exit_code == 2
     assert "missing-autofix.json" in output
+
+
+def test_cli_export_unified_diff_outputs_patch_text(tmp_path: Path) -> None:
+    target = tmp_path / "demo.lua"
+    target.write_text("return string.match(username, '^a')\n", encoding="utf-8")
+    manifest = tmp_path / "autofix.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": "case_diff",
+                    "file": str(target),
+                    "action": "insert_before",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "replacement": "username = username or ''",
+                    "expected_original": "return string.match(username, '^a')",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["export-unified-diff", str(manifest)])
+
+    assert exit_code == 0
+    assert f"--- {target}" in output
+    assert f"+++ {target}" in output
+    assert "+username = username or ''" in output
+
+
+def test_cli_export_unified_diff_blocks_on_conflicts(tmp_path: Path) -> None:
+    target = tmp_path / "demo.lua"
+    target.write_text("return string.match(user_name, '^a')\n", encoding="utf-8")
+    manifest = tmp_path / "autofix.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "case_id": "case_diff_conflict",
+                    "file": str(target),
+                    "action": "insert_before",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "replacement": "user_name = user_name or ''",
+                    "expected_original": "return string.match(username, '^a')",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["export-unified-diff", str(manifest)])
+
+    assert exit_code == 1
+    assert "Unified diff export blocked." in output
+    assert "Conflicts: 1" in output
+    assert "anchor line no longer matches expected_original" in output
 
 
 def test_cli_baseline_create_writes_baseline_file(tmp_path: Path) -> None:

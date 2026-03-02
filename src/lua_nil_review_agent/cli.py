@@ -15,6 +15,7 @@ from .service import (
     bootstrap_repository,
     export_adjudication_tasks,
     export_autofix_patches,
+    export_autofix_unified_diff,
     refresh_knowledge_base,
     refresh_summary_cache,
     review_repository,
@@ -326,6 +327,34 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 1, "\n".join(lines)
         return 0, "\n".join(lines)
 
+    if command == "export-unified-diff":
+        if len(args) not in {2, 3}:
+            return 2, "export-unified-diff requires an autofix manifest path and optional output path"
+        manifest_path = Path(args[1])
+        output_path = Path(args[2]) if len(args) == 3 else None
+        try:
+            diff_text, conflicts = export_autofix_unified_diff(
+                manifest_path,
+                output_path=output_path,
+            )
+        except (ValueError, OSError) as exc:
+            return 2, str(exc)
+        if conflicts:
+            lines = [
+                "Unified diff export blocked.",
+                f"Conflicts: {len(conflicts)}",
+            ]
+            lines.extend(conflicts)
+            return 1, "\n".join(lines)
+        if output_path is None:
+            return 0, diff_text or "No unified diff output."
+        return 0, "\n".join(
+            [
+                "Unified diff export complete.",
+                f"Output: {output_path}",
+            ]
+        )
+
     return 2, _usage()
 
 
@@ -375,6 +404,7 @@ def _usage() -> str:
             "  lua-nil-review-agent export-prompts [--skill SKILL] [--allow-skill-fallback] <repository> [output]",
             "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> [output]",
             "  lua-nil-review-agent apply-autofix [--dry-run] <autofix-manifest>",
+            "  lua-nil-review-agent export-unified-diff <autofix-manifest> [output]",
             "",
             "Backend values: heuristic | codex | codeagent",
         ]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import json
 import re
 from pathlib import Path
@@ -289,6 +290,46 @@ def apply_autofix_manifest(
     return tuple(applied), tuple(conflicts)
 
 
+def export_autofix_unified_diff(
+    manifest_path: str | Path,
+    *,
+    output_path: str | Path | None = None,
+) -> tuple[str, tuple[str, ...]]:
+    """Render a unified diff from an exported autofix manifest."""
+
+    patches = _load_autofix_manifest(manifest_path)
+    grouped: dict[Path, list[AutofixPatch]] = {}
+    for patch in patches:
+        grouped.setdefault(Path(patch.file), []).append(patch)
+
+    diffs: list[str] = []
+    conflicts: list[str] = []
+
+    for file_path, file_patches in grouped.items():
+        original_text, updated_text, _, file_conflicts = _simulate_autofix_group(
+            file_path,
+            tuple(file_patches),
+        )
+        if file_conflicts:
+            conflicts.extend(file_conflicts)
+            continue
+        if original_text == updated_text:
+            continue
+        diff_text = _build_unified_diff(file_path, original_text, updated_text)
+        if diff_text:
+            diffs.append(diff_text)
+
+    if conflicts:
+        return "", tuple(conflicts)
+
+    rendered = "\n".join(diffs).rstrip()
+    if output_path is not None:
+        target = Path(output_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"{rendered}\n" if rendered else "", encoding="utf-8")
+    return rendered, ()
+
+
 def _collect_repository_summaries(snapshot: RepositorySnapshot) -> tuple[object, ...]:
     summaries: list[object] = []
     for file_path in snapshot.lua_files:
@@ -340,35 +381,15 @@ def _apply_autofix_group(
     *,
     dry_run: bool = False,
 ) -> tuple[tuple[AutofixPatch, ...], tuple[str, ...]]:
-    if not file_path.exists():
-        return (), tuple(f"{patch.case_id}: target file not found: {file_path}" for patch in patches)
-
-    original_text = file_path.read_text(encoding="utf-8")
-    trailing_newline = original_text.endswith("\n")
-    trial_lines = original_text.splitlines()
-    applied: list[AutofixPatch] = []
-    conflicts: list[str] = []
-
-    ordered = sorted(patches, key=lambda patch: (patch.start_line, patch.end_line), reverse=True)
-    for patch in ordered:
-        conflict = _validate_autofix_patch(trial_lines, patch)
-        if conflict is not None:
-            conflicts.append(f"{patch.case_id}: {conflict}")
-            continue
-        _apply_autofix_patch_to_lines(trial_lines, patch)
-        applied.append(patch)
-
+    original_text, updated_text, applied, conflicts = _simulate_autofix_group(file_path, patches)
     if conflicts:
-        return (), tuple(conflicts)
+        return (), conflicts
 
     if dry_run:
-        return tuple(applied), ()
+        return applied, ()
 
-    updated_text = "\n".join(trial_lines)
-    if trailing_newline:
-        updated_text = f"{updated_text}\n"
     file_path.write_text(updated_text, encoding="utf-8")
-    return tuple(applied), ()
+    return applied, ()
 
 
 def _build_summary_text_index(summaries: tuple[object, ...]) -> dict[str, tuple[str, ...]]:
@@ -400,6 +421,58 @@ def _serialize_autofix_patch(patch: AutofixPatch) -> dict[str, object]:
         "replacement": patch.replacement,
         "expected_original": patch.expected_original,
     }
+
+
+def _simulate_autofix_group(
+    file_path: Path,
+    patches: tuple[AutofixPatch, ...],
+) -> tuple[str, str, tuple[AutofixPatch, ...], tuple[str, ...]]:
+    if not file_path.exists():
+        conflicts = tuple(f"{patch.case_id}: target file not found: {file_path}" for patch in patches)
+        return "", "", (), conflicts
+
+    original_text = file_path.read_text(encoding="utf-8")
+    trailing_newline = original_text.endswith("\n")
+    trial_lines = original_text.splitlines()
+    applied: list[AutofixPatch] = []
+    conflicts: list[str] = []
+
+    ordered = sorted(patches, key=lambda patch: (patch.start_line, patch.end_line), reverse=True)
+    for patch in ordered:
+        conflict = _validate_autofix_patch(trial_lines, patch)
+        if conflict is not None:
+            conflicts.append(f"{patch.case_id}: {conflict}")
+            continue
+        _apply_autofix_patch_to_lines(trial_lines, patch)
+        applied.append(patch)
+
+    if conflicts:
+        return original_text, original_text, (), tuple(conflicts)
+
+    updated_text = _render_text_from_lines(trial_lines, trailing_newline=trailing_newline)
+    return original_text, updated_text, tuple(applied), ()
+
+
+def _build_unified_diff(file_path: Path, original_text: str, updated_text: str) -> str:
+    original_lines = original_text.splitlines()
+    updated_lines = updated_text.splitlines()
+    diff_lines = list(
+        difflib.unified_diff(
+            original_lines,
+            updated_lines,
+            fromfile=str(file_path),
+            tofile=str(file_path),
+            lineterm="",
+        )
+    )
+    return "\n".join(diff_lines)
+
+
+def _render_text_from_lines(lines: list[str], *, trailing_newline: bool) -> str:
+    rendered = "\n".join(lines)
+    if trailing_newline:
+        return f"{rendered}\n"
+    return rendered
 
 
 def _validate_autofix_patch(lines: list[str], patch: AutofixPatch) -> str | None:
