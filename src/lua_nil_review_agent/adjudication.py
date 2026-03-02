@@ -176,12 +176,10 @@ def _coalesce_fix(
 
     alias = _suggest_local_alias(expression)
     if alias is not None:
-        target_line = _find_target_line(packet, sink_rule)
-        alias_indent = _leading_indent(target_line) if target_line is not None else ""
-        alias_line = f"{alias_indent}local {alias} = {expression} or {fallback_literal}"
-        if target_line is not None:
-            rewritten_line = target_line.replace(expression, alias, 1)
-            return f"{alias_line}\n{rewritten_line}"
+        alias_line = f"local {alias} = {expression} or {fallback_literal}"
+        snippet = _build_contextual_fix_snippet(packet, sink_rule, alias, fallback_literal)
+        if snippet is not None:
+            return snippet
         return alias_line
 
     return f"local safe_value = {expression} or {fallback_literal}"
@@ -201,18 +199,80 @@ def _find_target_line(
     packet: EvidencePacket,
     sink_rule: SinkRule,
 ) -> str | None:
+    target_index = _find_target_line_index(packet, sink_rule)
+    if target_index is None:
+        return None
+    return packet.local_context.splitlines()[target_index]
+
+
+def _find_target_line_index(
+    packet: EvidencePacket,
+    sink_rule: SinkRule,
+) -> int | None:
     expression = packet.target.expression
-    for line in packet.local_context.splitlines():
+    for index, line in enumerate(packet.local_context.splitlines()):
         if expression not in line:
             continue
         if sink_rule.kind == "function_arg" and sink_rule.qualified_name not in line:
             continue
         if sink_rule.kind == "unary_operand" and "#" not in line:
             continue
-        return line
+        return index
     return None
 
 
 def _leading_indent(line: str) -> str:
     stripped = line.lstrip(" \t")
     return line[: len(line) - len(stripped)]
+
+
+def _build_contextual_fix_snippet(
+    packet: EvidencePacket,
+    sink_rule: SinkRule,
+    alias: str,
+    fallback_literal: str,
+) -> str | None:
+    target_index = _find_target_line_index(packet, sink_rule)
+    if target_index is None:
+        return None
+
+    lines = packet.local_context.splitlines()
+    target_line = lines[target_index]
+    alias_indent = _leading_indent(target_line)
+    alias_line = f"{alias_indent}local {alias} = {packet.target.expression} or {fallback_literal}"
+    end_index = _find_snippet_end_index(lines, target_index)
+
+    snippet_lines = [alias_line]
+    for index in range(target_index, end_index + 1):
+        current = lines[index]
+        if index == target_index:
+            current = current.replace(packet.target.expression, alias, 1)
+        snippet_lines.append(current)
+    return "\n".join(snippet_lines)
+
+
+def _find_snippet_end_index(lines: list[str], target_index: int) -> int:
+    target_line = lines[target_index].strip()
+    if not _opens_block(target_line):
+        return target_index
+
+    depth = 1
+    for index in range(target_index + 1, len(lines)):
+        stripped = lines[index].strip()
+        if _opens_block(stripped):
+            depth += 1
+        if stripped == "end":
+            depth -= 1
+            if depth == 0:
+                return index
+    return target_index
+
+
+def _opens_block(stripped_line: str) -> bool:
+    return (
+        stripped_line.startswith("for ") and stripped_line.endswith(" do")
+    ) or (
+        stripped_line.startswith("if ") and stripped_line.endswith(" then")
+    ) or (
+        stripped_line.startswith("while ") and stripped_line.endswith(" do")
+    )

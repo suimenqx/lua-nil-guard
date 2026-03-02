@@ -277,7 +277,9 @@ def test_adjudicate_packet_uses_field_alias_for_dot_path_collection_expression()
     assert record.judge.status == "risky"
     assert record.judge.suggested_fix == (
         "  local items = req.items or {}\n"
-        "  for _, item in pairs(items) do"
+        "  for _, item in pairs(items) do\n"
+        "    return item\n"
+        "  end"
     )
 
 
