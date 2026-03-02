@@ -107,51 +107,53 @@ def _has_active_positive_guard(lines: list[str], symbol: str) -> bool:
 
 
 def _has_early_exit_guard(lines: list[str], symbol: str) -> bool:
-    stack: list[str] = []
-    valid_guard_depths: list[int] = []
+    stack: list[dict[str, int | str]] = []
+    valid_guard_paths: list[tuple[int, ...]] = []
 
     for line in lines:
         stripped = line.strip()
         if not stripped:
             continue
 
-        if stack and stack[-1] == "neg_guard_pending":
+        if stack and stack[-1]["type"] == "neg_guard_pending":
             if _is_early_exit_statement(stripped):
-                stack[-1] = "neg_guard_exit"
+                stack[-1]["type"] = "neg_guard_exit"
                 continue
             if stripped != "end":
-                stack[-1] = "if"
+                stack[-1]["type"] = "if_family"
 
-        if valid_guard_depths and _assigns_symbol(stripped, symbol):
-            valid_guard_depths.clear()
+        if valid_guard_paths and _assigns_symbol(stripped, symbol):
+            valid_guard_paths.clear()
 
         if _is_negative_guard_for_symbol(stripped, symbol):
-            stack.append("neg_guard_pending")
+            stack.append({"type": "neg_guard_pending", "branch": 0})
             continue
         if _is_if_open_for_symbol(stripped, symbol):
-            stack.append("symbol_if")
+            stack.append({"type": "if_family", "branch": 0})
             continue
         if _is_if_open(stripped):
-            stack.append("if")
+            stack.append({"type": "if_family", "branch": 0})
             continue
         if _is_elseif_line(stripped):
-            if stack and stack[-1] in {"if", "symbol_if", "neg_guard_pending", "neg_guard_exit"}:
-                stack[-1] = "symbol_if" if _is_elseif_for_symbol(stripped, symbol) else "if"
+            if stack and stack[-1]["type"] in {"if_family", "neg_guard_pending", "neg_guard_exit"}:
+                stack[-1]["type"] = "if_family"
+                stack[-1]["branch"] = int(stack[-1]["branch"]) + 1
             continue
         if stripped == "else":
-            if stack and stack[-1] in {"if", "symbol_if", "neg_guard_pending", "neg_guard_exit"}:
-                stack[-1] = "if"
+            if stack and stack[-1]["type"] in {"if_family", "neg_guard_pending", "neg_guard_exit"}:
+                stack[-1]["type"] = "if_family"
+                stack[-1]["branch"] = int(stack[-1]["branch"]) + 1
             continue
         if _opens_non_if_block(stripped):
-            stack.append("block")
+            stack.append({"type": "block"})
             continue
         if _closes_block(stripped) and stack:
             closing = stack.pop()
-            if closing == "neg_guard_exit":
-                valid_guard_depths.append(len(stack))
+            if closing["type"] == "neg_guard_exit":
+                valid_guard_paths.append(_current_if_branch_path(stack))
 
-    current_depth = len(stack)
-    return any(depth <= current_depth for depth in valid_guard_depths)
+    current_path = _current_if_branch_path(stack)
+    return any(_branch_path_is_prefix(path, current_path) for path in valid_guard_paths)
 
 
 def _has_assert(lines: list[str], symbol: str) -> bool:
@@ -273,3 +275,17 @@ def _assigns_symbol(stripped_line: str, symbol: str) -> bool:
         return False
     names = [name.strip() for name in match.group(1).split(",")]
     return symbol in names
+
+
+def _current_if_branch_path(stack: list[dict[str, int | str]]) -> tuple[int, ...]:
+    return tuple(
+        int(entry["branch"])
+        for entry in stack
+        if entry["type"] in {"if_family", "neg_guard_pending", "neg_guard_exit"}
+    )
+
+
+def _branch_path_is_prefix(path: tuple[int, ...], current_path: tuple[int, ...]) -> bool:
+    if len(path) > len(current_path):
+        return False
+    return current_path[: len(path)] == path

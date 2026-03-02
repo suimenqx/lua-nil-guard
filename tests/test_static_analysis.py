@@ -272,6 +272,39 @@ def test_analyze_candidate_invalidates_early_return_guard_after_reassignment() -
     assert result.origin_candidates == ("req.params.fallback_name",)
 
 
+def test_analyze_candidate_does_not_leak_early_return_guard_to_else_branch() -> None:
+    source = "\n".join(
+        [
+            "if ready then",
+            "  if not username then",
+            "    return nil",
+            "  end",
+            "else",
+            "  return string.match(username, '^a')",
+            "end",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_7d",
+        file="demo.lua",
+        line=6,
+        column=10,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
+    assert result.origin_candidates == ("username",)
+
+
 def test_analyze_candidate_invalidates_positive_guard_after_reassignment() -> None:
     source = "\n".join(
         [
