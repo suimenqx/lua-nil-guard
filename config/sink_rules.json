@@ -40,6 +40,26 @@
     "safe_patterns": ["x or {}", "assert(x)", "if x then ... end"]
   },
   {
+    "id": "pairs.arg1",
+    "kind": "function_arg",
+    "qualified_name": "pairs",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or {}", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "ipairs.arg1",
+    "kind": "function_arg",
+    "qualified_name": "ipairs",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or {}", "assert(x)", "if x then ... end"]
+  },
+  {
     "id": "member_access.receiver",
     "kind": "receiver",
     "qualified_name": "member_access",
