@@ -9,12 +9,12 @@ import tempfile
 import time
 from typing import Callable, Protocol
 
-from .agent_driver_models import (
+from .agent_driver_manifest import (
     CODEAGENT_PROVIDER_SPEC,
     CODEX_PROVIDER_SPEC,
-    AgentProviderSpec,
     get_builtin_agent_provider_spec,
 )
+from .agent_driver_models import AgentProviderSpec
 from .agent_protocols import (
     SchemaFileCliProtocol,
     StdoutEnvelopeCliProtocol,

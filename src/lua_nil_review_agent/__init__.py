@@ -1,12 +1,18 @@
 """Foundational package for the Lua nil risk review agent."""
 
 from .agent_driver_models import (
+    AgentCapabilities,
+    AgentProviderSpec,
+)
+from .agent_driver_manifest import (
+    BUILTIN_AGENT_PROVIDER_MANIFESTS,
     BUILTIN_AGENT_PROVIDER_SPECS,
     CODEAGENT_PROVIDER_SPEC,
     CODEX_PROVIDER_SPEC,
-    AgentCapabilities,
-    AgentProviderSpec,
+    get_builtin_agent_provider_manifest,
     get_builtin_agent_provider_spec,
+    load_agent_provider_spec_manifest,
+    load_agent_provider_spec_manifest_file,
 )
 from .agent_protocols import (
     CLI_PROTOCOL_BUILDERS,
@@ -108,6 +114,7 @@ __all__ = [
     "ConfidencePolicy",
     "ConfigError",
     "BUILTIN_AGENT_PROVIDER_SPECS",
+    "BUILTIN_AGENT_PROVIDER_MANIFESTS",
     "CODEAGENT_PROVIDER_SPEC",
     "CodeAgentCliBackend",
     "CODEX_PROVIDER_SPEC",
@@ -152,6 +159,7 @@ __all__ = [
     "facts_for_subject",
     "filter_new_findings",
     "get_adjudication_backend_factory",
+    "get_builtin_agent_provider_manifest",
     "get_builtin_agent_provider_spec",
     "get_cli_protocol_builder",
     "load_confidence_policy",
@@ -159,6 +167,8 @@ __all__ = [
     "load_sink_rules",
     "load_skill_definition",
     "main",
+    "load_agent_provider_spec_manifest",
+    "load_agent_provider_spec_manifest_file",
     "analyze_candidate",
     "get_parser_backend_info",
     "summarize_source",
