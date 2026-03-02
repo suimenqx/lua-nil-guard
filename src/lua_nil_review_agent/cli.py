@@ -13,6 +13,7 @@ from .skill_runtime import SkillRuntimeError
 from .service import (
     bootstrap_repository,
     export_adjudication_tasks,
+    export_autofix_patches,
     refresh_knowledge_base,
     refresh_summary_cache,
     review_repository,
@@ -249,6 +250,52 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             ]
         )
 
+    if command == "export-autofix":
+        try:
+            backend_name, model, skill_path, strict_skill, executable, positional = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) not in {1, 2}:
+            return 2, "export-autofix requires a repository path and optional output path"
+        root = Path(positional[0])
+        output_path = Path(positional[1]) if len(positional) == 2 else None
+        snapshot = bootstrap_repository(root)
+        try:
+            patches = export_autofix_patches(
+                snapshot,
+                backend=create_adjudication_backend(
+                    backend_name,
+                    workdir=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                    executable=executable,
+                ),
+                output_path=output_path,
+            )
+        except (SkillRuntimeError, BackendError) as exc:
+            return 2, str(exc)
+        if output_path is None:
+            payload = [
+                {
+                    "case_id": patch.case_id,
+                    "file": patch.file,
+                    "action": patch.action,
+                    "start_line": patch.start_line,
+                    "end_line": patch.end_line,
+                    "replacement": patch.replacement,
+                }
+                for patch in patches
+            ]
+            return 0, json.dumps(payload, indent=2, sort_keys=True)
+        return 0, "\n".join(
+            [
+                "Autofix export complete.",
+                f"Autofix patches: {len(patches)}",
+                f"Output: {output_path}",
+            ]
+        )
+
     return 2, _usage()
 
 
@@ -296,6 +343,7 @@ def _usage() -> str:
             "  lua-nil-review-agent refresh-knowledge <repository> [output]",
             "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> <baseline>",
             "  lua-nil-review-agent export-prompts [--skill SKILL] [--allow-skill-fallback] <repository> [output]",
+            "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> [output]",
             "",
             "Backend values: heuristic | codex | codeagent",
         ]

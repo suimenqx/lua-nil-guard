@@ -9,8 +9,8 @@ from .agent_backend import AdjudicationBackend, HeuristicAdjudicationBackend
 from .collector import collect_candidates
 from .config_loader import load_confidence_policy, load_sink_rules
 from .knowledge import KnowledgeBase, derive_facts_from_summaries, facts_for_subject
-from .models import CandidateAssessment, EvidencePacket, RepositorySnapshot, SinkRule, Verdict, with_candidate_state
-from .pipeline import build_evidence_packet
+from .models import AutofixPatch, CandidateAssessment, EvidencePacket, RepositorySnapshot, SinkRule, Verdict, with_candidate_state
+from .pipeline import build_evidence_packet, should_report
 from .prompting import build_adjudication_prompt
 from .repository import discover_lua_files
 from .summaries import SummaryStore, summarize_source
@@ -231,6 +231,37 @@ def export_adjudication_tasks(
     return task_tuple
 
 
+def export_autofix_patches(
+    snapshot: RepositorySnapshot,
+    *,
+    backend: AdjudicationBackend | None = None,
+    knowledge_path: str | Path | None = None,
+    output_path: str | Path | None = None,
+    audit_mode: bool = False,
+) -> tuple[AutofixPatch, ...]:
+    """Export machine-applicable autofix patches for current reportable findings."""
+
+    verdicts = run_repository_review(
+        snapshot,
+        backend=backend,
+        knowledge_path=knowledge_path,
+    )
+    patches = tuple(
+        verdict.autofix_patch
+        for verdict in verdicts
+        if verdict.autofix_patch is not None
+        and should_report(verdict, snapshot.confidence_policy, audit_mode=audit_mode)
+    )
+    if output_path is not None:
+        target = Path(output_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps([_serialize_autofix_patch(patch) for patch in patches], indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    return patches
+
+
 def _collect_repository_summaries(snapshot: RepositorySnapshot) -> tuple[object, ...]:
     summaries: list[object] = []
     for file_path in snapshot.lua_files:
@@ -256,6 +287,17 @@ def _load_knowledge_facts(
 ) -> tuple[object, ...]:
     path = Path(knowledge_path) if knowledge_path is not None else snapshot.root / "data" / "knowledge.json"
     return KnowledgeBase(path).load()
+
+
+def _serialize_autofix_patch(patch: AutofixPatch) -> dict[str, object]:
+    return {
+        "case_id": patch.case_id,
+        "file": patch.file,
+        "action": patch.action,
+        "start_line": patch.start_line,
+        "end_line": patch.end_line,
+        "replacement": patch.replacement,
+    }
 
 
 def _related_functions_from_assessment(assessment: CandidateAssessment) -> tuple[str, ...]:

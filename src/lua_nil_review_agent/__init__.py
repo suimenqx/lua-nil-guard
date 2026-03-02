@@ -50,6 +50,7 @@ from .skill_runtime import (
 from .service import (
     bootstrap_repository,
     export_adjudication_tasks,
+    export_autofix_patches,
     refresh_knowledge_base,
     prepare_evidence_packet,
     refresh_summary_cache,
@@ -103,6 +104,7 @@ __all__ = [
     "default_adjudicator_skill_path",
     "derive_facts_from_summaries",
     "export_adjudication_tasks",
+    "export_autofix_patches",
     "fallback_adjudicator_skill_header",
     "facts_for_subject",
     "filter_new_findings",

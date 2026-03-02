@@ -16,6 +16,7 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "Backend values: heuristic | codex | codeagent" in output
     assert "--allow-skill-fallback" in output
     assert "--backend-executable PATH" in output
+    assert "export-autofix" in output
 
 
 def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
@@ -114,6 +115,55 @@ def test_cli_report_outputs_markdown_findings(tmp_path: Path) -> None:
     assert exit_code == 0
     assert "# Lua Nil Risk Report" in output
     assert "risky_verified" in output
+
+
+def test_cli_export_autofix_outputs_machine_readable_patches(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local username = req.params.username",
+                "return string.match(username, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["export-autofix", str(tmp_path)])
+
+    assert exit_code == 0
+    payload = json.loads(output)
+    assert payload[0]["action"] == "insert_before"
+    assert payload[0]["start_line"] == 2
+    assert payload[0]["replacement"] == "username = username or ''"
 
 
 def test_cli_baseline_create_writes_baseline_file(tmp_path: Path) -> None:
