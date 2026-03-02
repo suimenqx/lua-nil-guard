@@ -10,7 +10,17 @@ from .agent_backend import AdjudicationBackend, HeuristicAdjudicationBackend
 from .collector import collect_candidates
 from .config_loader import load_confidence_policy, load_sink_rules
 from .knowledge import KnowledgeBase, derive_facts_from_summaries, facts_for_subject
-from .models import AutofixPatch, CandidateAssessment, EvidencePacket, RepositorySnapshot, SinkRule, Verdict, with_candidate_state
+from .models import (
+    AutofixPatch,
+    BenchmarkCaseResult,
+    BenchmarkSummary,
+    CandidateAssessment,
+    EvidencePacket,
+    RepositorySnapshot,
+    SinkRule,
+    Verdict,
+    with_candidate_state,
+)
 from .pipeline import build_evidence_packet, should_report
 from .prompting import build_adjudication_prompt
 from .repository import discover_lua_files
@@ -102,16 +112,120 @@ def run_repository_review(
 ) -> tuple[Verdict, ...]:
     """Run the current end-to-end local review pipeline across a repository."""
 
-    sink_rule_by_id = {rule.id: rule for rule in snapshot.sink_rules}
+    assessments = review_repository(snapshot)
     summaries = _collect_repository_summaries(snapshot)
     summary_text_by_name = _build_summary_text_index(summaries)
     facts = _load_knowledge_facts(snapshot, knowledge_path)
     adjudication_backend = backend or HeuristicAdjudicationBackend()
 
+    return _run_review_from_assessments(
+        snapshot,
+        assessments,
+        adjudication_backend=adjudication_backend,
+        summary_text_by_name=summary_text_by_name,
+        facts=facts,
+    )
+
+
+def benchmark_repository_review(
+    snapshot: RepositorySnapshot,
+    *,
+    backend: AdjudicationBackend | None = None,
+    knowledge_path: str | Path | None = None,
+) -> BenchmarkSummary:
+    """Run a labeled semantic benchmark over provable_* Lua review fixtures."""
+
+    assessments = review_repository(snapshot)
+    labeled_assessments = tuple(
+        (assessment, _expected_benchmark_label(assessment.candidate.file))
+        for assessment in assessments
+        if _expected_benchmark_label(assessment.candidate.file) is not None
+    )
+    if not labeled_assessments:
+        raise ValueError(
+            "benchmark requires labeled files named provable_risky_*, "
+            "provable_safe_* or provable_uncertain_*"
+        )
+
+    summaries = _collect_repository_summaries(snapshot)
+    summary_text_by_name = _build_summary_text_index(summaries)
+    facts = (
+        _load_knowledge_facts(snapshot, knowledge_path)
+        if knowledge_path is not None
+        else derive_facts_from_summaries(summaries)
+    )
+    adjudication_backend = backend or HeuristicAdjudicationBackend()
+    verdicts = _run_review_from_assessments(
+        snapshot,
+        tuple(assessment for assessment, _ in labeled_assessments),
+        adjudication_backend=adjudication_backend,
+        summary_text_by_name=summary_text_by_name,
+        facts=facts,
+    )
+    verdict_by_case_id = {verdict.case_id: verdict for verdict in verdicts}
+
+    cases: list[BenchmarkCaseResult] = []
+    for assessment, expected in labeled_assessments:
+        verdict = verdict_by_case_id[assessment.candidate.case_id]
+        actual = _normalize_benchmark_status(verdict.status)
+        cases.append(
+            BenchmarkCaseResult(
+                case_id=assessment.candidate.case_id,
+                file=assessment.candidate.file,
+                expected_status=expected,
+                actual_status=actual,
+                matches_expectation=actual == expected,
+            )
+        )
+
+    expected_risky = sum(1 for case in cases if case.expected_status == "risky")
+    expected_safe = sum(1 for case in cases if case.expected_status == "safe")
+    expected_uncertain = sum(1 for case in cases if case.expected_status == "uncertain")
+    actual_risky = sum(1 for case in cases if case.actual_status == "risky")
+    actual_safe = sum(1 for case in cases if case.actual_status == "safe")
+    actual_uncertain = sum(1 for case in cases if case.actual_status == "uncertain")
+
+    return BenchmarkSummary(
+        total_cases=len(cases),
+        exact_matches=sum(1 for case in cases if case.matches_expectation),
+        expected_risky=expected_risky,
+        expected_safe=expected_safe,
+        expected_uncertain=expected_uncertain,
+        actual_risky=actual_risky,
+        actual_safe=actual_safe,
+        actual_uncertain=actual_uncertain,
+        false_positive_risks=sum(
+            1 for case in cases if case.actual_status == "risky" and case.expected_status != "risky"
+        ),
+        missed_risks=sum(
+            1 for case in cases if case.expected_status == "risky" and case.actual_status != "risky"
+        ),
+        unresolved_cases=sum(
+            1
+            for case in cases
+            if case.actual_status == "uncertain" and case.expected_status in {"risky", "safe"}
+        ),
+        cases=tuple(cases),
+    )
+
+
+def _run_review_from_assessments(
+    snapshot: RepositorySnapshot,
+    assessments: tuple[CandidateAssessment, ...],
+    *,
+    adjudication_backend: AdjudicationBackend,
+    summary_text_by_name: dict[str, tuple[str, ...]],
+    facts: tuple[object, ...],
+) -> tuple[Verdict, ...]:
+    sink_rule_by_id = {rule.id: rule for rule in snapshot.sink_rules}
+    assessments_by_file: dict[str, list[CandidateAssessment]] = {}
+    for assessment in assessments:
+        assessments_by_file.setdefault(assessment.candidate.file, []).append(assessment)
+
     verdicts: list[Verdict] = []
     for file_path in snapshot.lua_files:
         source = file_path.read_text(encoding="utf-8")
-        for assessment in review_source(file_path, source, snapshot.sink_rules):
+        for assessment in assessments_by_file.get(str(file_path), ()):
             related_functions = _related_functions_from_assessment(assessment)
             function_summaries = tuple(
                 summary
@@ -440,6 +554,25 @@ def _load_knowledge_facts(
 ) -> tuple[object, ...]:
     path = Path(knowledge_path) if knowledge_path is not None else snapshot.root / "data" / "knowledge.json"
     return KnowledgeBase(path).load()
+
+
+def _expected_benchmark_label(file_path: str) -> str | None:
+    name = Path(file_path).name
+    if name.startswith("provable_risky_"):
+        return "risky"
+    if name.startswith("provable_safe_"):
+        return "safe"
+    if name.startswith("provable_uncertain_"):
+        return "uncertain"
+    return None
+
+
+def _normalize_benchmark_status(status: str) -> str:
+    if status in {"risky", "risky_verified"}:
+        return "risky"
+    if status in {"safe", "safe_verified"}:
+        return "safe"
+    return "uncertain"
 
 
 def _serialize_autofix_patch(patch: AutofixPatch) -> dict[str, object]:

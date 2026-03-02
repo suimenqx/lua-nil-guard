@@ -2,14 +2,130 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 
-from lua_nil_review_agent.models import AutofixPatch
+from lua_nil_review_agent.models import AdjudicationRecord, AutofixPatch, RoleOpinion, Verdict
 from lua_nil_review_agent.service import (
     apply_autofix_manifest,
+    benchmark_repository_review,
     bootstrap_repository,
     export_autofix_patches,
     export_autofix_unified_diff,
 )
+
+
+class StrictEvidenceBackend:
+    """Deterministic stand-in for a strict external adjudication agent."""
+
+    def adjudicate(self, packet, sink_rule):  # noqa: ANN001
+        observed_guards = _tuple_field(packet.static_reasoning, "observed_guards")
+        origins = _tuple_field(packet.static_reasoning, "origin_candidates")
+        safety_facts = tuple(
+            fact for fact in packet.knowledge_facts if "returns non-nil" in fact.lower()
+        )
+
+        if observed_guards or safety_facts:
+            safety_evidence = observed_guards or safety_facts
+            return AdjudicationRecord(
+                prosecutor=RoleOpinion(
+                    role="prosecutor",
+                    status="uncertain",
+                    confidence="low",
+                    risk_path=(),
+                    safety_evidence=(),
+                    missing_evidence=("safety evidence blocks a clean risk proof",),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                defender=RoleOpinion(
+                    role="defender",
+                    status="safe",
+                    confidence="high" if observed_guards else "medium",
+                    risk_path=(),
+                    safety_evidence=safety_evidence,
+                    missing_evidence=(),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                judge=Verdict(
+                    case_id=packet.case_id,
+                    status="safe",
+                    confidence="high" if observed_guards else "medium",
+                    risk_path=(),
+                    safety_evidence=safety_evidence,
+                    counterarguments_considered=(),
+                    suggested_fix=None,
+                    needs_human=False,
+                ),
+            )
+
+        if _locally_proves_nil(origins, packet.local_context):
+            risk_path = origins or ("explicit nil flow in local context",)
+            return AdjudicationRecord(
+                prosecutor=RoleOpinion(
+                    role="prosecutor",
+                    status="risky",
+                    confidence="high",
+                    risk_path=risk_path,
+                    safety_evidence=(),
+                    missing_evidence=(),
+                    recommended_next_action="report",
+                    suggested_fix=None,
+                ),
+                defender=RoleOpinion(
+                    role="defender",
+                    status="uncertain",
+                    confidence="low",
+                    risk_path=(),
+                    safety_evidence=(),
+                    missing_evidence=("no explicit safety proof",),
+                    recommended_next_action="expand_context",
+                    suggested_fix=None,
+                ),
+                judge=Verdict(
+                    case_id=packet.case_id,
+                    status="risky",
+                    confidence="high",
+                    risk_path=risk_path,
+                    safety_evidence=(),
+                    counterarguments_considered=("no explicit safety proof",),
+                    suggested_fix=None,
+                    needs_human=False,
+                ),
+            )
+
+        return AdjudicationRecord(
+            prosecutor=RoleOpinion(
+                role="prosecutor",
+                status="uncertain",
+                confidence="low",
+                risk_path=origins,
+                safety_evidence=(),
+                missing_evidence=("origin may be nil, but no code-proven nil path exists",),
+                recommended_next_action="expand_context",
+                suggested_fix=None,
+            ),
+            defender=RoleOpinion(
+                role="defender",
+                status="uncertain",
+                confidence="low",
+                risk_path=(),
+                safety_evidence=(),
+                missing_evidence=("no explicit guard or trusted non-nil contract found",),
+                recommended_next_action="expand_context",
+                suggested_fix=None,
+            ),
+            judge=Verdict(
+                case_id=packet.case_id,
+                status="uncertain",
+                confidence="medium",
+                risk_path=origins,
+                safety_evidence=(),
+                counterarguments_considered=("insufficient local proof either way",),
+                suggested_fix=None,
+                needs_human=True,
+            ),
+        )
 
 
 def test_bootstrap_repository_loads_config_and_discovers_sources(tmp_path: Path) -> None:
@@ -49,6 +165,28 @@ def test_bootstrap_repository_loads_config_and_discovers_sources(tmp_path: Path)
     assert len(snapshot.sink_rules) == 1
     assert snapshot.confidence_policy.default_report_min_confidence == "high"
     assert snapshot.lua_files == (src_dir / "demo.lua",)
+
+
+def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -> None:
+    project_root = Path(__file__).resolve().parents[1] / "examples" / "mvp_cases" / "agent_semantic_suite"
+    runtime_root = tmp_path / "agent_semantic_suite"
+    shutil.copytree(project_root, runtime_root)
+
+    snapshot = bootstrap_repository(runtime_root)
+    summary = benchmark_repository_review(snapshot, backend=StrictEvidenceBackend())
+
+    assert summary.total_cases == 18
+    assert summary.exact_matches == 18
+    assert summary.expected_risky == 5
+    assert summary.expected_safe == 8
+    assert summary.expected_uncertain == 5
+    assert summary.actual_risky == 5
+    assert summary.actual_safe == 8
+    assert summary.actual_uncertain == 5
+    assert summary.false_positive_risks == 0
+    assert summary.missed_risks == 0
+    assert summary.unresolved_cases == 0
+    assert all(case.matches_expectation for case in summary.cases)
 
 
 def test_export_autofix_patches_writes_reportable_patch_file(tmp_path: Path) -> None:
@@ -314,3 +452,16 @@ def test_apply_autofix_manifest_reports_conflicts_without_writing_file(tmp_path:
     assert len(conflicts) == 1
     assert "anchor line no longer matches expected_original" in conflicts[0]
     assert target.read_text(encoding="utf-8") == original
+
+
+def _tuple_field(values: dict[str, tuple[str, ...] | str], key: str) -> tuple[str, ...]:
+    current = values.get(key, ())
+    if isinstance(current, tuple):
+        return current
+    return ()
+
+
+def _locally_proves_nil(origins: tuple[str, ...], local_context: str) -> bool:
+    if any(origin.strip() == "nil" for origin in origins):
+        return True
+    return " and nil or " in local_context

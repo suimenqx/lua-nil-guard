@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 
 import pytest
 
+import lua_nil_review_agent.cli as cli_module
 from lua_nil_review_agent.agent_backend import BackendError
 from lua_nil_review_agent.cli import run
+from lua_nil_review_agent.models import AdjudicationRecord, RoleOpinion, Verdict
 
 
 def test_cli_help_lists_supported_backends() -> None:
@@ -16,6 +19,7 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "Backend values: heuristic | codex | codeagent" in output
     assert "--allow-skill-fallback" in output
     assert "--backend-executable PATH" in output
+    assert "benchmark" in output
     assert "export-autofix" in output
     assert "apply-autofix" in output
     assert "export-unified-diff" in output
@@ -70,6 +74,70 @@ def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
     assert "Parser backend: tree_sitter_local" in output
     assert "Total candidates: 1" in output
     assert "safe_static: 1" in output
+
+
+def test_cli_benchmark_reports_labeled_accuracy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project_root = Path(__file__).resolve().parents[1] / "examples" / "mvp_cases" / "agent_semantic_suite"
+    runtime_root = tmp_path / "agent_semantic_suite"
+    shutil.copytree(project_root, runtime_root)
+
+    class FileLabelBackend:
+        def adjudicate(self, packet, sink_rule):  # noqa: ANN001
+            file_name = Path(packet.target.file).name
+            if file_name.startswith("provable_risky_"):
+                status = "risky"
+            elif file_name.startswith("provable_safe_"):
+                status = "safe"
+            else:
+                status = "uncertain"
+            return AdjudicationRecord(
+                prosecutor=RoleOpinion(
+                    role="prosecutor",
+                    status=status,
+                    confidence="high",
+                    risk_path=(),
+                    safety_evidence=(),
+                    missing_evidence=(),
+                    recommended_next_action="report",
+                    suggested_fix=None,
+                ),
+                defender=RoleOpinion(
+                    role="defender",
+                    status=status,
+                    confidence="high",
+                    risk_path=(),
+                    safety_evidence=(),
+                    missing_evidence=(),
+                    recommended_next_action="report",
+                    suggested_fix=None,
+                ),
+                judge=Verdict(
+                    case_id=packet.case_id,
+                    status=status,
+                    confidence="high",
+                    risk_path=(),
+                    safety_evidence=(),
+                    counterarguments_considered=(),
+                    suggested_fix=None,
+                    needs_human=False,
+                ),
+            )
+
+    monkeypatch.setattr(
+        cli_module,
+        "create_adjudication_backend",
+        lambda *args, **kwargs: FileLabelBackend(),
+    )
+
+    exit_code, output = run(["benchmark", str(runtime_root)])
+
+    assert exit_code == 0
+    assert "# Lua Nil Review Benchmark" in output
+    assert "Total labeled cases: 18" in output
+    assert "Exact matches: 18" in output
+    assert "Accuracy: 100.0%" in output
+    assert "Missed risks: 0" in output
+    assert "False positive risks: 0" in output
 
 
 def test_cli_report_outputs_markdown_findings(tmp_path: Path) -> None:

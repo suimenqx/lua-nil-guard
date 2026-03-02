@@ -12,6 +12,7 @@ from .reporting import render_json_report, render_markdown_report
 from .skill_runtime import SkillRuntimeError
 from .service import (
     apply_autofix_manifest,
+    benchmark_repository_review,
     bootstrap_repository,
     export_adjudication_tasks,
     export_autofix_patches,
@@ -88,6 +89,31 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         except (SkillRuntimeError, BackendError) as exc:
             return 2, str(exc)
         return 0, render_json_report(verdicts, snapshot.confidence_policy)
+
+    if command == "benchmark":
+        try:
+            backend_name, model, skill_path, strict_skill, executable, positional = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 1:
+            return 2, "benchmark requires exactly one repository path"
+        root = Path(positional[0])
+        snapshot = bootstrap_repository(root)
+        try:
+            summary = benchmark_repository_review(
+                snapshot,
+                backend=create_adjudication_backend(
+                    backend_name,
+                    workdir=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                    executable=executable,
+                ),
+            )
+        except (SkillRuntimeError, BackendError, ValueError) as exc:
+            return 2, str(exc)
+        return 0, _render_benchmark_summary(snapshot.root, summary)
 
     if command == "baseline-create":
         try:
@@ -397,6 +423,41 @@ def _render_scan_summary(root: Path, assessments: tuple[object, ...]) -> str:
     return "\n".join(lines)
 
 
+def _render_benchmark_summary(root: Path, summary) -> str:  # noqa: ANN001
+    accuracy = 0.0
+    if summary.total_cases:
+        accuracy = (summary.exact_matches / summary.total_cases) * 100
+
+    lines = [
+        "# Lua Nil Review Benchmark",
+        "",
+        f"Repository: {root}",
+        f"Total labeled cases: {summary.total_cases}",
+        f"Exact matches: {summary.exact_matches}",
+        f"Accuracy: {accuracy:.1f}%",
+        f"Expected risky: {summary.expected_risky}",
+        f"Expected safe: {summary.expected_safe}",
+        f"Expected uncertain: {summary.expected_uncertain}",
+        f"Actual risky: {summary.actual_risky}",
+        f"Actual safe: {summary.actual_safe}",
+        f"Actual uncertain: {summary.actual_uncertain}",
+        f"Missed risks: {summary.missed_risks}",
+        f"False positive risks: {summary.false_positive_risks}",
+        f"Unresolved labeled cases: {summary.unresolved_cases}",
+    ]
+
+    mismatches = [case for case in summary.cases if not case.matches_expectation]
+    if mismatches:
+        lines.append("")
+        lines.append("Mismatches:")
+        for case in mismatches:
+            lines.append(
+                f"- {Path(case.file).name}: expected {case.expected_status}, got {case.actual_status}"
+            )
+
+    return "\n".join(lines)
+
+
 def _usage() -> str:
     return "\n".join(
         [
@@ -404,6 +465,7 @@ def _usage() -> str:
             "  lua-nil-review-agent scan <repository>",
             "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository>",
             "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository>",
+            "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository>",
             "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> <output>",
             "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> <baseline>",
             "  lua-nil-review-agent refresh-summaries <repository> [output]",

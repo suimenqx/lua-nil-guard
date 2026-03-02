@@ -174,6 +174,35 @@ class AdjudicationRecord:
     judge: Verdict
 
 
+@dataclass(frozen=True, slots=True)
+class BenchmarkCaseResult:
+    """One labeled benchmark case compared against an observed verdict."""
+
+    case_id: str
+    file: str
+    expected_status: str
+    actual_status: str
+    matches_expectation: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BenchmarkSummary:
+    """Aggregate benchmark metrics for labeled review samples."""
+
+    total_cases: int
+    exact_matches: int
+    expected_risky: int
+    expected_safe: int
+    expected_uncertain: int
+    actual_risky: int
+    actual_safe: int
+    actual_uncertain: int
+    false_positive_risks: int
+    missed_risks: int
+    unresolved_cases: int
+    cases: tuple[BenchmarkCaseResult, ...]
+
+
 def with_candidate_state(candidate: CandidateCase, state: str) -> CandidateCase:
     """Return a candidate copy with an updated static state."""
 
