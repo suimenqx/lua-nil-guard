@@ -6,6 +6,9 @@ from .models import AdjudicationRecord, EvidencePacket, RoleOpinion, SinkRule, V
 
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_DOT_PATH_RE = re.compile(
+    r"^(?:[A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][A-Za-z0-9_]*)+$"
+)
 
 
 def adjudicate_packet(packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
@@ -166,4 +169,19 @@ def _suggested_fix(packet: EvidencePacket, sink_rule: SinkRule) -> str | None:
 def _coalesce_fix(expression: str, fallback_literal: str) -> str:
     if _IDENTIFIER_RE.match(expression):
         return f"{expression} = {expression} or {fallback_literal}"
+
+    alias = _suggest_local_alias(expression)
+    if alias is not None:
+        return f"local {alias} = {expression} or {fallback_literal}"
+
     return f"local safe_value = {expression} or {fallback_literal}"
+
+
+def _suggest_local_alias(expression: str) -> str | None:
+    if not _DOT_PATH_RE.match(expression):
+        return None
+
+    alias = expression.rsplit(".", 1)[-1]
+    if not _IDENTIFIER_RE.match(alias):
+        return None
+    return alias

@@ -240,7 +240,7 @@ def test_adjudicate_packet_uses_table_fix_for_length_sinks() -> None:
     assert record.judge.suggested_fix == "items = items or {}"
 
 
-def test_adjudicate_packet_keeps_safe_value_for_complex_collection_expression() -> None:
+def test_adjudicate_packet_uses_field_alias_for_dot_path_collection_expression() -> None:
     packet = EvidencePacket(
         case_id="case_pairs",
         target=EvidenceTarget(
@@ -275,4 +275,42 @@ def test_adjudicate_packet_keeps_safe_value_for_complex_collection_expression() 
     record = adjudicate_packet(packet, rule)
 
     assert record.judge.status == "risky"
-    assert record.judge.suggested_fix == "local safe_value = req.items or {}"
+    assert record.judge.suggested_fix == "local items = req.items or {}"
+
+
+def test_adjudicate_packet_keeps_safe_value_for_non_aliasable_collection_expression() -> None:
+    packet = EvidencePacket(
+        case_id="case_pairs_index",
+        target=EvidenceTarget(
+            file="demo.lua",
+            line=2,
+            column=18,
+            sink="pairs",
+            arg_index=1,
+            expression="req.items_by_id[user_id]",
+        ),
+        local_context="for _, item in pairs(req.items_by_id[user_id]) do\n  return item\nend",
+        related_functions=(),
+        function_summaries=(),
+        knowledge_facts=(),
+        static_reasoning={
+            "state": "unknown_static",
+            "origin_candidates": ("req.items_by_id[user_id]",),
+            "observed_guards": (),
+        },
+    )
+    rule = SinkRule(
+        id="pairs.arg1",
+        kind="function_arg",
+        qualified_name="pairs",
+        arg_index=1,
+        nil_sensitive=True,
+        failure_mode="runtime_error",
+        default_severity="high",
+        safe_patterns=("x or {}",),
+    )
+
+    record = adjudicate_packet(packet, rule)
+
+    assert record.judge.status == "risky"
+    assert record.judge.suggested_fix == "local safe_value = req.items_by_id[user_id] or {}"
