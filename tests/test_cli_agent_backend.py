@@ -13,6 +13,7 @@ from lua_nil_review_agent.agent_driver_manifest import (
 from lua_nil_review_agent.agent_backend import (
     BackendError,
     build_manifest_backed_backend_factory,
+    build_provider_spec_backed_backend_factory,
     CliAgentBackend,
     CodeAgentCliBackend,
     CodexCliBackend,
@@ -21,6 +22,7 @@ from lua_nil_review_agent.agent_backend import (
     get_adjudication_backend_factory,
     register_cli_protocol_backend,
     register_adjudication_backend,
+    register_manifest_backed_adjudication_backend,
     unregister_adjudication_backend,
     unregister_cli_protocol_backend,
 )
@@ -821,6 +823,15 @@ def test_build_manifest_backed_backend_factory_uses_provider_protocol_mapping() 
     assert codeagent.provider_spec == CODEAGENT_PROVIDER_SPEC
 
 
+def test_build_provider_spec_backed_backend_factory_uses_explicit_spec() -> None:
+    factory = build_provider_spec_backed_backend_factory(CODEAGENT_PROVIDER_SPEC)
+    backend = factory(model="custom-model")
+
+    assert isinstance(backend, CodeAgentCliBackend)
+    assert backend.provider_spec == CODEAGENT_PROVIDER_SPEC
+    assert backend.model == "custom-model"
+
+
 def test_backend_factory_registry_supports_custom_registration() -> None:
     calls: list[str] = []
 
@@ -857,6 +868,40 @@ def test_cli_protocol_backend_registry_supports_custom_registration() -> None:
         assert get_cli_protocol_backend("demo_protocol") is DemoProtocolBackend
     finally:
         unregister_cli_protocol_backend("demo_protocol")
+
+
+def test_register_manifest_backed_adjudication_backend_loads_custom_provider(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "claude-code.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "claude-code",
+                "protocol": "stdout_envelope_cli",
+                "default_executable": "claude-code",
+                "default_timeout_seconds": 30.0,
+                "default_max_attempts": 2,
+                "default_fallback_to_uncertain_on_error": True,
+                "capabilities": {
+                    "supports_model_override": True,
+                    "supports_config_overrides": True,
+                    "supports_stdout_json": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    provider_spec = register_manifest_backed_adjudication_backend(manifest_path)
+    try:
+        backend = create_adjudication_backend("claude-code")
+        assert isinstance(backend, CodeAgentCliBackend)
+        assert backend.provider_spec == provider_spec
+        assert backend.executable == "claude-code"
+        assert backend.timeout_seconds == 30.0
+    finally:
+        unregister_adjudication_backend("claude-code")
 
 
 def test_builtin_provider_specs_describe_supported_cli_protocols() -> None:

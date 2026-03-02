@@ -13,6 +13,7 @@ from .agent_driver_manifest import (
     CODEAGENT_PROVIDER_SPEC,
     CODEX_PROVIDER_SPEC,
     get_builtin_agent_provider_spec,
+    load_agent_provider_spec_manifest_file,
 )
 from .agent_driver_models import AgentProviderSpec
 from .agent_protocols import (
@@ -644,6 +645,14 @@ def build_manifest_backed_backend_factory(provider_name: str) -> AdjudicationBac
     """Build a generic backend factory from a provider manifest and protocol mapping."""
 
     provider_spec = get_builtin_agent_provider_spec(provider_name)
+    return build_provider_spec_backed_backend_factory(provider_spec)
+
+
+def build_provider_spec_backed_backend_factory(
+    provider_spec: AgentProviderSpec,
+) -> AdjudicationBackendFactory:
+    """Build a generic backend factory from an explicit provider spec."""
+
     backend_type = get_cli_protocol_backend(provider_spec.protocol)
 
     def factory(
@@ -675,6 +684,22 @@ def build_manifest_backed_backend_factory(provider_name: str) -> AdjudicationBac
         )
 
     return factory
+
+
+def register_manifest_backed_adjudication_backend(
+    manifest_path: str | Path,
+    *,
+    replace: bool = False,
+) -> AgentProviderSpec:
+    """Load a provider manifest file and register a matching backend factory."""
+
+    provider_spec = load_agent_provider_spec_manifest_file(manifest_path)
+    register_adjudication_backend(
+        provider_spec.name,
+        build_provider_spec_backed_backend_factory(provider_spec),
+        replace=replace,
+    )
+    return provider_spec
 
 
 def _instantiate_manifest_backed_backend(
