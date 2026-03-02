@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -80,6 +81,7 @@ class CliAgentBackend:
         timeout_seconds: float | None = None,
         max_attempts: int = 1,
         fallback_to_uncertain_on_error: bool = False,
+        cache_path: str | Path | None = None,
     ) -> None:
         self.runner = runner or _default_runner
         self._uses_default_runner = runner is None
@@ -89,15 +91,24 @@ class CliAgentBackend:
         self.timeout_seconds = timeout_seconds
         self.max_attempts = max(1, max_attempts)
         self.fallback_to_uncertain_on_error = fallback_to_uncertain_on_error
+        self.cache_path = Path(cache_path).resolve() if cache_path is not None else None
 
     def adjudicate(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
+        prompt = self.build_prompt(packet=packet, sink_rule=sink_rule)
+        cached = self._load_cached_record(prompt=prompt, case_id=packet.case_id)
+        if cached is not None:
+            return cached
         return self._adjudicate_with_retries(
-            lambda: self._adjudicate_once(packet, sink_rule),
+            lambda: self._adjudicate_once(packet, sink_rule, prompt),
             packet=packet,
         )
 
-    def _adjudicate_once(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
-        prompt = self.build_prompt(packet=packet, sink_rule=sink_rule)
+    def _adjudicate_once(
+        self,
+        packet: EvidencePacket,
+        sink_rule: SinkRule,
+        prompt: str,
+    ) -> AdjudicationRecord:
         temp_dir_root = str(self.workdir) if self.workdir is not None else None
         with tempfile.TemporaryDirectory(
             prefix="lua_nil_review_agent_",
@@ -119,7 +130,9 @@ class CliAgentBackend:
             if not output_path.exists():
                 raise BackendError("CLI backend did not write an output file")
             raw = output_path.read_text(encoding="utf-8")
-        return self.parse_response(raw, case_id=packet.case_id)
+        record = self.parse_response(raw, case_id=packet.case_id)
+        self._store_cached_record(prompt=prompt, record=record)
+        return record
 
     def _adjudicate_with_retries(
         self,
@@ -294,6 +307,55 @@ class CliAgentBackend:
             judge=judge,
         )
 
+    def _cache_identity(self) -> dict[str, object]:
+        return {"backend": self.__class__.__name__}
+
+    def _cache_key(self, *, prompt: str) -> str:
+        payload = json.dumps(
+            {
+                "identity": self._cache_identity(),
+                "prompt": prompt,
+                "schema": self.output_schema(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _load_cached_record(self, *, prompt: str, case_id: str) -> AdjudicationRecord | None:
+        if self.cache_path is None or not self.cache_path.exists():
+            return None
+        try:
+            payload = json.loads(self.cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        cached = payload.get(self._cache_key(prompt=prompt))
+        if not isinstance(cached, dict):
+            return None
+        return self.parse_response(json.dumps(cached), case_id=case_id)
+
+    def _store_cached_record(self, *, prompt: str, record: AdjudicationRecord) -> None:
+        if self.cache_path is None:
+            return
+        payload: dict[str, object] = {}
+        if self.cache_path.exists():
+            try:
+                existing = json.loads(self.cache_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                existing = {}
+            if isinstance(existing, dict):
+                payload.update(existing)
+        payload[self._cache_key(prompt=prompt)] = _serialize_record(record)
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self.cache_path.parent / f"{self.cache_path.name}.tmp"
+        temp_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        temp_path.replace(self.cache_path)
+
 
 class CodexCliBackend(CliAgentBackend):
     """CLI backend implementation for the Codex CLI."""
@@ -312,6 +374,7 @@ class CodexCliBackend(CliAgentBackend):
         max_attempts: int = 2,
         fallback_to_uncertain_on_error: bool = True,
         config_overrides: tuple[str, ...] = (),
+        cache_path: str | Path | None = None,
     ) -> None:
         super().__init__(
             runner=runner,
@@ -321,11 +384,21 @@ class CodexCliBackend(CliAgentBackend):
             timeout_seconds=timeout_seconds,
             max_attempts=max_attempts,
             fallback_to_uncertain_on_error=fallback_to_uncertain_on_error,
+            cache_path=cache_path,
         )
         self.model = model
         self.sandbox = sandbox
         self.executable = executable
         self.config_overrides = config_overrides
+
+    def _cache_identity(self) -> dict[str, object]:
+        return {
+            "backend": self.__class__.__name__,
+            "model": self.model,
+            "sandbox": self.sandbox,
+            "executable": self.executable,
+            "config_overrides": self.config_overrides,
+        }
 
     def build_command(
         self,
@@ -375,6 +448,7 @@ class CodeAgentCliBackend(CliAgentBackend):
         executable: str = "codeagent",
         timeout_seconds: float | None = None,
         max_attempts: int = 1,
+        cache_path: str | Path | None = None,
     ) -> None:
         super().__init__(
             runner=runner,
@@ -383,23 +457,31 @@ class CodeAgentCliBackend(CliAgentBackend):
             strict_skill=strict_skill,
             timeout_seconds=timeout_seconds,
             max_attempts=max_attempts,
+            cache_path=cache_path,
         )
         self.model = model
         self.executable = executable
 
-    def adjudicate(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
-        return self._adjudicate_with_retries(
-            lambda: self._adjudicate_once(packet, sink_rule),
-            packet=packet,
-        )
+    def _cache_identity(self) -> dict[str, object]:
+        return {
+            "backend": self.__class__.__name__,
+            "model": self.model,
+            "executable": self.executable,
+        }
 
-    def _adjudicate_once(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
-        prompt = self.build_prompt(packet=packet, sink_rule=sink_rule)
+    def _adjudicate_once(
+        self,
+        packet: EvidencePacket,
+        sink_rule: SinkRule,
+        prompt: str,
+    ) -> AdjudicationRecord:
         command = self.build_prompt_command(prompt=prompt, cwd=self.workdir)
         raw = self._run_command(command, stdin_text="")
         if not isinstance(raw, str) or not raw.strip():
             raise BackendError("CodeAgent backend did not return headless JSON on stdout")
-        return self.parse_wrapped_response(raw, case_id=packet.case_id)
+        record = self.parse_wrapped_response(raw, case_id=packet.case_id)
+        self._store_cached_record(prompt=prompt, record=record)
+        return record
 
     def build_command(
         self,
@@ -454,6 +536,7 @@ def create_adjudication_backend(
     executable: str | None = None,
     timeout_seconds: float | None = None,
     max_attempts: int | None = None,
+    cache_path: str | Path | None = None,
     config_overrides: tuple[str, ...] = (),
     runner=None,
 ) -> AdjudicationBackend:
@@ -468,6 +551,8 @@ def create_adjudication_backend(
             options["timeout_seconds"] = timeout_seconds
         if max_attempts is not None:
             options["max_attempts"] = max_attempts
+        if cache_path is not None:
+            options["cache_path"] = cache_path
         if config_overrides:
             options["config_overrides"] = config_overrides
         return CodexCliBackend(
@@ -485,6 +570,8 @@ def create_adjudication_backend(
             options["timeout_seconds"] = timeout_seconds
         if max_attempts is not None:
             options["max_attempts"] = max_attempts
+        if cache_path is not None:
+            options["cache_path"] = cache_path
         return CodeAgentCliBackend(
             runner=runner,
             workdir=workdir,
@@ -578,6 +665,35 @@ def _backend_failure_fallback(packet: EvidencePacket, reason: str) -> Adjudicati
         defender=defender,
         judge=judge,
     )
+
+
+def _serialize_record(record: AdjudicationRecord) -> dict[str, object]:
+    return {
+        "prosecutor": _serialize_role(record.prosecutor),
+        "defender": _serialize_role(record.defender),
+        "judge": {
+            "status": record.judge.status,
+            "confidence": record.judge.confidence,
+            "risk_path": list(record.judge.risk_path),
+            "safety_evidence": list(record.judge.safety_evidence),
+            "counterarguments_considered": list(record.judge.counterarguments_considered),
+            "suggested_fix": record.judge.suggested_fix,
+            "needs_human": record.judge.needs_human,
+        },
+    }
+
+
+def _serialize_role(role: RoleOpinion) -> dict[str, object]:
+    return {
+        "role": role.role,
+        "status": role.status,
+        "confidence": role.confidence,
+        "risk_path": list(role.risk_path),
+        "safety_evidence": list(role.safety_evidence),
+        "missing_evidence": list(role.missing_evidence),
+        "recommended_next_action": role.recommended_next_action,
+        "suggested_fix": role.suggested_fix,
+    }
 
 
 def _parse_role_opinion(payload: object) -> RoleOpinion:

@@ -168,6 +168,67 @@ def test_cli_agent_backend_rejects_invalid_json_output() -> None:
         backend.adjudicate(_sample_packet(), _sample_sink_rule())
 
 
+def test_cli_agent_backend_reuses_cached_result_without_runner(tmp_path: Path) -> None:
+    cache_path = tmp_path / "backend-cache.json"
+    attempts = {"count": 0}
+
+    def fake_runner(
+        command: tuple[str, ...],
+        *,
+        stdin_text: str,
+        cwd: Path | None,
+    ) -> None:
+        attempts["count"] += 1
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(
+            json.dumps(
+                {
+                    "prosecutor": {
+                        "role": "prosecutor",
+                        "status": "uncertain",
+                        "confidence": "low",
+                        "risk_path": [],
+                        "safety_evidence": [],
+                        "missing_evidence": ["stub"],
+                        "recommended_next_action": "expand_context",
+                        "suggested_fix": None,
+                    },
+                    "defender": {
+                        "role": "defender",
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["cached"],
+                        "missing_evidence": [],
+                        "recommended_next_action": "suppress",
+                        "suggested_fix": None,
+                    },
+                    "judge": {
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["cached"],
+                        "counterarguments_considered": [],
+                        "suggested_fix": None,
+                        "needs_human": False,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    backend = DemoCliBackend(runner=fake_runner, cache_path=cache_path)
+
+    first = backend.adjudicate(_sample_packet(), _sample_sink_rule())
+    second = backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    assert first.judge.status == "safe"
+    assert second.judge.status == "safe"
+    assert attempts["count"] == 1
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert len(payload) == 1
+
+
 def test_codex_cli_backend_builds_expected_exec_command(tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 
@@ -666,6 +727,17 @@ def test_create_adjudication_backend_passes_config_overrides() -> None:
 
     assert isinstance(backend, CodexCliBackend)
     assert backend.config_overrides == ("features.fast=true",)
+
+
+def test_create_adjudication_backend_passes_cache_path(tmp_path: Path) -> None:
+    cache_path = tmp_path / "backend-cache.json"
+    backend = create_adjudication_backend(
+        "codex",
+        cache_path=cache_path,
+    )
+
+    assert isinstance(backend, CodexCliBackend)
+    assert backend.cache_path == cache_path
 
 
 def _sample_packet() -> EvidencePacket:

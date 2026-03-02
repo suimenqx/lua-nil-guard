@@ -50,6 +50,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 executable,
                 backend_timeout,
                 backend_attempts,
+                backend_cache_path,
                 backend_config_overrides,
                 positional,
             ) = _parse_review_options(args[1:])
@@ -71,6 +72,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
             )
@@ -88,6 +90,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 executable,
                 backend_timeout,
                 backend_attempts,
+                backend_cache_path,
                 backend_config_overrides,
                 positional,
             ) = _parse_review_options(args[1:])
@@ -109,6 +112,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
             )
@@ -126,6 +130,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 executable,
                 backend_timeout,
                 backend_attempts,
+                backend_cache_path,
                 backend_config_overrides,
                 positional,
             ) = _parse_review_options(args[1:])
@@ -147,6 +152,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
             )
@@ -164,6 +170,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 executable,
                 backend_timeout,
                 backend_attempts,
+                backend_cache_path,
                 backend_config_overrides,
                 positional,
             ) = _parse_review_options(args[1:])
@@ -186,6 +193,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
             )
@@ -211,6 +219,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 executable,
                 backend_timeout,
                 backend_attempts,
+                backend_cache_path,
                 backend_config_overrides,
                 positional,
             ) = _parse_review_options(args[1:])
@@ -233,6 +242,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
             )
@@ -287,6 +297,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 executable,
                 backend_timeout,
                 backend_attempts,
+                backend_cache_path,
                 backend_config_overrides,
                 positional,
             ) = _parse_review_options(args[1:])
@@ -309,6 +320,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
             )
@@ -366,6 +378,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 executable,
                 backend_timeout,
                 backend_attempts,
+                backend_cache_path,
                 backend_config_overrides,
                 positional,
             ) = _parse_review_options(args[1:])
@@ -388,6 +401,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
                 output_path=output_path,
@@ -556,16 +570,16 @@ def _usage() -> str:
         [
             "Usage:",
             "  lua-nil-review-agent scan <repository>",
-            "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-config KEY=VALUE] <repository>",
-            "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-config KEY=VALUE] <repository>",
-            "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-config KEY=VALUE] <repository>",
-            "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-config KEY=VALUE] <repository> <output>",
-            "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-config KEY=VALUE] <repository> <baseline>",
+            "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <output>",
+            "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <baseline>",
             "  lua-nil-review-agent refresh-summaries <repository> [output]",
             "  lua-nil-review-agent refresh-knowledge <repository> [output]",
-            "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-config KEY=VALUE] <repository> <baseline>",
+            "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <baseline>",
             "  lua-nil-review-agent export-prompts [--skill SKILL] [--allow-skill-fallback] <repository> [output]",
-            "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-config KEY=VALUE] <repository> [output]",
+            "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
             "  lua-nil-review-agent apply-autofix [--dry-run] [--case-id CASE_ID] [--file PATH] <autofix-manifest>",
             "  lua-nil-review-agent export-unified-diff [--case-id CASE_ID] [--file PATH] <autofix-manifest> [output]",
             "",
@@ -576,7 +590,7 @@ def _usage() -> str:
 
 def _parse_review_options(
     args: list[str],
-) -> tuple[str, str | None, Path | None, bool, str | None, float | None, int | None, tuple[str, ...], list[str]]:
+) -> tuple[str, str | None, Path | None, bool, str | None, float | None, int | None, Path | None, tuple[str, ...], list[str]]:
     backend_name = "heuristic"
     model: str | None = None
     skill_path: Path | None = None
@@ -584,6 +598,7 @@ def _parse_review_options(
     executable: str | None = None
     backend_timeout: float | None = None
     backend_attempts: int | None = None
+    backend_cache_path: Path | None = None
     backend_config_overrides: list[str] = []
     positional: list[str] = []
     index = 0
@@ -640,6 +655,12 @@ def _parse_review_options(
                 raise ValueError("--backend-attempts must be an integer >= 1")
             index += 2
             continue
+        if token == "--backend-cache":
+            if index + 1 >= len(args):
+                raise ValueError("--backend-cache requires a value")
+            backend_cache_path = Path(args[index + 1])
+            index += 2
+            continue
         if token == "--backend-config":
             if index + 1 >= len(args):
                 raise ValueError("--backend-config requires a value")
@@ -660,6 +681,7 @@ def _parse_review_options(
         executable,
         backend_timeout,
         backend_attempts,
+        backend_cache_path,
         tuple(backend_config_overrides),
         positional,
     )
