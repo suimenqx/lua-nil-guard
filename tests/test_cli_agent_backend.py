@@ -232,6 +232,70 @@ def test_codex_cli_backend_builds_expected_exec_command(tmp_path: Path) -> None:
     assert record.judge.status == "safe"
 
 
+def test_codex_cli_backend_passes_config_overrides_to_exec_command(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_runner(
+        command: tuple[str, ...],
+        *,
+        stdin_text: str,
+        cwd: Path | None,
+    ) -> None:
+        captured["command"] = command
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(
+            json.dumps(
+                {
+                    "prosecutor": {
+                        "role": "prosecutor",
+                        "status": "uncertain",
+                        "confidence": "low",
+                        "risk_path": [],
+                        "safety_evidence": [],
+                        "missing_evidence": ["stub"],
+                        "recommended_next_action": "expand_context",
+                        "suggested_fix": None,
+                    },
+                    "defender": {
+                        "role": "defender",
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["guard"],
+                        "missing_evidence": [],
+                        "recommended_next_action": "suppress",
+                        "suggested_fix": None,
+                    },
+                    "judge": {
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["guard"],
+                        "counterarguments_considered": [],
+                        "suggested_fix": None,
+                        "needs_human": False,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    backend = CodexCliBackend(
+        runner=fake_runner,
+        workdir=tmp_path,
+        config_overrides=("model='o3'", "features.fast=true"),
+    )
+    record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    command = captured["command"]
+    assert command.count("-c") == 2
+    first = command.index("-c")
+    second = command.index("-c", first + 1)
+    assert command[first + 1] == "model='o3'"
+    assert command[second + 1] == "features.fast=true"
+    assert record.judge.status == "safe"
+
+
 def test_codex_cli_backend_normalizes_relative_workdir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
@@ -592,6 +656,16 @@ def test_create_adjudication_backend_passes_timeout_and_attempts() -> None:
     assert isinstance(backend, CodexCliBackend)
     assert backend.timeout_seconds == 12.5
     assert backend.max_attempts == 3
+
+
+def test_create_adjudication_backend_passes_config_overrides() -> None:
+    backend = create_adjudication_backend(
+        "codex",
+        config_overrides=("features.fast=true",),
+    )
+
+    assert isinstance(backend, CodexCliBackend)
+    assert backend.config_overrides == ("features.fast=true",)
 
 
 def _sample_packet() -> EvidencePacket:

@@ -311,6 +311,7 @@ class CodexCliBackend(CliAgentBackend):
         timeout_seconds: float | None = 45.0,
         max_attempts: int = 2,
         fallback_to_uncertain_on_error: bool = True,
+        config_overrides: tuple[str, ...] = (),
     ) -> None:
         super().__init__(
             runner=runner,
@@ -324,6 +325,7 @@ class CodexCliBackend(CliAgentBackend):
         self.model = model
         self.sandbox = sandbox
         self.executable = executable
+        self.config_overrides = config_overrides
 
     def build_command(
         self,
@@ -340,11 +342,17 @@ class CodexCliBackend(CliAgentBackend):
             self.sandbox,
             "--color",
             "never",
+        ]
+        for override in self.config_overrides:
+            command.extend(["-c", override])
+        command.extend(
+            [
             "--output-schema",
             str(schema_path),
             "-o",
             str(output_path),
-        ]
+            ]
+        )
         if cwd is not None:
             command.extend(["-C", str(cwd)])
         if self.model is not None:
@@ -446,6 +454,7 @@ def create_adjudication_backend(
     executable: str | None = None,
     timeout_seconds: float | None = None,
     max_attempts: int | None = None,
+    config_overrides: tuple[str, ...] = (),
     runner=None,
 ) -> AdjudicationBackend:
     """Create a named adjudication backend."""
@@ -459,6 +468,8 @@ def create_adjudication_backend(
             options["timeout_seconds"] = timeout_seconds
         if max_attempts is not None:
             options["max_attempts"] = max_attempts
+        if config_overrides:
+            options["config_overrides"] = config_overrides
         return CodexCliBackend(
             runner=runner,
             workdir=workdir,

@@ -21,6 +21,7 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "--backend-executable PATH" in output
     assert "--backend-timeout SECONDS" in output
     assert "--backend-attempts N" in output
+    assert "--backend-config KEY=VALUE" in output
     assert "benchmark" in output
     assert "export-autofix" in output
     assert "apply-autofix" in output
@@ -785,6 +786,7 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
         executable=None,
         timeout_seconds=None,
         max_attempts=None,
+        config_overrides=(),
     ):
         captured["name"] = name
         captured["workdir"] = workdir
@@ -794,6 +796,7 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
         captured["executable"] = executable
         captured["timeout_seconds"] = timeout_seconds
         captured["max_attempts"] = max_attempts
+        captured["config_overrides"] = config_overrides
         return None
 
     monkeypatch.setattr("lua_nil_review_agent.cli.create_adjudication_backend", fake_factory)
@@ -812,6 +815,10 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
             "12.5",
             "--backend-attempts",
             "3",
+            "--backend-config",
+            "model='o3'",
+            "--backend-config",
+            "features.fast=true",
             str(tmp_path),
         ]
     )
@@ -825,6 +832,7 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
     assert captured["executable"] == "/tmp/codeagent-bin"
     assert captured["timeout_seconds"] == 12.5
     assert captured["max_attempts"] == 3
+    assert captured["config_overrides"] == ("model='o3'", "features.fast=true")
     assert "# Lua Nil Risk Report" in output
 
 
@@ -887,3 +895,10 @@ def test_cli_report_rejects_invalid_backend_timeout() -> None:
 
     assert exit_code == 2
     assert output == "--backend-timeout must be a positive number"
+
+
+def test_cli_report_rejects_invalid_backend_config() -> None:
+    exit_code, output = run(["report", "--backend-config", "reasoning_effort", "demo"])
+
+    assert exit_code == 2
+    assert output == "--backend-config must be in KEY=VALUE form"

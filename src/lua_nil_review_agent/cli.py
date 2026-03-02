@@ -50,6 +50,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 executable,
                 backend_timeout,
                 backend_attempts,
+                backend_config_overrides,
                 positional,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
@@ -70,6 +71,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    config_overrides=backend_config_overrides,
                 ),
             )
         except (SkillRuntimeError, BackendError) as exc:
@@ -86,6 +88,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 executable,
                 backend_timeout,
                 backend_attempts,
+                backend_config_overrides,
                 positional,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
@@ -106,6 +109,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    config_overrides=backend_config_overrides,
                 ),
             )
         except (SkillRuntimeError, BackendError) as exc:
@@ -122,6 +126,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 executable,
                 backend_timeout,
                 backend_attempts,
+                backend_config_overrides,
                 positional,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
@@ -142,6 +147,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    config_overrides=backend_config_overrides,
                 ),
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
@@ -158,6 +164,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 executable,
                 backend_timeout,
                 backend_attempts,
+                backend_config_overrides,
                 positional,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
@@ -179,6 +186,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    config_overrides=backend_config_overrides,
                 ),
             )
         except (SkillRuntimeError, BackendError) as exc:
@@ -203,6 +211,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 executable,
                 backend_timeout,
                 backend_attempts,
+                backend_config_overrides,
                 positional,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
@@ -224,6 +233,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    config_overrides=backend_config_overrides,
                 ),
             )
         except (SkillRuntimeError, BackendError) as exc:
@@ -277,6 +287,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 executable,
                 backend_timeout,
                 backend_attempts,
+                backend_config_overrides,
                 positional,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
@@ -298,6 +309,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    config_overrides=backend_config_overrides,
                 ),
             )
         except (SkillRuntimeError, BackendError) as exc:
@@ -354,6 +366,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 executable,
                 backend_timeout,
                 backend_attempts,
+                backend_config_overrides,
                 positional,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
@@ -375,6 +388,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     executable=executable,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    config_overrides=backend_config_overrides,
                 ),
                 output_path=output_path,
             )
@@ -540,16 +554,16 @@ def _usage() -> str:
         [
             "Usage:",
             "  lua-nil-review-agent scan <repository>",
-            "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] <repository>",
-            "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] <repository>",
-            "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] <repository>",
-            "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] <repository> <output>",
-            "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] <repository> <baseline>",
+            "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-config KEY=VALUE] <repository> <output>",
+            "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-config KEY=VALUE] <repository> <baseline>",
             "  lua-nil-review-agent refresh-summaries <repository> [output]",
             "  lua-nil-review-agent refresh-knowledge <repository> [output]",
-            "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] <repository> <baseline>",
+            "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-config KEY=VALUE] <repository> <baseline>",
             "  lua-nil-review-agent export-prompts [--skill SKILL] [--allow-skill-fallback] <repository> [output]",
-            "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] <repository> [output]",
+            "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-config KEY=VALUE] <repository> [output]",
             "  lua-nil-review-agent apply-autofix [--dry-run] [--case-id CASE_ID] [--file PATH] <autofix-manifest>",
             "  lua-nil-review-agent export-unified-diff [--case-id CASE_ID] [--file PATH] <autofix-manifest> [output]",
             "",
@@ -560,7 +574,7 @@ def _usage() -> str:
 
 def _parse_review_options(
     args: list[str],
-) -> tuple[str, str | None, Path | None, bool, str | None, float | None, int | None, list[str]]:
+) -> tuple[str, str | None, Path | None, bool, str | None, float | None, int | None, tuple[str, ...], list[str]]:
     backend_name = "heuristic"
     model: str | None = None
     skill_path: Path | None = None
@@ -568,6 +582,7 @@ def _parse_review_options(
     executable: str | None = None
     backend_timeout: float | None = None
     backend_attempts: int | None = None
+    backend_config_overrides: list[str] = []
     positional: list[str] = []
     index = 0
 
@@ -623,6 +638,15 @@ def _parse_review_options(
                 raise ValueError("--backend-attempts must be an integer >= 1")
             index += 2
             continue
+        if token == "--backend-config":
+            if index + 1 >= len(args):
+                raise ValueError("--backend-config requires a value")
+            override = args[index + 1]
+            if "=" not in override:
+                raise ValueError("--backend-config must be in KEY=VALUE form")
+            backend_config_overrides.append(override)
+            index += 2
+            continue
         positional.append(token)
         index += 1
 
@@ -634,6 +658,7 @@ def _parse_review_options(
         executable,
         backend_timeout,
         backend_attempts,
+        tuple(backend_config_overrides),
         positional,
     )
 
