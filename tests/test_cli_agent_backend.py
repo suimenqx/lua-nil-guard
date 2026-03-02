@@ -292,6 +292,84 @@ def test_codex_cli_backend_normalizes_relative_workdir(monkeypatch: pytest.Monke
     assert captured["cwd"] == repo_dir.resolve()
 
 
+def test_codex_cli_backend_retries_after_backend_error(tmp_path: Path) -> None:
+    attempts = {"count": 0}
+
+    def flaky_runner(
+        command: tuple[str, ...],
+        *,
+        stdin_text: str,
+        cwd: Path | None,
+    ) -> None:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise BackendError("temporary codex failure")
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(
+            json.dumps(
+                {
+                    "prosecutor": {
+                        "role": "prosecutor",
+                        "status": "uncertain",
+                        "confidence": "low",
+                        "risk_path": [],
+                        "safety_evidence": [],
+                        "missing_evidence": ["stub"],
+                        "recommended_next_action": "expand_context",
+                        "suggested_fix": None,
+                    },
+                    "defender": {
+                        "role": "defender",
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["guard"],
+                        "missing_evidence": [],
+                        "recommended_next_action": "suppress",
+                        "suggested_fix": None,
+                    },
+                    "judge": {
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["guard"],
+                        "counterarguments_considered": [],
+                        "suggested_fix": None,
+                        "needs_human": False,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    backend = CodexCliBackend(runner=flaky_runner, workdir=tmp_path, max_attempts=2)
+    record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    assert attempts["count"] == 2
+    assert record.judge.status == "safe"
+
+
+def test_codex_cli_backend_falls_back_to_uncertain_after_exhausted_retries(tmp_path: Path) -> None:
+    attempts = {"count": 0}
+
+    def failing_runner(
+        command: tuple[str, ...],
+        *,
+        stdin_text: str,
+        cwd: Path | None,
+    ) -> None:
+        attempts["count"] += 1
+        raise BackendError("temporary codex failure")
+
+    backend = CodexCliBackend(runner=failing_runner, workdir=tmp_path, max_attempts=2)
+    record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    assert attempts["count"] == 2
+    assert record.judge.status == "uncertain"
+    assert record.judge.needs_human is True
+    assert record.judge.counterarguments_considered == ("temporary codex failure",)
+
+
 def test_codeagent_cli_backend_uses_codeagent_executable_by_default(tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 
