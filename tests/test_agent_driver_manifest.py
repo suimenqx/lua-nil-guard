@@ -8,6 +8,7 @@ import pytest
 from lua_nil_review_agent.agent_driver_manifest import (
     BUILTIN_AGENT_PROVIDER_MANIFESTS,
     CODEAGENT_PROVIDER_SPEC,
+    CLAUDE_PROVIDER_SPEC,
     CODEX_PROVIDER_SPEC,
     get_builtin_agent_provider_manifest,
     get_builtin_agent_provider_spec,
@@ -18,9 +19,11 @@ from lua_nil_review_agent.agent_driver_manifest import (
 
 def test_builtin_manifests_load_into_builtin_specs() -> None:
     assert get_builtin_agent_provider_manifest("codex") == BUILTIN_AGENT_PROVIDER_MANIFESTS["codex"]
+    assert get_builtin_agent_provider_manifest("claude") == BUILTIN_AGENT_PROVIDER_MANIFESTS["claude"]
     assert get_builtin_agent_provider_manifest("codeagent") == BUILTIN_AGENT_PROVIDER_MANIFESTS["codeagent"]
 
     assert get_builtin_agent_provider_spec("codex") == CODEX_PROVIDER_SPEC
+    assert get_builtin_agent_provider_spec("claude") == CLAUDE_PROVIDER_SPEC
     assert get_builtin_agent_provider_spec("codeagent") == CODEAGENT_PROVIDER_SPEC
 
 

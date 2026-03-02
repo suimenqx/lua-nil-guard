@@ -22,7 +22,7 @@ def test_cli_help_lists_supported_backends() -> None:
     exit_code, output = run(["--help"])
 
     assert exit_code == 0
-    assert "Backend values: heuristic | codex | codeagent" in output
+    assert "Backend values: heuristic | codex | claude | codeagent" in output
     assert "--allow-skill-fallback" in output
     assert "--backend-executable PATH" in output
     assert "--backend-manifest PATH" in output

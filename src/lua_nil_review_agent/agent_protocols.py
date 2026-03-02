@@ -69,12 +69,40 @@ class StdoutEnvelopeCliProtocol:
         return tuple(command)
 
 
+class StdoutStructuredCliProtocol:
+    """Build commands for CLIs that emit a structured JSON envelope on stdout."""
+
+    name = "stdout_structured_cli"
+
+    def build_command(
+        self,
+        *,
+        executable: str,
+        base_args: tuple[str, ...],
+        model: str | None,
+        model_flag: str | None,
+        schema: str | None,
+        schema_flag: str | None,
+        print_flag: str,
+        prompt: str,
+    ) -> tuple[str, ...]:
+        command: list[str] = [executable, print_flag, *base_args]
+        if schema is not None and schema_flag is not None:
+            command.extend([schema_flag, schema])
+        if model is not None and model_flag is not None:
+            command.extend([model_flag, model])
+        command.extend(["--", prompt])
+        return tuple(command)
+
+
 _SCHEMA_FILE_CLI_PROTOCOL = SchemaFileCliProtocol()
+_STDOUT_STRUCTURED_CLI_PROTOCOL = StdoutStructuredCliProtocol()
 _STDOUT_ENVELOPE_CLI_PROTOCOL = StdoutEnvelopeCliProtocol()
 
 
 CLI_PROTOCOL_BUILDERS: dict[str, CliProtocolBuilder] = {
     _SCHEMA_FILE_CLI_PROTOCOL.name: _SCHEMA_FILE_CLI_PROTOCOL,
+    _STDOUT_STRUCTURED_CLI_PROTOCOL.name: _STDOUT_STRUCTURED_CLI_PROTOCOL,
     _STDOUT_ENVELOPE_CLI_PROTOCOL.name: _STDOUT_ENVELOPE_CLI_PROTOCOL,
 }
 

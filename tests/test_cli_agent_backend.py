@@ -7,6 +7,7 @@ import pytest
 
 from lua_nil_review_agent.agent_driver_manifest import (
     CODEAGENT_PROVIDER_SPEC,
+    CLAUDE_PROVIDER_SPEC,
     CODEX_PROVIDER_SPEC,
     get_builtin_agent_provider_spec,
 )
@@ -15,6 +16,7 @@ from lua_nil_review_agent.agent_backend import (
     build_manifest_backed_backend_factory,
     build_provider_spec_backed_backend_factory,
     CliAgentBackend,
+    ClaudeCliBackend,
     CodeAgentCliBackend,
     CodexCliBackend,
     create_adjudication_backend,
@@ -513,6 +515,130 @@ def test_codex_cli_backend_falls_back_to_uncertain_after_exhausted_retries(tmp_p
     assert record.judge.counterarguments_considered == ("temporary codex failure",)
 
 
+def test_claude_cli_backend_uses_claude_executable_by_default(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_runner(
+        command: tuple[str, ...],
+        *,
+        stdin_text: str,
+        cwd: Path | None,
+    ) -> str:
+        captured["command"] = command
+        captured["stdin_text"] = stdin_text
+        captured["cwd"] = cwd
+        return json.dumps(
+            {
+                "structured_output": {
+                    "prosecutor": {
+                        "role": "prosecutor",
+                        "status": "uncertain",
+                        "confidence": "low",
+                        "risk_path": [],
+                        "safety_evidence": [],
+                        "missing_evidence": ["stub"],
+                        "recommended_next_action": "expand_context",
+                        "suggested_fix": None,
+                    },
+                    "defender": {
+                        "role": "defender",
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["if username then"],
+                        "missing_evidence": [],
+                        "recommended_next_action": "suppress",
+                        "suggested_fix": None,
+                    },
+                    "judge": {
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["if username then"],
+                        "counterarguments_considered": [],
+                        "suggested_fix": None,
+                        "needs_human": False,
+                    },
+                }
+            }
+        )
+
+    backend = ClaudeCliBackend(runner=fake_runner, workdir=tmp_path, model="sonnet")
+    record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    command = captured["command"]
+    assert command[0] == "claude"
+    assert "-p" in command
+    assert "--output-format" in command
+    assert command[command.index("--output-format") + 1] == "json"
+    assert "--permission-mode" in command
+    assert command[command.index("--permission-mode") + 1] == "dontAsk"
+    assert "--json-schema" not in command
+    assert "--tools" in command
+    assert command[command.index("--tools") + 1] == ""
+    assert "--no-session-persistence" in command
+    assert "--model" in command
+    assert command[-2] == "--"
+    assert "Adjudication policy: lua-nil-adjudicator" in command[-1]
+    assert "Use only the prompt payload as admissible evidence." in command[-1]
+    assert "The prosecutor and defender objects must each contain:" in command[-1]
+    assert captured["stdin_text"] == ""
+    assert captured["cwd"] == tmp_path
+    assert record.judge.status == "safe"
+
+
+def test_claude_cli_backend_accepts_result_string_payload() -> None:
+    def fake_runner(
+        command: tuple[str, ...],
+        *,
+        stdin_text: str,
+        cwd: Path | None,
+    ) -> str:
+        del command, stdin_text, cwd
+        return json.dumps(
+            {
+                "result": json.dumps(
+                    {
+                        "prosecutor": {
+                            "role": "prosecutor",
+                            "status": "risky",
+                            "confidence": "high",
+                            "risk_path": ["req.params.username"],
+                            "safety_evidence": [],
+                            "missing_evidence": [],
+                            "recommended_next_action": "report",
+                            "suggested_fix": "username = username or ''",
+                        },
+                        "defender": {
+                            "role": "defender",
+                            "status": "uncertain",
+                            "confidence": "low",
+                            "risk_path": [],
+                            "safety_evidence": [],
+                            "missing_evidence": ["no guard"],
+                            "recommended_next_action": "expand_context",
+                            "suggested_fix": None,
+                        },
+                        "judge": {
+                            "status": "risky",
+                            "confidence": "high",
+                            "risk_path": ["req.params.username"],
+                            "safety_evidence": [],
+                            "counterarguments_considered": ["no guard"],
+                            "suggested_fix": "username = username or ''",
+                            "needs_human": False,
+                        },
+                    }
+                )
+            }
+        )
+
+    backend = ClaudeCliBackend(runner=fake_runner)
+    record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    assert record.judge.status == "risky"
+
+
 def test_codeagent_cli_backend_uses_codeagent_executable_by_default(tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 
@@ -787,48 +913,57 @@ def test_codeagent_cli_backend_simulates_headless_json_subprocess(tmp_path: Path
 def test_create_adjudication_backend_builds_selected_backend() -> None:
     heuristic = create_adjudication_backend("heuristic")
     codex = create_adjudication_backend("codex", model="o3")
+    claude = create_adjudication_backend("claude", model="sonnet")
     codeagent = create_adjudication_backend("codeagent")
 
     assert heuristic.__class__.__name__ == "HeuristicAdjudicationBackend"
     assert isinstance(codex, CodexCliBackend)
+    assert isinstance(claude, ClaudeCliBackend)
     assert isinstance(codeagent, CodeAgentCliBackend)
 
 
 def test_backend_factory_registry_exposes_builtin_factories() -> None:
     heuristic_factory = get_adjudication_backend_factory("heuristic")
     codex_factory = get_adjudication_backend_factory("codex")
+    claude_factory = get_adjudication_backend_factory("claude")
     codeagent_factory = get_adjudication_backend_factory("codeagent")
 
     assert callable(heuristic_factory)
     assert callable(codex_factory)
+    assert callable(claude_factory)
     assert callable(codeagent_factory)
     assert heuristic_factory().__class__.__name__ == "HeuristicAdjudicationBackend"
 
 
 def test_cli_protocol_backend_registry_exposes_builtin_backend_types() -> None:
     assert get_cli_protocol_backend("schema_file_cli") is CodexCliBackend
+    assert get_cli_protocol_backend("stdout_structured_cli") is ClaudeCliBackend
     assert get_cli_protocol_backend("stdout_envelope_cli") is CodeAgentCliBackend
 
 
 def test_build_manifest_backed_backend_factory_uses_provider_protocol_mapping() -> None:
     codex_factory = build_manifest_backed_backend_factory("codex")
+    claude_factory = build_manifest_backed_backend_factory("claude")
     codeagent_factory = build_manifest_backed_backend_factory("codeagent")
 
     codex = codex_factory(model="o3")
+    claude = claude_factory(model="sonnet")
     codeagent = codeagent_factory()
 
     assert isinstance(codex, CodexCliBackend)
     assert codex.provider_spec == CODEX_PROVIDER_SPEC
+    assert isinstance(claude, ClaudeCliBackend)
+    assert claude.provider_spec == CLAUDE_PROVIDER_SPEC
     assert isinstance(codeagent, CodeAgentCliBackend)
     assert codeagent.provider_spec == CODEAGENT_PROVIDER_SPEC
 
 
 def test_build_provider_spec_backed_backend_factory_uses_explicit_spec() -> None:
-    factory = build_provider_spec_backed_backend_factory(CODEAGENT_PROVIDER_SPEC)
+    factory = build_provider_spec_backed_backend_factory(CLAUDE_PROVIDER_SPEC)
     backend = factory(model="custom-model")
 
-    assert isinstance(backend, CodeAgentCliBackend)
-    assert backend.provider_spec == CODEAGENT_PROVIDER_SPEC
+    assert isinstance(backend, ClaudeCliBackend)
+    assert backend.provider_spec == CLAUDE_PROVIDER_SPEC
     assert backend.model == "custom-model"
 
 
@@ -904,11 +1039,51 @@ def test_register_manifest_backed_adjudication_backend_loads_custom_provider(
         unregister_adjudication_backend("claude-code")
 
 
+def test_register_manifest_backed_adjudication_backend_loads_structured_stdout_provider(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "claude-live.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "claude-live",
+                "protocol": "stdout_structured_cli",
+                "default_executable": "claude",
+                "default_timeout_seconds": 25.0,
+                "default_max_attempts": 1,
+                "default_fallback_to_uncertain_on_error": True,
+                "capabilities": {
+                    "supports_model_override": True,
+                    "supports_config_overrides": False,
+                    "supports_output_schema": True,
+                    "supports_stdout_json": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    provider_spec = register_manifest_backed_adjudication_backend(manifest_path)
+    try:
+        backend = create_adjudication_backend("claude-live", model="sonnet")
+        assert isinstance(backend, ClaudeCliBackend)
+        assert backend.provider_spec == provider_spec
+        assert backend.executable == "claude"
+        assert backend.timeout_seconds == 25.0
+    finally:
+        unregister_adjudication_backend("claude-live")
+
+
 def test_builtin_provider_specs_describe_supported_cli_protocols() -> None:
     assert get_builtin_agent_provider_spec("codex") == CODEX_PROVIDER_SPEC
     assert CODEX_PROVIDER_SPEC.protocol == "schema_file_cli"
     assert CODEX_PROVIDER_SPEC.capabilities.supports_output_schema is True
     assert CODEX_PROVIDER_SPEC.capabilities.supports_output_file is True
+
+    assert get_builtin_agent_provider_spec("claude") == CLAUDE_PROVIDER_SPEC
+    assert CLAUDE_PROVIDER_SPEC.protocol == "stdout_structured_cli"
+    assert CLAUDE_PROVIDER_SPEC.capabilities.supports_stdout_json is True
+    assert CLAUDE_PROVIDER_SPEC.capabilities.supports_config_overrides is False
 
     assert get_builtin_agent_provider_spec("codeagent") == CODEAGENT_PROVIDER_SPEC
     assert CODEAGENT_PROVIDER_SPEC.protocol == "stdout_envelope_cli"
@@ -963,6 +1138,14 @@ def test_create_adjudication_backend_passes_config_overrides_to_codeagent() -> N
     assert backend.config_overrides == ("features.fast=true",)
 
 
+def test_create_adjudication_backend_rejects_unsupported_config_overrides() -> None:
+    with pytest.raises(ValueError, match="does not support backend config overrides"):
+        create_adjudication_backend(
+            "claude",
+            config_overrides=("features.fast=true",),
+        )
+
+
 def test_create_adjudication_backend_uses_codex_like_defaults_for_codeagent() -> None:
     backend = create_adjudication_backend("codeagent")
 
@@ -973,13 +1156,28 @@ def test_create_adjudication_backend_uses_codex_like_defaults_for_codeagent() ->
     assert backend.fallback_to_uncertain_on_error is True
 
 
+def test_create_adjudication_backend_uses_builtin_defaults_for_claude() -> None:
+    backend = create_adjudication_backend("claude")
+
+    assert isinstance(backend, ClaudeCliBackend)
+    assert backend.provider_spec == CLAUDE_PROVIDER_SPEC
+    assert backend.timeout_seconds == 45.0
+    assert backend.max_attempts == 2
+    assert backend.fallback_to_uncertain_on_error is True
+
+
 def test_create_adjudication_backend_attaches_builtin_provider_specs() -> None:
     codex = create_adjudication_backend("codex")
+    claude = create_adjudication_backend("claude")
     codeagent = create_adjudication_backend("codeagent")
 
     assert isinstance(codex, CodexCliBackend)
     assert codex.provider_spec == CODEX_PROVIDER_SPEC
     assert codex.executable == CODEX_PROVIDER_SPEC.default_executable
+
+    assert isinstance(claude, ClaudeCliBackend)
+    assert claude.provider_spec == CLAUDE_PROVIDER_SPEC
+    assert claude.executable == CLAUDE_PROVIDER_SPEC.default_executable
 
     assert isinstance(codeagent, CodeAgentCliBackend)
     assert codeagent.provider_spec == CODEAGENT_PROVIDER_SPEC

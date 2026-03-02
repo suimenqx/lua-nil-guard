@@ -1326,7 +1326,7 @@ def _usage() -> str:
             "  lua-nil-review-agent apply-autofix [--dry-run] [--case-id CASE_ID] [--file PATH] <autofix-manifest>",
             "  lua-nil-review-agent export-unified-diff [--case-id CASE_ID] [--file PATH] <autofix-manifest> [output]",
             "",
-            "Backend values: heuristic | codex | codeagent",
+            "Backend values: heuristic | codex | claude | codeagent",
         ]
     )
 

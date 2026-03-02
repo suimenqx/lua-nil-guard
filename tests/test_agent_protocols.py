@@ -8,17 +8,21 @@ from lua_nil_review_agent.agent_protocols import (
     CLI_PROTOCOL_BUILDERS,
     SchemaFileCliProtocol,
     StdoutEnvelopeCliProtocol,
+    StdoutStructuredCliProtocol,
     get_cli_protocol_builder,
 )
 
 
 def test_get_cli_protocol_builder_returns_registered_builders() -> None:
     schema_builder = get_cli_protocol_builder("schema_file_cli")
+    structured_builder = get_cli_protocol_builder("stdout_structured_cli")
     stdout_builder = get_cli_protocol_builder("stdout_envelope_cli")
 
     assert isinstance(schema_builder, SchemaFileCliProtocol)
+    assert isinstance(structured_builder, StdoutStructuredCliProtocol)
     assert isinstance(stdout_builder, StdoutEnvelopeCliProtocol)
     assert CLI_PROTOCOL_BUILDERS["schema_file_cli"] is schema_builder
+    assert CLI_PROTOCOL_BUILDERS["stdout_structured_cli"] is structured_builder
     assert CLI_PROTOCOL_BUILDERS["stdout_envelope_cli"] is stdout_builder
 
 
@@ -90,5 +94,36 @@ def test_stdout_envelope_cli_protocol_builds_expected_command() -> None:
         "-m",
         "fast-model",
         "-p",
+        "judge this case",
+    )
+
+
+def test_stdout_structured_cli_protocol_builds_expected_command() -> None:
+    builder = get_cli_protocol_builder("stdout_structured_cli")
+    assert isinstance(builder, StdoutStructuredCliProtocol)
+
+    command = builder.build_command(
+        executable="claude",
+        base_args=("--output-format", "json", "--tools", ""),
+        model="sonnet",
+        model_flag="--model",
+        schema='{"type":"object"}',
+        schema_flag="--json-schema",
+        print_flag="-p",
+        prompt="judge this case",
+    )
+
+    assert command == (
+        "claude",
+        "-p",
+        "--output-format",
+        "json",
+        "--tools",
+        "",
+        "--json-schema",
+        '{"type":"object"}',
+        "--model",
+        "sonnet",
+        "--",
         "judge this case",
     )

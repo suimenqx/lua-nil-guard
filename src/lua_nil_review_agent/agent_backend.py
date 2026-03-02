@@ -11,6 +11,7 @@ from typing import Callable, Protocol
 
 from .agent_driver_manifest import (
     CODEAGENT_PROVIDER_SPEC,
+    CLAUDE_PROVIDER_SPEC,
     CODEX_PROVIDER_SPEC,
     get_builtin_agent_provider_spec,
     load_agent_provider_spec_manifest_file,
@@ -19,6 +20,7 @@ from .agent_driver_models import AgentProviderSpec
 from .agent_protocols import (
     SchemaFileCliProtocol,
     StdoutEnvelopeCliProtocol,
+    StdoutStructuredCliProtocol,
     get_cli_protocol_builder,
 )
 from .adjudication import adjudicate_packet
@@ -480,6 +482,175 @@ class CodexCliBackend(CliAgentBackend):
         )
 
 
+class ClaudeCliBackend(CliAgentBackend):
+    """CLI backend for a Claude binary that emits structured JSON on stdout."""
+
+    def __init__(
+        self,
+        *,
+        runner=None,
+        workdir: str | Path | None = None,
+        skill_path: str | Path | None = None,
+        strict_skill: bool = True,
+        model: str | None = None,
+        executable: str | None = None,
+        timeout_seconds: float | None = None,
+        max_attempts: int | None = None,
+        fallback_to_uncertain_on_error: bool | None = None,
+        config_overrides: tuple[str, ...] = (),
+        cache_path: str | Path | None = None,
+        provider_spec: AgentProviderSpec | None = None,
+    ) -> None:
+        self.provider_spec = provider_spec or CLAUDE_PROVIDER_SPEC
+        self.cli_protocol = get_cli_protocol_builder(self.provider_spec.protocol)
+        resolved_timeout = (
+            self.provider_spec.default_timeout_seconds
+            if timeout_seconds is None
+            else timeout_seconds
+        )
+        resolved_attempts = (
+            self.provider_spec.default_max_attempts if max_attempts is None else max_attempts
+        )
+        resolved_fallback = (
+            self.provider_spec.default_fallback_to_uncertain_on_error
+            if fallback_to_uncertain_on_error is None
+            else fallback_to_uncertain_on_error
+        )
+        super().__init__(
+            runner=runner,
+            workdir=workdir,
+            skill_path=skill_path,
+            strict_skill=strict_skill,
+            timeout_seconds=resolved_timeout,
+            max_attempts=resolved_attempts,
+            fallback_to_uncertain_on_error=resolved_fallback,
+            cache_path=cache_path,
+        )
+        self.model = model
+        self.executable = executable or self.provider_spec.default_executable
+        self.config_overrides = config_overrides
+
+    def _cache_identity(self) -> dict[str, object]:
+        return {
+            "backend": self.provider_spec.name,
+            "model": self.model,
+            "executable": self.executable,
+            "config_overrides": self.config_overrides,
+            "protocol": self.provider_spec.protocol,
+        }
+
+    def build_prompt(self, *, packet: EvidencePacket, sink_rule: SinkRule) -> str:
+        return "\n".join(
+            [
+                build_adjudication_prompt(
+                    packet=packet,
+                    sink_rule=sink_rule,
+                    skill_path=self.skill_path,
+                    strict_skill=self.strict_skill,
+                ),
+                "",
+                "Return a single JSON object with exactly three top-level keys: prosecutor, defender and judge.",
+                "The prosecutor and defender objects must each contain:",
+                "- role",
+                "- status",
+                "- confidence",
+                "- risk_path",
+                "- safety_evidence",
+                "- missing_evidence",
+                "- recommended_next_action",
+                "- suggested_fix",
+                "The judge object must contain:",
+                "- status",
+                "- confidence",
+                "- risk_path",
+                "- safety_evidence",
+                "- counterarguments_considered",
+                "- suggested_fix",
+                "- needs_human",
+                "Do not execute shell commands, open files, or inspect the repository.",
+                "Use only the prompt payload as admissible evidence.",
+                "Do not include markdown fences or explanatory prose.",
+            ]
+        )
+
+    def _adjudicate_once(
+        self,
+        packet: EvidencePacket,
+        sink_rule: SinkRule,
+        prompt: str,
+    ) -> AdjudicationRecord:
+        command = self.build_prompt_command(prompt=prompt)
+        raw = self._run_command(command, stdin_text="")
+        if not isinstance(raw, str) or not raw.strip():
+            raise BackendError("Claude backend did not return structured JSON on stdout")
+        record = self.parse_wrapped_response(raw, case_id=packet.case_id)
+        self._store_cached_record(prompt=prompt, record=record)
+        return record
+
+    def build_command(
+        self,
+        *,
+        schema_path: Path,
+        output_path: Path,
+        cwd: Path | None,
+    ) -> tuple[str, ...]:
+        raise NotImplementedError("ClaudeCliBackend builds commands from the prompt directly")
+
+    def build_prompt_command(
+        self,
+        *,
+        prompt: str,
+    ) -> tuple[str, ...]:
+        if self.config_overrides:
+            raise BackendError("Claude backend does not support config overrides")
+        protocol = self.cli_protocol
+        if not isinstance(protocol, StdoutStructuredCliProtocol):
+            raise BackendError(
+                f"Provider {self.provider_spec.name} requires stdout_structured_cli, got {self.provider_spec.protocol}"
+            )
+        return protocol.build_command(
+            executable=self.executable,
+            base_args=(
+                "--output-format",
+                "json",
+                "--permission-mode",
+                "dontAsk",
+                "--tools",
+                "",
+                "--no-session-persistence",
+            ),
+            model=self.model,
+            model_flag="--model",
+            schema=None,
+            schema_flag=None,
+            print_flag="-p",
+            prompt=prompt,
+        )
+
+    def parse_wrapped_response(self, raw: str, *, case_id: str) -> AdjudicationRecord:
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise BackendError("Invalid Claude structured JSON envelope") from exc
+        if not isinstance(payload, dict):
+            raise BackendError("Claude structured JSON envelope must be an object")
+
+        if {"prosecutor", "defender", "judge"}.issubset(payload.keys()):
+            return self.parse_response(raw, case_id=case_id)
+
+        structured = payload.get("structured_output")
+        if isinstance(structured, dict):
+            return self.parse_response(json.dumps(structured), case_id=case_id)
+        if isinstance(structured, str):
+            return self.parse_response(_strip_markdown_fences(structured), case_id=case_id)
+        result = payload.get("result")
+        if isinstance(result, str):
+            return self.parse_response(_strip_markdown_fences(result), case_id=case_id)
+        raise BackendError(
+            "Claude JSON envelope must contain structured_output or result text"
+        )
+
+
 class CodeAgentCliBackend(CliAgentBackend):
     """CLI backend for a codeagent binary that uses headless JSON output."""
 
@@ -717,6 +888,10 @@ def _instantiate_manifest_backed_backend(
     config_overrides: tuple[str, ...] = (),
     runner=None,
 ) -> AdjudicationBackend:
+    if model is not None and not provider_spec.capabilities.supports_model_override:
+        raise ValueError(f"Provider {provider_spec.name} does not support model overrides")
+    if config_overrides and not provider_spec.capabilities.supports_config_overrides:
+        raise ValueError(f"Provider {provider_spec.name} does not support backend config overrides")
     options: dict[str, object] = {}
     if timeout_seconds is not None:
         options["timeout_seconds"] = timeout_seconds
@@ -995,6 +1170,8 @@ def unregister_cli_protocol_backend(protocol_name: str) -> None:
 
 register_adjudication_backend("heuristic", _build_heuristic_backend)
 register_cli_protocol_backend(CODEX_PROVIDER_SPEC.protocol, CodexCliBackend)
+register_cli_protocol_backend(CLAUDE_PROVIDER_SPEC.protocol, ClaudeCliBackend)
 register_cli_protocol_backend(CODEAGENT_PROVIDER_SPEC.protocol, CodeAgentCliBackend)
 register_adjudication_backend("codex", build_manifest_backed_backend_factory("codex"))
+register_adjudication_backend("claude", build_manifest_backed_backend_factory("claude"))
 register_adjudication_backend("codeagent", build_manifest_backed_backend_factory("codeagent"))
