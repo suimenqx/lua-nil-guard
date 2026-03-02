@@ -10,6 +10,7 @@ from .agent_backend import (
     create_adjudication_backend,
     register_manifest_backed_adjudication_backend,
 )
+from .agent_driver_manifest import load_agent_provider_spec_manifest_file
 from .baseline import BaselineStore, build_baseline, filter_new_findings
 from .parser_backend import get_parser_backend_info
 from .reporting import render_json_report, render_markdown_report
@@ -60,6 +61,44 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 f"Removed entries: {removed_entries}",
                 f"Output: {cache_path}",
             ]
+        )
+
+    if command == "validate-backend-manifest":
+        if len(args) != 2:
+            return 2, "validate-backend-manifest requires exactly one manifest path"
+        manifest_path = Path(args[1])
+        try:
+            provider_spec = load_agent_provider_spec_manifest_file(manifest_path)
+        except (OSError, ValueError) as exc:
+            return 2, str(exc)
+        return 0, _render_backend_manifest_summary(
+            provider_spec,
+            manifest_path=manifest_path,
+            registered=False,
+        )
+
+    if command == "register-backend-manifest":
+        replace = False
+        positional: list[str] = []
+        for token in args[1:]:
+            if token == "--replace":
+                replace = True
+            else:
+                positional.append(token)
+        if len(positional) != 1:
+            return 2, "register-backend-manifest requires one manifest path and optional --replace"
+        manifest_path = Path(positional[0])
+        try:
+            provider_spec = register_manifest_backed_adjudication_backend(
+                manifest_path,
+                replace=replace,
+            )
+        except (OSError, ValueError) as exc:
+            return 2, str(exc)
+        return 0, _render_backend_manifest_summary(
+            provider_spec,
+            manifest_path=manifest_path,
+            registered=True,
         )
 
     if command == "compare-benchmark-json":
@@ -745,6 +784,33 @@ def _create_review_backend(
     )
 
 
+def _render_backend_manifest_summary(
+    provider_spec,  # noqa: ANN001
+    *,
+    manifest_path: Path,
+    registered: bool,
+) -> str:
+    lines = [
+        "Backend manifest registered." if registered else "Backend manifest valid.",
+        f"Manifest: {manifest_path}",
+        f"Name: {provider_spec.name}",
+        f"Protocol: {provider_spec.protocol}",
+        f"Default executable: {provider_spec.default_executable}",
+        f"Default timeout: {provider_spec.default_timeout_seconds}",
+        f"Default attempts: {provider_spec.default_max_attempts}",
+        "Capabilities:",
+        f"  model override: {provider_spec.capabilities.supports_model_override}",
+        f"  config overrides: {provider_spec.capabilities.supports_config_overrides}",
+        f"  backend cache: {provider_spec.capabilities.supports_backend_cache}",
+        f"  output schema: {provider_spec.capabilities.supports_output_schema}",
+        f"  output file: {provider_spec.capabilities.supports_output_file}",
+        f"  stdout json: {provider_spec.capabilities.supports_stdout_json}",
+    ]
+    if registered:
+        lines.append("Registration scope: current process invocation")
+    return "\n".join(lines)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Console-script entry point."""
 
@@ -1126,6 +1192,8 @@ def _usage() -> str:
             "Usage:",
             "  lua-nil-review-agent scan <repository>",
             "  lua-nil-review-agent clear-backend-cache <cache-file>",
+            "  lua-nil-review-agent validate-backend-manifest <manifest-path>",
+            "  lua-nil-review-agent register-backend-manifest [--replace] <manifest-path>",
             "  lua-nil-review-agent compare-benchmark-json <before> <after> [output]",
             "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",

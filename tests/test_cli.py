@@ -35,6 +35,8 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "apply-autofix" in output
     assert "export-unified-diff" in output
     assert "clear-backend-cache" in output
+    assert "validate-backend-manifest" in output
+    assert "register-backend-manifest" in output
     assert "benchmark-cache-compare" in output
     assert "benchmark-json" in output
     assert "benchmark-cache-compare-json" in output
@@ -110,6 +112,79 @@ def test_cli_clear_backend_cache_removes_cache_file(tmp_path: Path) -> None:
     assert "Backend cache cleared." in output
     assert "Removed entries: 2" in output
     assert not cache_path.exists()
+
+
+def test_cli_validate_backend_manifest_reports_summary(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "provider.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "claude-code",
+                "protocol": "stdout_envelope_cli",
+                "default_executable": "claude-code",
+                "default_timeout_seconds": 30.0,
+                "default_max_attempts": 2,
+                "default_fallback_to_uncertain_on_error": True,
+                "capabilities": {
+                    "supports_model_override": True,
+                    "supports_config_overrides": True,
+                    "supports_stdout_json": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["validate-backend-manifest", str(manifest_path)])
+
+    assert exit_code == 0
+    assert "Backend manifest valid." in output
+    assert f"Manifest: {manifest_path}" in output
+    assert "Name: claude-code" in output
+    assert "Protocol: stdout_envelope_cli" in output
+
+
+def test_cli_register_backend_manifest_calls_registry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "provider.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    class StubCapabilities:
+        supports_model_override = True
+        supports_config_overrides = True
+        supports_backend_cache = True
+        supports_output_schema = False
+        supports_output_file = False
+        supports_stdout_json = True
+
+    class StubSpec:
+        name = "claude-code"
+        protocol = "stdout_envelope_cli"
+        default_executable = "claude-code"
+        default_timeout_seconds = 30.0
+        default_max_attempts = 2
+        capabilities = StubCapabilities()
+
+    def fake_register(path, *, replace=False):
+        captured["path"] = Path(path)
+        captured["replace"] = replace
+        return StubSpec()
+
+    monkeypatch.setattr(
+        "lua_nil_review_agent.cli.register_manifest_backed_adjudication_backend",
+        fake_register,
+    )
+
+    exit_code, output = run(["register-backend-manifest", "--replace", str(manifest_path)])
+
+    assert exit_code == 0
+    assert captured["path"] == manifest_path
+    assert captured["replace"] is True
+    assert "Backend manifest registered." in output
+    assert "Registration scope: current process invocation" in output
 
 
 def test_cli_benchmark_reports_labeled_accuracy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
