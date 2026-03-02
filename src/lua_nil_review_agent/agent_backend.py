@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 from typing import Protocol
 
 from .adjudication import adjudicate_packet
@@ -94,6 +95,8 @@ class CliAgentBackend:
         self.cache_path = Path(cache_path).resolve() if cache_path is not None else None
         self.cache_hits = 0
         self.cache_misses = 0
+        self.backend_call_count = 0
+        self.backend_total_seconds = 0.0
 
     def adjudicate(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
         prompt = self.build_prompt(packet=packet, sink_rule=sink_rule)
@@ -164,14 +167,19 @@ class CliAgentBackend:
         *,
         stdin_text: str,
     ) -> str:
-        if self._uses_default_runner:
-            return _default_runner(
-                command,
-                stdin_text=stdin_text,
-                cwd=self.workdir,
-                timeout_seconds=self.timeout_seconds,
-            )
-        return self.runner(command, stdin_text=stdin_text, cwd=self.workdir)
+        self.backend_call_count += 1
+        started = time.perf_counter()
+        try:
+            if self._uses_default_runner:
+                return _default_runner(
+                    command,
+                    stdin_text=stdin_text,
+                    cwd=self.workdir,
+                    timeout_seconds=self.timeout_seconds,
+                )
+            return self.runner(command, stdin_text=stdin_text, cwd=self.workdir)
+        finally:
+            self.backend_total_seconds += max(0.0, time.perf_counter() - started)
 
     def build_prompt(self, *, packet: EvidencePacket, sink_rule: SinkRule) -> str:
         """Render the adjudication prompt consumed by the CLI provider."""

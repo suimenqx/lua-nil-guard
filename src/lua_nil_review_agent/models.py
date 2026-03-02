@@ -205,6 +205,9 @@ class BenchmarkSummary:
     backend_timeouts: int
     backend_cache_hits: int
     backend_cache_misses: int
+    backend_calls: int
+    backend_total_seconds: float
+    backend_average_seconds: float
     cases: tuple[BenchmarkCaseResult, ...]
 
 

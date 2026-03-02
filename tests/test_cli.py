@@ -167,6 +167,9 @@ def test_cli_benchmark_reports_labeled_accuracy(tmp_path: Path, monkeypatch: pyt
     assert "Backend timeouts: 0" in output
     assert "Backend cache hits: 0" in output
     assert "Backend cache misses: 0" in output
+    assert "Backend calls: 0" in output
+    assert "Backend total latency: 0.000s" in output
+    assert "Backend average latency: 0.000s" in output
 
 
 def test_cli_report_outputs_markdown_findings(tmp_path: Path) -> None:

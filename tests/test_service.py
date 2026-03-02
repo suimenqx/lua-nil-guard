@@ -192,6 +192,9 @@ def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -
     assert summary.backend_timeouts == 0
     assert summary.backend_cache_hits == 0
     assert summary.backend_cache_misses == 0
+    assert summary.backend_calls == 0
+    assert summary.backend_total_seconds == 0.0
+    assert summary.backend_average_seconds == 0.0
     assert all(case.matches_expectation for case in summary.cases)
 
 
@@ -251,6 +254,9 @@ def test_benchmark_repository_review_counts_backend_fallbacks(tmp_path: Path) ->
     assert summary.backend_timeouts == 1
     assert summary.backend_cache_hits == 0
     assert summary.backend_cache_misses == 1
+    assert summary.backend_calls == 1
+    assert summary.backend_total_seconds >= 0.0
+    assert summary.backend_average_seconds >= 0.0
     assert summary.cases[0].backend_failure_reason == "CLI backend command timed out after 5s"
 
 
@@ -263,10 +269,15 @@ def test_benchmark_repository_review_reports_backend_cache_metrics(tmp_path: Pat
     backend = StrictEvidenceBackend()
     backend.cache_hits = 7
     backend.cache_misses = 11
+    backend.backend_call_count = 4
+    backend.backend_total_seconds = 1.25
     summary = benchmark_repository_review(snapshot, backend=backend)
 
     assert summary.backend_cache_hits == 7
     assert summary.backend_cache_misses == 11
+    assert summary.backend_calls == 4
+    assert summary.backend_total_seconds == 1.25
+    assert summary.backend_average_seconds == 0.3125
 
 
 def test_clear_backend_cache_removes_cache_file_and_counts_entries(tmp_path: Path) -> None:

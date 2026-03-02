@@ -188,6 +188,11 @@ def benchmark_repository_review(
     actual_uncertain = sum(1 for case in cases if case.actual_status == "uncertain")
     backend_cache_hits = _backend_metric(adjudication_backend, "cache_hits")
     backend_cache_misses = _backend_metric(adjudication_backend, "cache_misses")
+    backend_calls = _backend_metric(adjudication_backend, "backend_call_count")
+    backend_total_seconds = _backend_float_metric(adjudication_backend, "backend_total_seconds")
+    backend_average_seconds = 0.0
+    if backend_calls:
+        backend_average_seconds = backend_total_seconds / backend_calls
 
     return BenchmarkSummary(
         total_cases=len(cases),
@@ -218,6 +223,9 @@ def benchmark_repository_review(
         ),
         backend_cache_hits=backend_cache_hits,
         backend_cache_misses=backend_cache_misses,
+        backend_calls=backend_calls,
+        backend_total_seconds=backend_total_seconds,
+        backend_average_seconds=backend_average_seconds,
         cases=tuple(cases),
     )
 
@@ -621,6 +629,13 @@ def _backend_metric(backend: object, name: str) -> int:
     if isinstance(value, int) and value >= 0:
         return value
     return 0
+
+
+def _backend_float_metric(backend: object, name: str) -> float:
+    value = getattr(backend, name, 0.0)
+    if isinstance(value, (int, float)) and value >= 0:
+        return float(value)
+    return 0.0
 
 
 def _serialize_autofix_patch(patch: AutofixPatch) -> dict[str, object]:

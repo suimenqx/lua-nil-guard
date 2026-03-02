@@ -570,6 +570,9 @@ def _render_benchmark_summary(root: Path, summary) -> str:  # noqa: ANN001
         f"Backend timeouts: {summary.backend_timeouts}",
         f"Backend cache hits: {summary.backend_cache_hits}",
         f"Backend cache misses: {summary.backend_cache_misses}",
+        f"Backend calls: {summary.backend_calls}",
+        f"Backend total latency: {summary.backend_total_seconds:.3f}s",
+        f"Backend average latency: {summary.backend_average_seconds:.3f}s",
     ]
 
     mismatches = [case for case in summary.cases if not case.matches_expectation]
