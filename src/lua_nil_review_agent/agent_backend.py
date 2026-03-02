@@ -444,6 +444,8 @@ def create_adjudication_backend(
     skill_path: str | Path | None = None,
     strict_skill: bool = True,
     executable: str | None = None,
+    timeout_seconds: float | None = None,
+    max_attempts: int | None = None,
     runner=None,
 ) -> AdjudicationBackend:
     """Create a named adjudication backend."""
@@ -452,6 +454,11 @@ def create_adjudication_backend(
     if normalized == "heuristic":
         return HeuristicAdjudicationBackend()
     if normalized == "codex":
+        options: dict[str, object] = {}
+        if timeout_seconds is not None:
+            options["timeout_seconds"] = timeout_seconds
+        if max_attempts is not None:
+            options["max_attempts"] = max_attempts
         return CodexCliBackend(
             runner=runner,
             workdir=workdir,
@@ -459,8 +466,14 @@ def create_adjudication_backend(
             skill_path=skill_path,
             strict_skill=strict_skill,
             executable=executable or "codex",
+            **options,
         )
     if normalized == "codeagent":
+        options = {}
+        if timeout_seconds is not None:
+            options["timeout_seconds"] = timeout_seconds
+        if max_attempts is not None:
+            options["max_attempts"] = max_attempts
         return CodeAgentCliBackend(
             runner=runner,
             workdir=workdir,
@@ -468,6 +481,7 @@ def create_adjudication_backend(
             skill_path=skill_path,
             strict_skill=strict_skill,
             executable=executable or "codeagent",
+            **options,
         )
     raise ValueError(f"Unknown adjudication backend: {name}")
 

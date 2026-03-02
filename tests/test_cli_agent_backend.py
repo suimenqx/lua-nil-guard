@@ -582,6 +582,18 @@ def test_create_adjudication_backend_passes_executable_override() -> None:
     assert backend.executable == "/tmp/codeagent-bin"
 
 
+def test_create_adjudication_backend_passes_timeout_and_attempts() -> None:
+    backend = create_adjudication_backend(
+        "codex",
+        timeout_seconds=12.5,
+        max_attempts=3,
+    )
+
+    assert isinstance(backend, CodexCliBackend)
+    assert backend.timeout_seconds == 12.5
+    assert backend.max_attempts == 3
+
+
 def _sample_packet() -> EvidencePacket:
     return EvidencePacket(
         case_id="case_cli_backend",

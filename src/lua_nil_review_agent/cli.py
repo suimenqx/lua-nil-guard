@@ -42,7 +42,16 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "report":
         try:
-            backend_name, model, skill_path, strict_skill, executable, positional = _parse_review_options(args[1:])
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_timeout,
+                backend_attempts,
+                positional,
+            ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) != 1:
@@ -59,6 +68,8 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
                 ),
             )
         except (SkillRuntimeError, BackendError) as exc:
@@ -67,7 +78,16 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "report-json":
         try:
-            backend_name, model, skill_path, strict_skill, executable, positional = _parse_review_options(args[1:])
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_timeout,
+                backend_attempts,
+                positional,
+            ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) != 1:
@@ -84,6 +104,8 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
                 ),
             )
         except (SkillRuntimeError, BackendError) as exc:
@@ -92,7 +114,16 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "benchmark":
         try:
-            backend_name, model, skill_path, strict_skill, executable, positional = _parse_review_options(args[1:])
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_timeout,
+                backend_attempts,
+                positional,
+            ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) != 1:
@@ -109,6 +140,8 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
                 ),
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
@@ -117,7 +150,16 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "baseline-create":
         try:
-            backend_name, model, skill_path, strict_skill, executable, positional = _parse_review_options(args[1:])
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_timeout,
+                backend_attempts,
+                positional,
+            ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) != 2:
@@ -135,6 +177,8 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
                 ),
             )
         except (SkillRuntimeError, BackendError) as exc:
@@ -151,7 +195,16 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "report-new":
         try:
-            backend_name, model, skill_path, strict_skill, executable, positional = _parse_review_options(args[1:])
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_timeout,
+                backend_attempts,
+                positional,
+            ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) != 2:
@@ -169,6 +222,8 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
                 ),
             )
         except (SkillRuntimeError, BackendError) as exc:
@@ -214,7 +269,16 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "ci-check":
         try:
-            backend_name, model, skill_path, strict_skill, executable, positional = _parse_review_options(args[1:])
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_timeout,
+                backend_attempts,
+                positional,
+            ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) != 2:
@@ -232,6 +296,8 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
                 ),
             )
         except (SkillRuntimeError, BackendError) as exc:
@@ -280,7 +346,16 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "export-autofix":
         try:
-            backend_name, model, skill_path, strict_skill, executable, positional = _parse_review_options(args[1:])
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_timeout,
+                backend_attempts,
+                positional,
+            ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) not in {1, 2}:
@@ -298,6 +373,8 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     skill_path=skill_path,
                     strict_skill=strict_skill,
                     executable=executable,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
                 ),
                 output_path=output_path,
             )
@@ -463,16 +540,16 @@ def _usage() -> str:
         [
             "Usage:",
             "  lua-nil-review-agent scan <repository>",
-            "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository>",
-            "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository>",
-            "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository>",
-            "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> <output>",
-            "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> <baseline>",
+            "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] <repository>",
+            "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] <repository>",
+            "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] <repository>",
+            "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] <repository> <output>",
+            "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] <repository> <baseline>",
             "  lua-nil-review-agent refresh-summaries <repository> [output]",
             "  lua-nil-review-agent refresh-knowledge <repository> [output]",
-            "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> <baseline>",
+            "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] <repository> <baseline>",
             "  lua-nil-review-agent export-prompts [--skill SKILL] [--allow-skill-fallback] <repository> [output]",
-            "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] <repository> [output]",
+            "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] <repository> [output]",
             "  lua-nil-review-agent apply-autofix [--dry-run] [--case-id CASE_ID] [--file PATH] <autofix-manifest>",
             "  lua-nil-review-agent export-unified-diff [--case-id CASE_ID] [--file PATH] <autofix-manifest> [output]",
             "",
@@ -483,12 +560,14 @@ def _usage() -> str:
 
 def _parse_review_options(
     args: list[str],
-) -> tuple[str, str | None, Path | None, bool, str | None, list[str]]:
+) -> tuple[str, str | None, Path | None, bool, str | None, float | None, int | None, list[str]]:
     backend_name = "heuristic"
     model: str | None = None
     skill_path: Path | None = None
     strict_skill = True
     executable: str | None = None
+    backend_timeout: float | None = None
+    backend_attempts: int | None = None
     positional: list[str] = []
     index = 0
 
@@ -522,10 +601,41 @@ def _parse_review_options(
             executable = args[index + 1]
             index += 2
             continue
+        if token == "--backend-timeout":
+            if index + 1 >= len(args):
+                raise ValueError("--backend-timeout requires a value")
+            try:
+                backend_timeout = float(args[index + 1])
+            except ValueError as exc:
+                raise ValueError("--backend-timeout must be a positive number") from exc
+            if backend_timeout <= 0:
+                raise ValueError("--backend-timeout must be a positive number")
+            index += 2
+            continue
+        if token == "--backend-attempts":
+            if index + 1 >= len(args):
+                raise ValueError("--backend-attempts requires a value")
+            try:
+                backend_attempts = int(args[index + 1])
+            except ValueError as exc:
+                raise ValueError("--backend-attempts must be an integer >= 1") from exc
+            if backend_attempts < 1:
+                raise ValueError("--backend-attempts must be an integer >= 1")
+            index += 2
+            continue
         positional.append(token)
         index += 1
 
-    return backend_name, model, skill_path, strict_skill, executable, positional
+    return (
+        backend_name,
+        model,
+        skill_path,
+        strict_skill,
+        executable,
+        backend_timeout,
+        backend_attempts,
+        positional,
+    )
 
 
 def _parse_export_options(args: list[str]) -> tuple[Path | None, bool, list[str]]:

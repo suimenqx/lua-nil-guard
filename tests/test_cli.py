@@ -19,6 +19,8 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "Backend values: heuristic | codex | codeagent" in output
     assert "--allow-skill-fallback" in output
     assert "--backend-executable PATH" in output
+    assert "--backend-timeout SECONDS" in output
+    assert "--backend-attempts N" in output
     assert "benchmark" in output
     assert "export-autofix" in output
     assert "apply-autofix" in output
@@ -781,6 +783,8 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
         skill_path=None,
         strict_skill=True,
         executable=None,
+        timeout_seconds=None,
+        max_attempts=None,
     ):
         captured["name"] = name
         captured["workdir"] = workdir
@@ -788,6 +792,8 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
         captured["skill_path"] = skill_path
         captured["strict_skill"] = strict_skill
         captured["executable"] = executable
+        captured["timeout_seconds"] = timeout_seconds
+        captured["max_attempts"] = max_attempts
         return None
 
     monkeypatch.setattr("lua_nil_review_agent.cli.create_adjudication_backend", fake_factory)
@@ -802,6 +808,10 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
             "--allow-skill-fallback",
             "--backend-executable",
             "/tmp/codeagent-bin",
+            "--backend-timeout",
+            "12.5",
+            "--backend-attempts",
+            "3",
             str(tmp_path),
         ]
     )
@@ -813,6 +823,8 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
     assert captured["skill_path"] == skill_path
     assert captured["strict_skill"] is False
     assert captured["executable"] == "/tmp/codeagent-bin"
+    assert captured["timeout_seconds"] == 12.5
+    assert captured["max_attempts"] == 3
     assert "# Lua Nil Risk Report" in output
 
 
@@ -868,3 +880,10 @@ def test_cli_report_surfaces_backend_errors_without_traceback(
 
     assert exit_code == 2
     assert output == "codex backend failed"
+
+
+def test_cli_report_rejects_invalid_backend_timeout() -> None:
+    exit_code, output = run(["report", "--backend-timeout", "0", "demo"])
+
+    assert exit_code == 2
+    assert output == "--backend-timeout must be a positive number"
