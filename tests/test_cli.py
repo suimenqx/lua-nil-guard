@@ -27,6 +27,7 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "export-autofix" in output
     assert "apply-autofix" in output
     assert "export-unified-diff" in output
+    assert "clear-backend-cache" in output
 
 
 def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
@@ -78,6 +79,26 @@ def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
     assert "Parser backend: tree_sitter_local" in output
     assert "Total candidates: 1" in output
     assert "safe_static: 1" in output
+
+
+def test_cli_clear_backend_cache_removes_cache_file(tmp_path: Path) -> None:
+    cache_path = tmp_path / "codex-cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "entry-1": {"judge": {"status": "safe"}},
+                "entry-2": {"judge": {"status": "uncertain"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["clear-backend-cache", str(cache_path)])
+
+    assert exit_code == 0
+    assert "Backend cache cleared." in output
+    assert "Removed entries: 2" in output
+    assert not cache_path.exists()
 
 
 def test_cli_benchmark_reports_labeled_accuracy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

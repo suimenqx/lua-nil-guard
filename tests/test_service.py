@@ -10,6 +10,7 @@ from lua_nil_review_agent.service import (
     apply_autofix_manifest,
     benchmark_repository_review,
     bootstrap_repository,
+    clear_backend_cache,
     export_autofix_patches,
     export_autofix_unified_diff,
 )
@@ -266,6 +267,24 @@ def test_benchmark_repository_review_reports_backend_cache_metrics(tmp_path: Pat
 
     assert summary.backend_cache_hits == 7
     assert summary.backend_cache_misses == 11
+
+
+def test_clear_backend_cache_removes_cache_file_and_counts_entries(tmp_path: Path) -> None:
+    cache_path = tmp_path / "codex-cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "entry-1": {"judge": {"status": "safe"}},
+                "entry-2": {"judge": {"status": "uncertain"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    removed = clear_backend_cache(cache_path)
+
+    assert removed == 2
+    assert not cache_path.exists()
 
 
 def test_export_autofix_patches_writes_reportable_patch_file(tmp_path: Path) -> None:

@@ -390,6 +390,25 @@ def export_autofix_patches(
     return patches
 
 
+def clear_backend_cache(cache_path: str | Path) -> int:
+    """Remove a persisted backend cache file and return the removed entry count."""
+
+    path = Path(cache_path)
+    if not path.exists():
+        return 0
+
+    removed_entries = 0
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = None
+    if isinstance(payload, dict):
+        removed_entries = len(payload)
+
+    path.unlink()
+    return removed_entries
+
+
 def apply_autofix_manifest(
     manifest_path: str | Path,
     *,

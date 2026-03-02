@@ -14,6 +14,7 @@ from .service import (
     apply_autofix_manifest,
     benchmark_repository_review,
     bootstrap_repository,
+    clear_backend_cache,
     export_adjudication_tasks,
     export_autofix_patches,
     export_autofix_unified_diff,
@@ -39,6 +40,22 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         snapshot = bootstrap_repository(root)
         assessments = review_repository(snapshot)
         return 0, _render_scan_summary(snapshot.root, assessments)
+
+    if command == "clear-backend-cache":
+        if len(args) != 2:
+            return 2, "clear-backend-cache requires exactly one cache file path"
+        cache_path = Path(args[1])
+        try:
+            removed_entries = clear_backend_cache(cache_path)
+        except OSError as exc:
+            return 2, str(exc)
+        return 0, "\n".join(
+            [
+                "Backend cache cleared.",
+                f"Removed entries: {removed_entries}",
+                f"Output: {cache_path}",
+            ]
+        )
 
     if command == "report":
         try:
@@ -572,6 +589,7 @@ def _usage() -> str:
         [
             "Usage:",
             "  lua-nil-review-agent scan <repository>",
+            "  lua-nil-review-agent clear-backend-cache <cache-file>",
             "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
