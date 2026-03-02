@@ -27,7 +27,7 @@ def analyze_candidate(source: str, candidate: CandidateCase) -> StaticAnalysisRe
         observed_guards.append(f"if {candidate.symbol} then")
     if _has_early_exit_guard(prior_lines, candidate.symbol):
         observed_guards.append(f"if not {candidate.symbol} then return")
-    if _has_assert(prior_lines, candidate.symbol):
+    if _has_active_assert(prior_lines, candidate.symbol):
         observed_guards.append(f"assert({candidate.symbol})")
     if _has_defaulting_origin(origin):
         observed_guards.append(f"{candidate.symbol} = {candidate.symbol} or ...")
@@ -173,9 +173,26 @@ def _has_early_exit_guard(lines: list[str], symbol: str) -> bool:
     return any(_branch_path_is_prefix(path, current_path) for path in valid_guard_paths)
 
 
-def _has_assert(lines: list[str], symbol: str) -> bool:
+def _has_active_assert(lines: list[str], symbol: str) -> bool:
     pattern = re.compile(rf"\bassert\s*\(\s*{re.escape(symbol)}(?:\s*[,)\]])")
-    return any(pattern.search(line) for line in lines)
+    line_paths, final_path = _scan_branch_paths(lines)
+    active_assert = False
+
+    for line, path in zip(lines, line_paths):
+        if not _branch_path_is_prefix(path, final_path):
+            continue
+
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        if _assigns_symbol(stripped, symbol):
+            active_assert = False
+            continue
+        if pattern.search(line):
+            active_assert = True
+
+    return active_assert
 
 
 def _has_defaulting_origin(origin: str | None) -> bool:
