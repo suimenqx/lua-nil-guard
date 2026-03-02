@@ -16,12 +16,16 @@ from .agent_protocols import (
 )
 from .agent_backend import (
     AdjudicationBackend,
+    AdjudicationBackendFactory,
     BackendError,
     CliAgentBackend,
     CodeAgentCliBackend,
     CodexCliBackend,
     HeuristicAdjudicationBackend,
     create_adjudication_backend,
+    get_adjudication_backend_factory,
+    register_adjudication_backend,
+    unregister_adjudication_backend,
 )
 from .adjudication import adjudicate_packet
 from .baseline import BaselineStore, build_baseline, filter_new_findings
@@ -87,6 +91,7 @@ from .verification import verify_verdict
 __all__ = [
     "AdjudicationRecord",
     "AdjudicationBackend",
+    "AdjudicationBackendFactory",
     "ADJUDICATOR_SKILL_CONTRACT",
     "AgentCapabilities",
     "AgentProviderSpec",
@@ -146,6 +151,7 @@ __all__ = [
     "fallback_adjudicator_skill_header",
     "facts_for_subject",
     "filter_new_findings",
+    "get_adjudication_backend_factory",
     "get_builtin_agent_provider_spec",
     "get_cli_protocol_builder",
     "load_confidence_policy",
@@ -162,9 +168,11 @@ __all__ = [
     "review_repository",
     "render_json_report",
     "render_markdown_report",
+    "register_adjudication_backend",
     "run",
     "run_repository_review",
     "review_source",
     "should_report",
+    "unregister_adjudication_backend",
     "verify_verdict",
 ]

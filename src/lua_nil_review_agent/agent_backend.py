@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
-from typing import Protocol
+from typing import Callable, Protocol
 
 from .agent_driver_models import (
     CODEAGENT_PROVIDER_SPEC,
@@ -34,6 +34,9 @@ class AdjudicationBackend(Protocol):
 
 class BackendError(RuntimeError):
     """Raised when an external adjudication backend returns invalid output."""
+
+
+AdjudicationBackendFactory = Callable[..., AdjudicationBackend]
 
 
 class HeuristicAdjudicationBackend:
@@ -596,6 +599,122 @@ class CodeAgentCliBackend(CliAgentBackend):
         return self.parse_response(_strip_markdown_fences(response), case_id=case_id)
 
 
+_ADJUDICATION_BACKEND_FACTORIES: dict[str, AdjudicationBackendFactory] = {}
+
+
+def register_adjudication_backend(
+    name: str,
+    factory: AdjudicationBackendFactory,
+    *,
+    replace: bool = False,
+) -> None:
+    """Register a backend factory under a normalized name."""
+
+    normalized = name.strip().lower()
+    if not normalized:
+        raise ValueError("Backend name must not be empty")
+    if normalized in _ADJUDICATION_BACKEND_FACTORIES and not replace:
+        raise ValueError(f"Adjudication backend already registered: {name}")
+    _ADJUDICATION_BACKEND_FACTORIES[normalized] = factory
+
+
+def unregister_adjudication_backend(name: str) -> None:
+    """Remove a previously registered backend factory."""
+
+    normalized = name.strip().lower()
+    if normalized not in _ADJUDICATION_BACKEND_FACTORIES:
+        raise ValueError(f"Unknown adjudication backend: {name}")
+    del _ADJUDICATION_BACKEND_FACTORIES[normalized]
+
+
+def get_adjudication_backend_factory(name: str) -> AdjudicationBackendFactory:
+    """Return the registered factory for a backend name."""
+
+    normalized = name.strip().lower()
+    if normalized not in _ADJUDICATION_BACKEND_FACTORIES:
+        raise ValueError(f"Unknown adjudication backend: {name}")
+    return _ADJUDICATION_BACKEND_FACTORIES[normalized]
+
+
+def _build_heuristic_backend(**_kwargs) -> AdjudicationBackend:
+    return HeuristicAdjudicationBackend()
+
+
+def _build_codex_backend(
+    *,
+    workdir: str | Path | None = None,
+    model: str | None = None,
+    skill_path: str | Path | None = None,
+    strict_skill: bool = True,
+    executable: str | None = None,
+    timeout_seconds: float | None = None,
+    max_attempts: int | None = None,
+    cache_path: str | Path | None = None,
+    config_overrides: tuple[str, ...] = (),
+    runner=None,
+) -> AdjudicationBackend:
+    provider_spec = get_builtin_agent_provider_spec("codex")
+    options: dict[str, object] = {}
+    if timeout_seconds is not None:
+        options["timeout_seconds"] = timeout_seconds
+    if max_attempts is not None:
+        options["max_attempts"] = max_attempts
+    if cache_path is not None:
+        options["cache_path"] = cache_path
+    if config_overrides:
+        options["config_overrides"] = config_overrides
+    return CodexCliBackend(
+        runner=runner,
+        workdir=workdir,
+        model=model,
+        skill_path=skill_path,
+        strict_skill=strict_skill,
+        executable=executable or provider_spec.default_executable,
+        provider_spec=provider_spec,
+        **options,
+    )
+
+
+def _build_codeagent_backend(
+    *,
+    workdir: str | Path | None = None,
+    model: str | None = None,
+    skill_path: str | Path | None = None,
+    strict_skill: bool = True,
+    executable: str | None = None,
+    timeout_seconds: float | None = None,
+    max_attempts: int | None = None,
+    cache_path: str | Path | None = None,
+    config_overrides: tuple[str, ...] = (),
+    runner=None,
+) -> AdjudicationBackend:
+    provider_spec = get_builtin_agent_provider_spec("codeagent")
+    options: dict[str, object] = {}
+    if timeout_seconds is not None:
+        options["timeout_seconds"] = timeout_seconds
+    if max_attempts is not None:
+        options["max_attempts"] = max_attempts
+    if cache_path is not None:
+        options["cache_path"] = cache_path
+    if config_overrides:
+        options["config_overrides"] = config_overrides
+    return CodeAgentCliBackend(
+        runner=runner,
+        workdir=workdir,
+        model=model,
+        skill_path=skill_path,
+        strict_skill=strict_skill,
+        executable=executable or provider_spec.default_executable,
+        provider_spec=provider_spec,
+        **options,
+    )
+
+
+register_adjudication_backend("heuristic", _build_heuristic_backend)
+register_adjudication_backend("codex", _build_codex_backend)
+register_adjudication_backend("codeagent", _build_codeagent_backend)
+
+
 def create_adjudication_backend(
     name: str,
     *,
@@ -612,52 +731,19 @@ def create_adjudication_backend(
 ) -> AdjudicationBackend:
     """Create a named adjudication backend."""
 
-    normalized = name.strip().lower()
-    if normalized == "heuristic":
-        return HeuristicAdjudicationBackend()
-    if normalized == "codex":
-        provider_spec = get_builtin_agent_provider_spec(normalized)
-        options: dict[str, object] = {}
-        if timeout_seconds is not None:
-            options["timeout_seconds"] = timeout_seconds
-        if max_attempts is not None:
-            options["max_attempts"] = max_attempts
-        if cache_path is not None:
-            options["cache_path"] = cache_path
-        if config_overrides:
-            options["config_overrides"] = config_overrides
-        return CodexCliBackend(
-            runner=runner,
-            workdir=workdir,
-            model=model,
-            skill_path=skill_path,
-            strict_skill=strict_skill,
-            executable=executable or provider_spec.default_executable,
-            provider_spec=provider_spec,
-            **options,
-        )
-    if normalized == "codeagent":
-        provider_spec = get_builtin_agent_provider_spec(normalized)
-        options = {}
-        if timeout_seconds is not None:
-            options["timeout_seconds"] = timeout_seconds
-        if max_attempts is not None:
-            options["max_attempts"] = max_attempts
-        if cache_path is not None:
-            options["cache_path"] = cache_path
-        if config_overrides:
-            options["config_overrides"] = config_overrides
-        return CodeAgentCliBackend(
-            runner=runner,
-            workdir=workdir,
-            model=model,
-            skill_path=skill_path,
-            strict_skill=strict_skill,
-            executable=executable or provider_spec.default_executable,
-            provider_spec=provider_spec,
-            **options,
-        )
-    raise ValueError(f"Unknown adjudication backend: {name}")
+    factory = get_adjudication_backend_factory(name)
+    return factory(
+        workdir=workdir,
+        model=model,
+        skill_path=skill_path,
+        strict_skill=strict_skill,
+        executable=executable,
+        timeout_seconds=timeout_seconds,
+        max_attempts=max_attempts,
+        cache_path=cache_path,
+        config_overrides=config_overrides,
+        runner=runner,
+    )
 
 
 def _default_runner(

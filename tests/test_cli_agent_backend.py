@@ -16,6 +16,9 @@ from lua_nil_review_agent.agent_backend import (
     CodeAgentCliBackend,
     CodexCliBackend,
     create_adjudication_backend,
+    get_adjudication_backend_factory,
+    register_adjudication_backend,
+    unregister_adjudication_backend,
 )
 from lua_nil_review_agent.models import EvidencePacket, EvidenceTarget, SinkRule
 
@@ -783,6 +786,37 @@ def test_create_adjudication_backend_builds_selected_backend() -> None:
     assert heuristic.__class__.__name__ == "HeuristicAdjudicationBackend"
     assert isinstance(codex, CodexCliBackend)
     assert isinstance(codeagent, CodeAgentCliBackend)
+
+
+def test_backend_factory_registry_exposes_builtin_factories() -> None:
+    heuristic_factory = get_adjudication_backend_factory("heuristic")
+    codex_factory = get_adjudication_backend_factory("codex")
+    codeagent_factory = get_adjudication_backend_factory("codeagent")
+
+    assert callable(heuristic_factory)
+    assert callable(codex_factory)
+    assert callable(codeagent_factory)
+    assert heuristic_factory().__class__.__name__ == "HeuristicAdjudicationBackend"
+
+
+def test_backend_factory_registry_supports_custom_registration() -> None:
+    calls: list[str] = []
+
+    def custom_factory(**_kwargs) -> object:
+        calls.append("called")
+        return HeuristicSentinel()
+
+    class HeuristicSentinel:
+        pass
+
+    register_adjudication_backend("custom-test", custom_factory)
+    try:
+        backend = create_adjudication_backend("custom-test")
+        assert get_adjudication_backend_factory("custom-test") is custom_factory
+        assert isinstance(backend, HeuristicSentinel)
+        assert calls == ["called"]
+    finally:
+        unregister_adjudication_backend("custom-test")
 
 
 def test_builtin_provider_specs_describe_supported_cli_protocols() -> None:
