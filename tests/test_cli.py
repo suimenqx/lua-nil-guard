@@ -36,7 +36,9 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "export-unified-diff" in output
     assert "clear-backend-cache" in output
     assert "validate-backend-manifest" in output
+    assert "validate-backend-manifest-json" in output
     assert "register-backend-manifest" in output
+    assert "register-backend-manifest-json" in output
     assert "benchmark-cache-compare" in output
     assert "benchmark-json" in output
     assert "benchmark-cache-compare-json" in output
@@ -168,6 +170,38 @@ def test_cli_validate_backend_manifest_rejects_unsupported_protocol(tmp_path: Pa
     assert output == "Unknown CLI protocol backend: sdk_api"
 
 
+def test_cli_validate_backend_manifest_json_returns_machine_readable_output(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "provider.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "name": "claude-code",
+                "protocol": "stdout_envelope_cli",
+                "default_executable": "claude-code",
+                "default_timeout_seconds": 30.0,
+                "default_max_attempts": 2,
+                "default_fallback_to_uncertain_on_error": True,
+                "capabilities": {
+                    "supports_model_override": True,
+                    "supports_config_overrides": True,
+                    "supports_stdout_json": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["validate-backend-manifest-json", str(manifest_path)])
+
+    payload = json.loads(output)
+    assert exit_code == 0
+    assert payload["status"] == "valid"
+    assert payload["manifest"] == str(manifest_path)
+    assert payload["protocol_backend"] == "CodeAgentCliBackend"
+    assert payload["runtime_compatibility"] == "supported"
+    assert payload["registration_scope"] is None
+
+
 def test_cli_register_backend_manifest_calls_registry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -210,6 +244,48 @@ def test_cli_register_backend_manifest_calls_registry(
     assert "Backend manifest registered." in output
     assert "Protocol backend: CodeAgentCliBackend" in output
     assert "Registration scope: current process invocation" in output
+
+
+def test_cli_register_backend_manifest_json_writes_output_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "provider.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+    output_path = tmp_path / "provider-result.json"
+
+    class StubCapabilities:
+        supports_model_override = True
+        supports_config_overrides = True
+        supports_backend_cache = True
+        supports_output_schema = False
+        supports_output_file = False
+        supports_stdout_json = True
+        supports_tool_free_prompting = True
+
+    class StubSpec:
+        name = "claude-code"
+        protocol = "stdout_envelope_cli"
+        default_executable = "claude-code"
+        default_timeout_seconds = 30.0
+        default_max_attempts = 2
+        capabilities = StubCapabilities()
+
+    monkeypatch.setattr(
+        "lua_nil_review_agent.cli.register_manifest_backed_adjudication_backend",
+        lambda path, *, replace=False: StubSpec(),
+    )
+
+    exit_code, output = run(
+        ["register-backend-manifest-json", "--replace", str(manifest_path), str(output_path)]
+    )
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert "Backend manifest registration JSON export complete." in output
+    assert payload["status"] == "registered"
+    assert payload["protocol_backend"] == "CodeAgentCliBackend"
+    assert payload["registration_scope"] == "current_process_invocation"
 
 
 def test_cli_benchmark_reports_labeled_accuracy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

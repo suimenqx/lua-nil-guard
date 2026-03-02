@@ -73,24 +73,49 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             protocol_backend = get_cli_protocol_backend(provider_spec.protocol)
         except (OSError, ValueError) as exc:
             return 2, str(exc)
-        return 0, _render_backend_manifest_summary(
+        payload = _serialize_backend_manifest_summary(
             provider_spec,
             manifest_path=manifest_path,
             protocol_backend_name=protocol_backend.__name__,
             registered=False,
         )
+        return 0, _render_backend_manifest_summary(payload)
+
+    if command == "validate-backend-manifest-json":
+        if len(args) not in {2, 3}:
+            return 2, "validate-backend-manifest-json requires a manifest path and optional output path"
+        manifest_path = Path(args[1])
+        output_path = Path(args[2]) if len(args) == 3 else None
+        try:
+            provider_spec = load_agent_provider_spec_manifest_file(manifest_path)
+            protocol_backend = get_cli_protocol_backend(provider_spec.protocol)
+            payload = _serialize_backend_manifest_summary(
+                provider_spec,
+                manifest_path=manifest_path,
+                protocol_backend_name=protocol_backend.__name__,
+                registered=False,
+            )
+        except (OSError, ValueError) as exc:
+            return 2, str(exc)
+        rendered = json.dumps(payload, indent=2, sort_keys=True)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Backend manifest JSON export complete.",
+                f"Output: {output_path}",
+            ]
+        )
 
     if command == "register-backend-manifest":
-        replace = False
-        positional: list[str] = []
-        for token in args[1:]:
-            if token == "--replace":
-                replace = True
-            else:
-                positional.append(token)
-        if len(positional) != 1:
-            return 2, "register-backend-manifest requires one manifest path and optional --replace"
-        manifest_path = Path(positional[0])
+        try:
+            replace, manifest_path, output_path = _parse_register_backend_manifest_args(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if output_path is not None:
+            return 2, "register-backend-manifest does not accept an output path"
         try:
             provider_spec = register_manifest_backed_adjudication_backend(
                 manifest_path,
@@ -99,11 +124,43 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             protocol_backend = get_cli_protocol_backend(provider_spec.protocol)
         except (OSError, ValueError) as exc:
             return 2, str(exc)
-        return 0, _render_backend_manifest_summary(
+        payload = _serialize_backend_manifest_summary(
             provider_spec,
             manifest_path=manifest_path,
             protocol_backend_name=protocol_backend.__name__,
             registered=True,
+        )
+        return 0, _render_backend_manifest_summary(payload)
+
+    if command == "register-backend-manifest-json":
+        try:
+            replace, manifest_path, output_path = _parse_register_backend_manifest_args(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        try:
+            provider_spec = register_manifest_backed_adjudication_backend(
+                manifest_path,
+                replace=replace,
+            )
+            protocol_backend = get_cli_protocol_backend(provider_spec.protocol)
+            payload = _serialize_backend_manifest_summary(
+                provider_spec,
+                manifest_path=manifest_path,
+                protocol_backend_name=protocol_backend.__name__,
+                registered=True,
+            )
+        except (OSError, ValueError) as exc:
+            return 2, str(exc)
+        rendered = json.dumps(payload, indent=2, sort_keys=True)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Backend manifest registration JSON export complete.",
+                f"Output: {output_path}",
+            ]
         )
 
     if command == "compare-benchmark-json":
@@ -789,34 +846,80 @@ def _create_review_backend(
     )
 
 
-def _render_backend_manifest_summary(
+def _parse_register_backend_manifest_args(args: list[str]) -> tuple[bool, Path, Path | None]:
+    replace = False
+    positional: list[str] = []
+    for token in args:
+        if token == "--replace":
+            replace = True
+        else:
+            positional.append(token)
+    if len(positional) not in {1, 2}:
+        raise ValueError(
+            "register-backend-manifest requires one manifest path, optional --replace, and optional output path"
+        )
+    manifest_path = Path(positional[0])
+    output_path = Path(positional[1]) if len(positional) == 2 else None
+    return replace, manifest_path, output_path
+
+
+def _serialize_backend_manifest_summary(
     provider_spec,  # noqa: ANN001
     *,
     manifest_path: Path,
     protocol_backend_name: str,
     registered: bool,
-) -> str:
+) -> dict[str, object]:
     capabilities = provider_spec.capabilities
+    return {
+        "status": "registered" if registered else "valid",
+        "manifest": str(manifest_path),
+        "name": provider_spec.name,
+        "protocol": provider_spec.protocol,
+        "protocol_backend": protocol_backend_name,
+        "runtime_compatibility": "supported",
+        "default_executable": provider_spec.default_executable,
+        "default_timeout_seconds": provider_spec.default_timeout_seconds,
+        "default_max_attempts": provider_spec.default_max_attempts,
+        "capabilities": {
+            "supports_model_override": getattr(capabilities, "supports_model_override", False),
+            "supports_config_overrides": getattr(capabilities, "supports_config_overrides", False),
+            "supports_backend_cache": getattr(capabilities, "supports_backend_cache", False),
+            "supports_output_schema": getattr(capabilities, "supports_output_schema", False),
+            "supports_output_file": getattr(capabilities, "supports_output_file", False),
+            "supports_stdout_json": getattr(capabilities, "supports_stdout_json", False),
+            "supports_tool_free_prompting": getattr(
+                capabilities,
+                "supports_tool_free_prompting",
+                True,
+            ),
+        },
+        "registration_scope": "current_process_invocation" if registered else None,
+    }
+
+
+def _render_backend_manifest_summary(payload: dict[str, object]) -> str:
+    capabilities = payload["capabilities"]
     lines = [
-        "Backend manifest registered." if registered else "Backend manifest valid.",
-        f"Manifest: {manifest_path}",
-        f"Name: {provider_spec.name}",
-        f"Protocol: {provider_spec.protocol}",
-        f"Protocol backend: {protocol_backend_name}",
-        "Runtime compatibility: supported",
-        f"Default executable: {provider_spec.default_executable}",
-        f"Default timeout: {provider_spec.default_timeout_seconds}",
-        f"Default attempts: {provider_spec.default_max_attempts}",
+        "Backend manifest registered." if payload["status"] == "registered" else "Backend manifest valid.",
+        f"Manifest: {payload['manifest']}",
+        f"Name: {payload['name']}",
+        f"Protocol: {payload['protocol']}",
+        f"Protocol backend: {payload['protocol_backend']}",
+        f"Runtime compatibility: {payload['runtime_compatibility']}",
+        f"Default executable: {payload['default_executable']}",
+        f"Default timeout: {payload['default_timeout_seconds']}",
+        f"Default attempts: {payload['default_max_attempts']}",
         "Runtime-consumed capabilities:",
-        f"  model override: {getattr(capabilities, 'supports_model_override', False)}",
-        f"  config overrides: {getattr(capabilities, 'supports_config_overrides', False)}",
-        f"  backend cache: {getattr(capabilities, 'supports_backend_cache', False)}",
-        f"  output schema: {getattr(capabilities, 'supports_output_schema', False)}",
-        f"  output file: {getattr(capabilities, 'supports_output_file', False)}",
-        f"  stdout json: {getattr(capabilities, 'supports_stdout_json', False)}",
-        f"  tool-free prompting: {getattr(capabilities, 'supports_tool_free_prompting', True)}",
+        f"  model override: {capabilities['supports_model_override']}",
+        f"  config overrides: {capabilities['supports_config_overrides']}",
+        f"  backend cache: {capabilities['supports_backend_cache']}",
+        f"  output schema: {capabilities['supports_output_schema']}",
+        f"  output file: {capabilities['supports_output_file']}",
+        f"  stdout json: {capabilities['supports_stdout_json']}",
+        f"  tool-free prompting: {capabilities['supports_tool_free_prompting']}",
     ]
-    if registered:
+    if payload["registration_scope"] is not None:
         lines.append("Registration scope: current process invocation")
     return "\n".join(lines)
 
@@ -1203,7 +1306,9 @@ def _usage() -> str:
             "  lua-nil-review-agent scan <repository>",
             "  lua-nil-review-agent clear-backend-cache <cache-file>",
             "  lua-nil-review-agent validate-backend-manifest <manifest-path>",
+            "  lua-nil-review-agent validate-backend-manifest-json <manifest-path> [output]",
             "  lua-nil-review-agent register-backend-manifest [--replace] <manifest-path>",
+            "  lua-nil-review-agent register-backend-manifest-json [--replace] <manifest-path> [output]",
             "  lua-nil-review-agent compare-benchmark-json <before> <after> [output]",
             "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
