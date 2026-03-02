@@ -251,7 +251,16 @@ def test_adjudicate_packet_uses_field_alias_for_dot_path_collection_expression()
             arg_index=1,
             expression="req.items",
         ),
-        local_context="  for _, item in pairs(req.items) do\n    return item\n  end",
+        local_context=(
+            "  for _, item in pairs(req.items) do\n"
+            "    local function use_item()\n"
+            "      if item then\n"
+            "        return item\n"
+            "      end\n"
+            "    end\n"
+            "    return use_item()\n"
+            "  end"
+        ),
         related_functions=(),
         function_summaries=(),
         knowledge_facts=(),
@@ -278,7 +287,12 @@ def test_adjudicate_packet_uses_field_alias_for_dot_path_collection_expression()
     assert record.judge.suggested_fix == (
         "  local items = req.items or {}\n"
         "  for _, item in pairs(items) do\n"
-        "    return item\n"
+        "    local function use_item()\n"
+        "      if item then\n"
+        "        return item\n"
+        "      end\n"
+        "    end\n"
+        "    return use_item()\n"
         "  end"
     )
 
@@ -359,4 +373,51 @@ def test_adjudicate_packet_rewrites_target_line_for_dot_path_string_expression()
     assert record.judge.suggested_fix == (
         "  local username = req.params.username or ''\n"
         '  return string.match(username, "^guest")'
+    )
+
+
+def test_adjudicate_packet_expands_repeat_until_for_closing_target_line() -> None:
+    packet = EvidencePacket(
+        case_id="case_repeat_until",
+        target=EvidenceTarget(
+            file="demo.lua",
+            line=4,
+            column=9,
+            sink="#",
+            arg_index=1,
+            expression="req.items",
+        ),
+        local_context=(
+            "  repeat\n"
+            "    req = refresh(req)\n"
+            "  until #req.items > 0"
+        ),
+        related_functions=(),
+        function_summaries=(),
+        knowledge_facts=(),
+        static_reasoning={
+            "state": "unknown_static",
+            "origin_candidates": ("req.items",),
+            "observed_guards": (),
+        },
+    )
+    rule = SinkRule(
+        id="length.operand",
+        kind="unary_operand",
+        qualified_name="#",
+        arg_index=1,
+        nil_sensitive=True,
+        failure_mode="runtime_error",
+        default_severity="high",
+        safe_patterns=("x or {}",),
+    )
+
+    record = adjudicate_packet(packet, rule)
+
+    assert record.judge.status == "risky"
+    assert record.judge.suggested_fix == (
+        "  local items = req.items or {}\n"
+        "  repeat\n"
+        "    req = refresh(req)\n"
+        "  until #items > 0"
     )

@@ -232,23 +232,46 @@ def _build_contextual_fix_snippet(
     alias: str,
     fallback_literal: str,
 ) -> str | None:
-    target_index = _find_target_line_index(packet, sink_rule)
-    if target_index is None:
+    lines = packet.local_context.splitlines()
+    bounds = _find_snippet_bounds(packet, sink_rule)
+    if bounds is None:
         return None
 
-    lines = packet.local_context.splitlines()
-    target_line = lines[target_index]
-    alias_indent = _leading_indent(target_line)
+    start_index, target_index, end_index = bounds
+    anchor_line = lines[start_index]
+    alias_indent = _leading_indent(anchor_line)
     alias_line = f"{alias_indent}local {alias} = {packet.target.expression} or {fallback_literal}"
-    end_index = _find_snippet_end_index(lines, target_index)
 
     snippet_lines = [alias_line]
-    for index in range(target_index, end_index + 1):
+    for index in range(start_index, end_index + 1):
         current = lines[index]
         if index == target_index:
             current = current.replace(packet.target.expression, alias, 1)
         snippet_lines.append(current)
     return "\n".join(snippet_lines)
+
+
+def _find_snippet_bounds(
+    packet: EvidencePacket,
+    sink_rule: SinkRule,
+) -> tuple[int, int, int] | None:
+    lines = packet.local_context.splitlines()
+    target_index = _find_target_line_index(packet, sink_rule)
+    if target_index is None:
+        return None
+
+    target_line = lines[target_index].strip()
+    if _is_repeat_until_line(target_line):
+        start_index = _find_repeat_start_index(lines, target_index)
+        if start_index is not None:
+            return (start_index, target_index, target_index)
+        return (target_index, target_index, target_index)
+
+    if _opens_block(target_line):
+        end_index = _find_snippet_end_index(lines, target_index)
+        return (target_index, target_index, end_index)
+
+    return (target_index, target_index, target_index)
 
 
 def _find_snippet_end_index(lines: list[str], target_index: int) -> int:
@@ -261,7 +284,7 @@ def _find_snippet_end_index(lines: list[str], target_index: int) -> int:
         stripped = lines[index].strip()
         if _opens_block(stripped):
             depth += 1
-        if stripped == "end":
+        if _closes_block(stripped):
             depth -= 1
             if depth == 0:
                 return index
@@ -275,4 +298,43 @@ def _opens_block(stripped_line: str) -> bool:
         stripped_line.startswith("if ") and stripped_line.endswith(" then")
     ) or (
         stripped_line.startswith("while ") and stripped_line.endswith(" do")
+    ) or (
+        _is_repeat_open(stripped_line)
+    ) or (
+        stripped_line == "do"
+    ) or (
+        _is_function_open(stripped_line)
     )
+
+
+def _closes_block(stripped_line: str) -> bool:
+    return stripped_line == "end" or _is_repeat_until_line(stripped_line)
+
+
+def _is_repeat_open(stripped_line: str) -> bool:
+    return stripped_line == "repeat" or stripped_line.startswith("repeat ")
+
+
+def _is_repeat_until_line(stripped_line: str) -> bool:
+    return stripped_line.startswith("until ")
+
+
+def _is_function_open(stripped_line: str) -> bool:
+    return bool(
+        re.match(r"^(?:local\s+)?function\b", stripped_line)
+        or re.search(r"(?:=\s*|return\s+)function\b", stripped_line)
+    )
+
+
+def _find_repeat_start_index(lines: list[str], target_index: int) -> int | None:
+    depth = 1
+    for index in range(target_index - 1, -1, -1):
+        stripped = lines[index].strip()
+        if _is_repeat_until_line(stripped):
+            depth += 1
+            continue
+        if _is_repeat_open(stripped):
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
