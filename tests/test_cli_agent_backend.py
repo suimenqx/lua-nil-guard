@@ -12,13 +12,17 @@ from lua_nil_review_agent.agent_driver_manifest import (
 )
 from lua_nil_review_agent.agent_backend import (
     BackendError,
+    build_manifest_backed_backend_factory,
     CliAgentBackend,
     CodeAgentCliBackend,
     CodexCliBackend,
     create_adjudication_backend,
+    get_cli_protocol_backend,
     get_adjudication_backend_factory,
+    register_cli_protocol_backend,
     register_adjudication_backend,
     unregister_adjudication_backend,
+    unregister_cli_protocol_backend,
 )
 from lua_nil_review_agent.models import EvidencePacket, EvidenceTarget, SinkRule
 
@@ -799,6 +803,24 @@ def test_backend_factory_registry_exposes_builtin_factories() -> None:
     assert heuristic_factory().__class__.__name__ == "HeuristicAdjudicationBackend"
 
 
+def test_cli_protocol_backend_registry_exposes_builtin_backend_types() -> None:
+    assert get_cli_protocol_backend("schema_file_cli") is CodexCliBackend
+    assert get_cli_protocol_backend("stdout_envelope_cli") is CodeAgentCliBackend
+
+
+def test_build_manifest_backed_backend_factory_uses_provider_protocol_mapping() -> None:
+    codex_factory = build_manifest_backed_backend_factory("codex")
+    codeagent_factory = build_manifest_backed_backend_factory("codeagent")
+
+    codex = codex_factory(model="o3")
+    codeagent = codeagent_factory()
+
+    assert isinstance(codex, CodexCliBackend)
+    assert codex.provider_spec == CODEX_PROVIDER_SPEC
+    assert isinstance(codeagent, CodeAgentCliBackend)
+    assert codeagent.provider_spec == CODEAGENT_PROVIDER_SPEC
+
+
 def test_backend_factory_registry_supports_custom_registration() -> None:
     calls: list[str] = []
 
@@ -817,6 +839,24 @@ def test_backend_factory_registry_supports_custom_registration() -> None:
         assert calls == ["called"]
     finally:
         unregister_adjudication_backend("custom-test")
+
+
+def test_cli_protocol_backend_registry_supports_custom_registration() -> None:
+    class DemoProtocolBackend(CliAgentBackend):
+        def build_command(
+            self,
+            *,
+            schema_path: Path,
+            output_path: Path,
+            cwd: Path | None,
+        ) -> tuple[str, ...]:
+            return ("demo", str(schema_path), str(output_path), str(cwd) if cwd else "")
+
+    register_cli_protocol_backend("demo_protocol", DemoProtocolBackend)
+    try:
+        assert get_cli_protocol_backend("demo_protocol") is DemoProtocolBackend
+    finally:
+        unregister_cli_protocol_backend("demo_protocol")
 
 
 def test_builtin_provider_specs_describe_supported_cli_protocols() -> None:

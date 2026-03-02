@@ -640,8 +640,47 @@ def _build_heuristic_backend(**_kwargs) -> AdjudicationBackend:
     return HeuristicAdjudicationBackend()
 
 
-def _build_codex_backend(
+def build_manifest_backed_backend_factory(provider_name: str) -> AdjudicationBackendFactory:
+    """Build a generic backend factory from a provider manifest and protocol mapping."""
+
+    provider_spec = get_builtin_agent_provider_spec(provider_name)
+    backend_type = get_cli_protocol_backend(provider_spec.protocol)
+
+    def factory(
+        *,
+        workdir: str | Path | None = None,
+        model: str | None = None,
+        skill_path: str | Path | None = None,
+        strict_skill: bool = True,
+        executable: str | None = None,
+        timeout_seconds: float | None = None,
+        max_attempts: int | None = None,
+        cache_path: str | Path | None = None,
+        config_overrides: tuple[str, ...] = (),
+        runner=None,
+    ) -> AdjudicationBackend:
+        return _instantiate_manifest_backed_backend(
+            backend_type=backend_type,
+            provider_spec=provider_spec,
+            workdir=workdir,
+            model=model,
+            skill_path=skill_path,
+            strict_skill=strict_skill,
+            executable=executable,
+            timeout_seconds=timeout_seconds,
+            max_attempts=max_attempts,
+            cache_path=cache_path,
+            config_overrides=config_overrides,
+            runner=runner,
+        )
+
+    return factory
+
+
+def _instantiate_manifest_backed_backend(
     *,
+    backend_type: type[CliAgentBackend],
+    provider_spec: AgentProviderSpec,
     workdir: str | Path | None = None,
     model: str | None = None,
     skill_path: str | Path | None = None,
@@ -653,7 +692,6 @@ def _build_codex_backend(
     config_overrides: tuple[str, ...] = (),
     runner=None,
 ) -> AdjudicationBackend:
-    provider_spec = get_builtin_agent_provider_spec("codex")
     options: dict[str, object] = {}
     if timeout_seconds is not None:
         options["timeout_seconds"] = timeout_seconds
@@ -663,7 +701,7 @@ def _build_codex_backend(
         options["cache_path"] = cache_path
     if config_overrides:
         options["config_overrides"] = config_overrides
-    return CodexCliBackend(
+    return backend_type(
         runner=runner,
         workdir=workdir,
         model=model,
@@ -673,46 +711,6 @@ def _build_codex_backend(
         provider_spec=provider_spec,
         **options,
     )
-
-
-def _build_codeagent_backend(
-    *,
-    workdir: str | Path | None = None,
-    model: str | None = None,
-    skill_path: str | Path | None = None,
-    strict_skill: bool = True,
-    executable: str | None = None,
-    timeout_seconds: float | None = None,
-    max_attempts: int | None = None,
-    cache_path: str | Path | None = None,
-    config_overrides: tuple[str, ...] = (),
-    runner=None,
-) -> AdjudicationBackend:
-    provider_spec = get_builtin_agent_provider_spec("codeagent")
-    options: dict[str, object] = {}
-    if timeout_seconds is not None:
-        options["timeout_seconds"] = timeout_seconds
-    if max_attempts is not None:
-        options["max_attempts"] = max_attempts
-    if cache_path is not None:
-        options["cache_path"] = cache_path
-    if config_overrides:
-        options["config_overrides"] = config_overrides
-    return CodeAgentCliBackend(
-        runner=runner,
-        workdir=workdir,
-        model=model,
-        skill_path=skill_path,
-        strict_skill=strict_skill,
-        executable=executable or provider_spec.default_executable,
-        provider_spec=provider_spec,
-        **options,
-    )
-
-
-register_adjudication_backend("heuristic", _build_heuristic_backend)
-register_adjudication_backend("codex", _build_codex_backend)
-register_adjudication_backend("codeagent", _build_codeagent_backend)
 
 
 def create_adjudication_backend(
@@ -931,3 +929,47 @@ def _strip_markdown_fences(text: str) -> str:
     if not lines[-1].startswith("```"):
         return stripped
     return "\n".join(lines[1:-1]).strip()
+
+
+_CLI_PROTOCOL_BACKEND_TYPES: dict[str, type[CliAgentBackend]] = {}
+
+
+def register_cli_protocol_backend(
+    protocol_name: str,
+    backend_type: type[CliAgentBackend],
+    *,
+    replace: bool = False,
+) -> None:
+    """Register the default backend implementation for a CLI protocol."""
+
+    normalized = protocol_name.strip().lower()
+    if not normalized:
+        raise ValueError("Protocol name must not be empty")
+    if normalized in _CLI_PROTOCOL_BACKEND_TYPES and not replace:
+        raise ValueError(f"CLI protocol backend already registered: {protocol_name}")
+    _CLI_PROTOCOL_BACKEND_TYPES[normalized] = backend_type
+
+
+def get_cli_protocol_backend(protocol_name: str) -> type[CliAgentBackend]:
+    """Return the default backend implementation for a CLI protocol."""
+
+    normalized = protocol_name.strip().lower()
+    if normalized not in _CLI_PROTOCOL_BACKEND_TYPES:
+        raise ValueError(f"Unknown CLI protocol backend: {protocol_name}")
+    return _CLI_PROTOCOL_BACKEND_TYPES[normalized]
+
+
+def unregister_cli_protocol_backend(protocol_name: str) -> None:
+    """Remove a previously registered CLI protocol backend mapping."""
+
+    normalized = protocol_name.strip().lower()
+    if normalized not in _CLI_PROTOCOL_BACKEND_TYPES:
+        raise ValueError(f"Unknown CLI protocol backend: {protocol_name}")
+    del _CLI_PROTOCOL_BACKEND_TYPES[normalized]
+
+
+register_adjudication_backend("heuristic", _build_heuristic_backend)
+register_cli_protocol_backend(CODEX_PROVIDER_SPEC.protocol, CodexCliBackend)
+register_cli_protocol_backend(CODEAGENT_PROVIDER_SPEC.protocol, CodeAgentCliBackend)
+register_adjudication_backend("codex", build_manifest_backed_backend_factory("codex"))
+register_adjudication_backend("codeagent", build_manifest_backed_backend_factory("codeagent"))
