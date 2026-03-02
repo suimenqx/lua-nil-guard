@@ -18,5 +18,25 @@
     "failure_mode": "runtime_error",
     "default_severity": "high",
     "safe_patterns": ["x or ''", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "string.gsub.arg1",
+    "kind": "function_arg",
+    "qualified_name": "string.gsub",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or ''", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "table.insert.arg1",
+    "kind": "function_arg",
+    "qualified_name": "table.insert",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or {}", "assert(x)", "if x then ... end"]
   }
 ]
