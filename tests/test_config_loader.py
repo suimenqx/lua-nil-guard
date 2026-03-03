@@ -187,3 +187,30 @@ def test_load_function_contracts_reads_call_shape_restrictions(tmp_path: Path) -
 
     assert len(contracts) == 1
     assert contracts[0].applies_with_arg_count == 2
+
+
+def test_load_function_contracts_reads_literal_arg_restrictions(tmp_path: Path) -> None:
+    config_path = tmp_path / "function_contracts.json"
+    config_path.write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "normalize_name",
+                    "returns_non_nil": True,
+                    "required_literal_args": {
+                        "2": ["''", '""'],
+                        "3": "false",
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    contracts = load_function_contracts(config_path)
+
+    assert len(contracts) == 1
+    assert contracts[0].required_literal_args == (
+        (2, ("''", '""')),
+        (3, ("false",)),
+    )

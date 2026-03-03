@@ -152,6 +152,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
     applies_in_modules = _optional_str_list(data, "applies_in_modules")
     applies_to_sinks = _optional_str_list(data, "applies_to_sinks")
     applies_with_arg_count = _optional_positive_int(data, "applies_with_arg_count")
+    required_literal_args = _optional_literal_arg_map(data, "required_literal_args")
 
     notes = data.get("notes")
     if notes is not None and not isinstance(notes, str):
@@ -170,6 +171,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         applies_in_modules=tuple(applies_in_modules),
         applies_to_sinks=tuple(applies_to_sinks),
         applies_with_arg_count=applies_with_arg_count,
+        required_literal_args=required_literal_args,
         notes=notes,
     )
 
@@ -226,6 +228,41 @@ def _optional_positive_int(data: dict[str, Any], key: str) -> int | None:
     if not isinstance(value, int) or value < 1:
         raise ConfigError(f"Function contract field '{key}' must be a positive integer")
     return value
+
+
+def _optional_literal_arg_map(
+    data: dict[str, Any],
+    key: str,
+) -> tuple[tuple[int, tuple[str, ...]], ...]:
+    value = data.get(key, {})
+    if not isinstance(value, dict):
+        raise ConfigError(
+            f"Function contract field '{key}' must be an object mapping argument indexes to literal strings"
+        )
+
+    pairs: list[tuple[int, tuple[str, ...]]] = []
+    for raw_index, raw_literals in value.items():
+        if not isinstance(raw_index, str) or not raw_index.isdigit() or int(raw_index) < 1:
+            raise ConfigError(
+                f"Function contract field '{key}' must use positive integer string keys"
+            )
+        arg_index = int(raw_index)
+        if isinstance(raw_literals, str) and raw_literals:
+            literals = (raw_literals,)
+        elif (
+            isinstance(raw_literals, list)
+            and raw_literals
+            and all(isinstance(item, str) and item for item in raw_literals)
+        ):
+            literals = tuple(dict.fromkeys(raw_literals))
+        else:
+            raise ConfigError(
+                f"Function contract field '{key}' values must be a non-empty string or string array"
+            )
+        pairs.append((arg_index, literals))
+
+    pairs.sort(key=lambda item: item[0])
+    return tuple(pairs)
 
 
 def _optional_str_list(data: dict[str, Any], key: str) -> list[str]:

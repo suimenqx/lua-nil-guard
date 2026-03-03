@@ -131,14 +131,30 @@ def contract_applies_to_call(
     contract: FunctionContract,
     *,
     arg_count: int | None,
+    arg_values: tuple[str, ...] | None = None,
 ) -> bool:
     """Return whether a contract is active for the current call shape."""
 
     if contract.applies_with_arg_count is None:
-        return True
-    if arg_count is None:
+        arg_count_matches = True
+    else:
+        if arg_count is None:
+            return False
+        arg_count_matches = arg_count == contract.applies_with_arg_count
+    if not arg_count_matches:
         return False
-    return arg_count == contract.applies_with_arg_count
+
+    if not contract.required_literal_args:
+        return True
+    if arg_values is None:
+        return False
+
+    for index, allowed_literals in contract.required_literal_args:
+        if index < 1 or index > len(arg_values):
+            return False
+        if arg_values[index - 1].strip() not in allowed_literals:
+            return False
+    return True
 
 
 def _returns_non_nil_value(summary: FunctionSummary) -> bool:

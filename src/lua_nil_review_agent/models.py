@@ -155,6 +155,7 @@ class FunctionContract:
     applies_in_modules: tuple[str, ...] = ()
     applies_to_sinks: tuple[str, ...] = ()
     applies_with_arg_count: int | None = None
+    required_literal_args: tuple[tuple[int, tuple[str, ...]], ...] = ()
     notes: str | None = None
 
 

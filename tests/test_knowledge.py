@@ -165,3 +165,17 @@ def test_derive_facts_from_contracts_skips_call_shaped_contracts_without_call_co
     facts = derive_facts_from_contracts(contracts)
 
     assert facts == ()
+
+
+def test_derive_facts_from_contracts_skips_literal_scoped_contracts_without_call_context() -> None:
+    contracts = (
+        FunctionContract(
+            qualified_name="normalize_name",
+            returns_non_nil=True,
+            required_literal_args=((2, ("''",)),),
+        ),
+    )
+
+    facts = derive_facts_from_contracts(contracts)
+
+    assert facts == ()

@@ -15,6 +15,8 @@ from .config_loader import load_confidence_policy, load_function_contracts, load
 from .knowledge import (
     KnowledgeBase,
     contract_applies_in_module,
+    contract_applies_to_call,
+    contract_applies_to_sink,
     derive_facts_from_contracts,
     derive_facts_from_summaries,
     facts_for_subject,
@@ -41,6 +43,9 @@ from .verification import verify_verdict
 
 
 _CALL_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*(?:[.:][A-Za-z_][A-Za-z0-9_]*)*)\s*\(")
+_CALL_EXPRESSION_RE = re.compile(
+    r"^\s*([A-Za-z_][A-Za-z0-9_]*(?:[.:][A-Za-z_][A-Za-z0-9_]*)*)\s*\((.*)\)\s*$"
+)
 _INLINE_CALL_RE = re.compile(
     r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*(?:[.:][A-Za-z_][A-Za-z0-9_]*)*)\s*\("
 )
@@ -1028,24 +1033,58 @@ def _knowledge_facts_for_assessment(
     function_contracts: tuple[object, ...] = (),
     current_module: str | None = None,
 ) -> tuple[object, ...]:
+    applicable_contracts = tuple(
+        contract
+        for contract in function_contracts
+        if contract_applies_in_module(contract, current_module)
+        and contract_applies_to_sink(
+            contract,
+            current_sink_rule_id=assessment.candidate.sink_rule_id,
+            current_sink_name=assessment.candidate.sink_name,
+        )
+    )
     fact_texts = list(
         fact
         for subject in related_functions + (assessment.candidate.function_scope,)
         for fact in facts_for_subject(facts, subject)
     )
-    scoped_contract_facts = derive_facts_from_contracts(
-        tuple(
-            contract
-            for contract in function_contracts
-            if contract_applies_in_module(contract, current_module)
-        ),
+    call_args_by_function = _contract_call_args_from_assessment(
+        assessment,
         current_module=current_module,
-        current_sink_rule_id=assessment.candidate.sink_rule_id,
-        current_sink_name=assessment.candidate.sink_name,
+        known_function_names=frozenset(contract.qualified_name for contract in applicable_contracts),
     )
-    for fact in scoped_contract_facts:
-        if fact.subject in related_functions:
-            fact_texts.append(fact.statement)
+    scoped_contract_statements = [
+        fact.statement
+        for fact in derive_facts_from_contracts(
+            applicable_contracts,
+            current_module=current_module,
+            current_sink_rule_id=assessment.candidate.sink_rule_id,
+            current_sink_name=assessment.candidate.sink_name,
+        )
+        if fact.subject in related_functions
+    ]
+    for contract in applicable_contracts:
+        if not contract.returns_non_nil:
+            continue
+        if contract.qualified_name not in related_functions:
+            continue
+        if not (contract.applies_with_arg_count or contract.required_literal_args):
+            continue
+        call_arg_sets = call_args_by_function.get(contract.qualified_name, ())
+        if not any(
+            contract_applies_to_call(
+                contract,
+                arg_count=len(args),
+                arg_values=args,
+            )
+            for args in call_arg_sets
+        ):
+            continue
+        scoped_contract_statements.append(
+            f"{contract.qualified_name} returns non-nil value"
+        )
+    for fact in scoped_contract_statements:
+        fact_texts.append(fact)
     return tuple(dict.fromkeys(fact_texts))
 
 
@@ -1483,6 +1522,45 @@ def _call_name_from_expression(
     )
 
 
+def _contract_call_args_from_assessment(
+    assessment: CandidateAssessment,
+    *,
+    current_module: str | None = None,
+    known_function_names: frozenset[str] | set[str] = frozenset(),
+) -> dict[str, tuple[tuple[str, ...], ...]]:
+    call_args: dict[str, list[tuple[str, ...]]] = {}
+    for origin in assessment.static_analysis.origin_candidates:
+        parsed = _parse_call_expression(
+            origin,
+            default_module=current_module,
+            known_function_names=known_function_names,
+        )
+        if parsed is None:
+            continue
+        function_name, args = parsed
+        call_args.setdefault(function_name, []).append(args)
+    return {key: tuple(value) for key, value in call_args.items()}
+
+
+def _parse_call_expression(
+    expression: str,
+    *,
+    default_module: str | None = None,
+    known_function_names: frozenset[str] | set[str] = frozenset(),
+) -> tuple[str, tuple[str, ...]] | None:
+    match = _CALL_EXPRESSION_RE.match(_strip_lua_comment(expression).strip())
+    if match is None:
+        return None
+    return (
+        _resolve_related_name(
+            match.group(1),
+            default_module=default_module,
+            known_function_names=known_function_names,
+        ),
+        tuple(_split_top_level_values(match.group(2))),
+    )
+
+
 def _resolve_related_name(
     raw_name: str,
     *,
@@ -1499,6 +1577,46 @@ def _resolve_related_name(
     if normalized in known_function_names:
         return normalized
     return normalized
+
+
+def _split_top_level_values(values_text: str) -> list[str]:
+    values: list[str] = []
+    start = 0
+    depth = 0
+    quote: str | None = None
+    escaped = False
+
+    for index, char in enumerate(values_text):
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char in "([{":
+            depth += 1
+            continue
+        if char in ")]}":
+            depth = max(0, depth - 1)
+            continue
+        if char == "," and depth == 0:
+            values.append(values_text[start:index].strip())
+            start = index + 1
+
+    tail = values_text[start:].strip()
+    if tail:
+        values.append(tail)
+    return values
+
+
+def _strip_lua_comment(line: str) -> str:
+    return line.partition("--")[0]
 
 
 def _build_file_module_index(snapshot: RepositorySnapshot) -> dict[str, str | None]:

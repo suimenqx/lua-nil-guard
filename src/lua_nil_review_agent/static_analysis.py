@@ -287,7 +287,7 @@ def _active_contract_guard(
         contract = contract_by_name.get(resolved_name)
         if contract is None:
             continue
-        if not contract_applies_to_call(contract, arg_count=len(args)):
+        if not contract_applies_to_call(contract, arg_count=len(args), arg_values=args):
             continue
         if _contract_matches_symbol(contract, args, symbol):
             active_guard = f"{resolved_name}({symbol})"
@@ -333,7 +333,7 @@ def _origin_return_contract_guard(
     contract = contract_by_name.get(resolved_name)
     if contract is None:
         return None
-    if not contract_applies_to_call(contract, arg_count=len(args)):
+    if not contract_applies_to_call(contract, arg_count=len(args), arg_values=args):
         return None
 
     if not _contract_has_all_required_args(contract.returns_non_nil_from_args, args):
