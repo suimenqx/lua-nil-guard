@@ -41,7 +41,7 @@ from .pipeline import build_evidence_packet, should_report
 from .prompting import build_adjudication_prompt
 from .repository import discover_lua_files
 from .summaries import SummaryStore, detect_module_name, summarize_source
-from .static_analysis import analyze_candidate
+from .static_analysis import analyze_candidate, collect_transparent_return_wrappers
 from .verification import verify_verdict
 
 
@@ -155,15 +155,22 @@ def review_source(
     sink_rules: tuple[SinkRule, ...],
     *,
     function_contracts: tuple[object, ...] = (),
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]] | None = None,
 ) -> tuple[CandidateAssessment, ...]:
     """Collect candidates from one source file and attach local static analysis."""
 
+    effective_transparent_return_wrappers = (
+        dict(transparent_return_wrappers)
+        if transparent_return_wrappers is not None
+        else collect_transparent_return_wrappers((source,))
+    )
     assessments: list[CandidateAssessment] = []
     for candidate in collect_candidates(file_path, source, sink_rules):
         static_analysis = analyze_candidate(
             source,
             candidate,
             function_contracts=tuple(function_contracts),
+            transparent_return_wrappers=effective_transparent_return_wrappers,
         )
         assessments.append(
             CandidateAssessment(
@@ -177,6 +184,7 @@ def review_source(
 def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment, ...]:
     """Run the current static first-pass review across all discovered Lua files."""
 
+    transparent_return_wrappers = _collect_snapshot_transparent_return_wrappers(snapshot)
     assessments: list[CandidateAssessment] = []
     for file_path in snapshot.lua_files:
         source = file_path.read_text(encoding="utf-8")
@@ -186,6 +194,7 @@ def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment
                 source,
                 snapshot.sink_rules,
                 function_contracts=snapshot.function_contracts,
+                transparent_return_wrappers=transparent_return_wrappers,
             )
         )
     return tuple(assessments)
@@ -199,11 +208,13 @@ def review_repository_file(
 
     resolved_file = _resolve_snapshot_lua_file(snapshot, file_path)
     source = resolved_file.read_text(encoding="utf-8")
+    transparent_return_wrappers = _collect_snapshot_transparent_return_wrappers(snapshot)
     return review_source(
         resolved_file,
         source,
         snapshot.sink_rules,
         function_contracts=snapshot.function_contracts,
+        transparent_return_wrappers=transparent_return_wrappers,
     )
 
 
@@ -792,6 +803,14 @@ def _collect_repository_summaries(snapshot: RepositorySnapshot) -> tuple[object,
         source = file_path.read_text(encoding="utf-8")
         summaries.extend(summarize_source(file_path, source))
     return tuple(summaries)
+
+
+def _collect_snapshot_transparent_return_wrappers(
+    snapshot: RepositorySnapshot,
+) -> dict[str, tuple[tuple[int, int], ...]]:
+    return collect_transparent_return_wrappers(
+        tuple(file_path.read_text(encoding="utf-8") for file_path in snapshot.lua_files)
+    )
 
 
 def _load_autofix_manifest(manifest_path: str | Path) -> tuple[AutofixPatch, ...]:

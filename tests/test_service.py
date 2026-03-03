@@ -331,6 +331,95 @@ def test_run_file_review_uses_repository_context_for_cross_file_function_chains(
     assert any("value = value or ''" in context for context in seen["related_function_contexts"])
 
 
+def test_run_file_review_uses_cross_file_transparent_wrappers_for_static_safety(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "function_contracts.json").write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "assert_present",
+                    "ensures_non_nil_args": [1],
+                },
+                {
+                    "qualified_name": "normalize_name",
+                    "returns_non_nil_from_args_by_return_slot": {
+                        "1": [2],
+                    },
+                    "requires_guarded_args_by_return_slot": {
+                        "1": [1],
+                    },
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    target_file = tmp_path / "src" / "demo.lua"
+    target_file.write_text(
+        "\n".join(
+            [
+                "local username = req.params.username",
+                "assert_present(username)",
+                "local normalized = normalize_name(username, '')",
+                "local wrapped = wrap_name(normalized)",
+                "local final = finalize_name(wrapped)",
+                "return string.match(final, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "wrappers.lua").write_text(
+        "\n".join(
+            [
+                "function wrap_name(value)",
+                "  return value",
+                "end",
+                "",
+                "function finalize_name(value)",
+                "  return value",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_file_review(snapshot, target_file)
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status.startswith("safe")
+
+
 def test_run_file_review_budgets_and_prioritizes_related_function_contexts(
     tmp_path: Path,
 ) -> None:

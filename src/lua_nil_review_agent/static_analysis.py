@@ -26,6 +26,7 @@ def analyze_candidate(
     candidate: CandidateCase,
     *,
     function_contracts: tuple[FunctionContract, ...] = (),
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]] | None = None,
 ) -> StaticAnalysisResult:
     """Apply bounded local heuristics before escalating to agent review."""
 
@@ -44,9 +45,10 @@ def analyze_candidate(
     origin = origin_context[0] if origin_context is not None else None
     observed_guards: list[str] = []
     current_module = detect_module_name(source)
-    transparent_return_wrappers = _collect_transparent_return_wrappers(
-        source,
-        current_module=current_module,
+    effective_transparent_return_wrappers = (
+        dict(transparent_return_wrappers)
+        if transparent_return_wrappers is not None
+        else collect_transparent_return_wrappers((source,))
     )
     current_scope_kind = _scope_kind_for_function_scope(candidate.function_scope)
     current_top_level_phase = _top_level_phase_for_candidate(source, candidate)
@@ -80,7 +82,7 @@ def analyze_candidate(
         current_scope_kind=current_scope_kind,
         sink_rule_id=candidate.sink_rule_id,
         sink_name=candidate.sink_name,
-        transparent_return_wrappers=transparent_return_wrappers,
+        transparent_return_wrappers=effective_transparent_return_wrappers,
     )
     if return_contract_guard is not None:
         observed_guards.append(return_contract_guard)
@@ -863,7 +865,21 @@ def _has_terminal_safe_return_origin(
     )
 
 
-def _collect_transparent_return_wrappers(
+def collect_transparent_return_wrappers(
+    sources: tuple[str, ...],
+) -> dict[str, tuple[tuple[int, int], ...]]:
+    wrappers: dict[str, tuple[tuple[int, int], ...]] = {}
+    for source in sources:
+        wrappers.update(
+            _collect_transparent_return_wrappers_from_source(
+                source,
+                current_module=detect_module_name(source),
+            )
+        )
+    return wrappers
+
+
+def _collect_transparent_return_wrappers_from_source(
     source: str,
     *,
     current_module: str | None,
