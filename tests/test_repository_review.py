@@ -1404,6 +1404,155 @@ def test_run_repository_review_skips_return_slot_when_slot_specific_args_do_not_
     assert verdicts[0].status == "uncertain"
 
 
+def test_run_repository_review_combines_guard_contract_with_return_normalizer(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "function_contracts.json").write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "assert_present",
+                    "ensures_non_nil_args": [1],
+                },
+                {
+                    "qualified_name": "normalize_pair",
+                    "returns_non_nil_from_args_by_return_slot": {
+                        "2": [2],
+                    },
+                    "requires_guarded_args_by_return_slot": {
+                        "2": [1],
+                    },
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "function assert_present(value)",
+                "  if not value then error('missing') end",
+                "end",
+                "",
+                "function normalize_pair(value, fallback)",
+                "  return value, value or fallback",
+                "end",
+                "",
+                "local username = req.params.username",
+                "assert_present(username)",
+                "local raw, normalized = normalize_pair(username, '')",
+                "return string.match(normalized, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status.startswith("safe")
+
+
+def test_run_repository_review_requires_guard_for_return_normalizer_combo(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "function_contracts.json").write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "normalize_pair",
+                    "returns_non_nil_from_args_by_return_slot": {
+                        "2": [2],
+                    },
+                    "requires_guarded_args_by_return_slot": {
+                        "2": [1],
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "function normalize_pair(value, fallback)",
+                "  return value, value or fallback",
+                "end",
+                "",
+                "local username = req.params.username",
+                "local raw, normalized = normalize_pair(username, '')",
+                "return string.match(normalized, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status == "uncertain"
+
+
 def test_run_repository_review_uses_sink_expression_role_scoped_contracts(
     tmp_path: Path,
 ) -> None:

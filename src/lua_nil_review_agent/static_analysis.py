@@ -65,6 +65,7 @@ def analyze_candidate(
     if contract_guard is not None:
         observed_guards.append(contract_guard)
     return_contract_guard = _origin_return_contract_guard(
+        prior_lines,
         origin_context,
         function_contracts=function_contracts,
         current_module=current_module,
@@ -338,6 +339,7 @@ def _active_contract_guard(
 
 
 def _origin_return_contract_guard(
+    lines: list[str],
     origin_context: tuple[str, str, int] | None,
     *,
     function_contracts: tuple[FunctionContract, ...],
@@ -399,6 +401,20 @@ def _origin_return_contract_guard(
     if required_args is None:
         return None
     if not _contract_has_all_required_args(required_args, args):
+        return None
+    guarded_args = _required_guarded_args_for_slot(contract, return_slot)
+    if not _contract_has_guarded_args(
+        guarded_args,
+        args,
+        lines=lines,
+        function_contracts=function_contracts,
+        current_module=current_module,
+        current_function_scope=current_function_scope,
+        current_top_level_phase=current_top_level_phase,
+        current_scope_kind=current_scope_kind,
+        sink_rule_id=sink_rule_id,
+        sink_name=sink_name,
+    ):
         return None
     return f"{resolved_name}(...) returns non-nil"
 
@@ -492,6 +508,85 @@ def _required_return_args_for_slot(
     if contract.returns_non_nil_from_args_by_return_slot:
         return None
     return ()
+
+
+def _required_guarded_args_for_slot(
+    contract: FunctionContract,
+    return_slot: int,
+) -> tuple[int, ...]:
+    for slot, positions in contract.requires_guarded_args_by_return_slot:
+        if slot == return_slot:
+            return positions
+    return ()
+
+
+def _contract_has_guarded_args(
+    required_positions: tuple[int, ...],
+    args: tuple[str, ...],
+    *,
+    lines: list[str],
+    function_contracts: tuple[FunctionContract, ...],
+    current_module: str | None,
+    current_function_scope: str,
+    current_top_level_phase: str | None,
+    current_scope_kind: str | None,
+    sink_rule_id: str,
+    sink_name: str,
+) -> bool:
+    for index in required_positions:
+        if index < 1 or index > len(args):
+            return False
+        symbol = args[index - 1].strip()
+        if not _IDENTIFIER_RE.match(symbol):
+            return False
+        if _is_symbol_guarded(
+            lines,
+            symbol,
+            function_contracts=function_contracts,
+            current_module=current_module,
+            current_function_scope=current_function_scope,
+            current_top_level_phase=current_top_level_phase,
+            current_scope_kind=current_scope_kind,
+            sink_rule_id=sink_rule_id,
+            sink_name=sink_name,
+        ):
+            continue
+        return False
+    return True
+
+
+def _is_symbol_guarded(
+    lines: list[str],
+    symbol: str,
+    *,
+    function_contracts: tuple[FunctionContract, ...],
+    current_module: str | None,
+    current_function_scope: str,
+    current_top_level_phase: str | None,
+    current_scope_kind: str | None,
+    sink_rule_id: str,
+    sink_name: str,
+) -> bool:
+    if _has_active_positive_guard(lines, symbol):
+        return True
+    if _has_early_exit_guard(lines, symbol):
+        return True
+    if _has_active_assert(lines, symbol):
+        return True
+    return (
+        _active_contract_guard(
+            lines,
+            symbol,
+            function_contracts=function_contracts,
+            current_module=current_module,
+            current_function_scope=current_function_scope,
+            current_top_level_phase=current_top_level_phase,
+            current_scope_kind=current_scope_kind,
+            sink_rule_id=sink_rule_id,
+            sink_name=sink_name,
+        )
+        is not None
+    )
 
 
 def _scope_kind_for_function_scope(function_scope: str | None) -> str | None:

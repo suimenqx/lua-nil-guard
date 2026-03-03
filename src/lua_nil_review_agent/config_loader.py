@@ -162,6 +162,10 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         data,
         "returns_non_nil_from_args_by_return_slot",
     )
+    requires_guarded_args_by_return_slot = _optional_positive_int_index_map(
+        data,
+        "requires_guarded_args_by_return_slot",
+    )
     applies_in_modules = _optional_str_list(data, "applies_in_modules")
     applies_in_function_scopes = _optional_str_list(data, "applies_in_function_scopes")
     applies_to_top_level_phases = _optional_str_list(data, "applies_to_top_level_phases")
@@ -246,6 +250,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         ensures_non_nil_args=tuple(ensures_non_nil_args),
         returns_non_nil_from_args=tuple(returns_non_nil_from_args),
         returns_non_nil_from_args_by_return_slot=returns_non_nil_from_args_by_return_slot,
+        requires_guarded_args_by_return_slot=requires_guarded_args_by_return_slot,
         applies_in_modules=tuple(applies_in_modules),
         applies_in_function_scopes=tuple(dict.fromkeys(applies_in_function_scopes)),
         applies_to_top_level_phases=tuple(dict.fromkeys(applies_to_top_level_phases)),
