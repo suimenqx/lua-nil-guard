@@ -62,6 +62,9 @@ _LUA_KEYWORDS = frozenset(
 _MAX_RELATED_FUNCTION_CONTEXTS = 4
 _MAX_RELATED_FUNCTION_CONTEXT_LINES = 48
 _MAX_RELATED_FUNCTION_SUMMARIES = 8
+_EXPANDED_RELATED_FUNCTION_CONTEXTS = 6
+_EXPANDED_RELATED_FUNCTION_CONTEXT_LINES = 72
+_EXPANDED_RELATED_FUNCTION_SUMMARIES = 12
 _TRUNCATED_CONTEXT_MARKER = "  ... (truncated)"
 
 
@@ -421,10 +424,10 @@ def _run_review_from_assessments(
                 summary_text_by_name=summary_text_by_name,
                 function_context_by_name=function_context_by_name,
             )
-            knowledge_facts = tuple(
-                fact
-                for subject in related_evidence.function_names + (assessment.candidate.function_scope,)
-                for fact in facts_for_subject(facts, subject)
+            knowledge_facts = _knowledge_facts_for_assessment(
+                assessment,
+                related_evidence.function_names,
+                facts,
             )
             packet = prepare_evidence_packet(
                 assessment,
@@ -443,7 +446,41 @@ def _run_review_from_assessments(
                 packet,
                 sink_rule_by_id[assessment.candidate.sink_rule_id],
             )
-            verdicts.append(verify_verdict(verdict, packet))
+            final_verdict = verify_verdict(verdict, packet)
+            if final_verdict.status == "uncertain":
+                expanded_related_evidence = _build_related_evidence(
+                    assessment,
+                    summary_text_by_name=summary_text_by_name,
+                    function_context_by_name=function_context_by_name,
+                    max_depth=2,
+                    max_contexts=_EXPANDED_RELATED_FUNCTION_CONTEXTS,
+                    max_context_lines=_EXPANDED_RELATED_FUNCTION_CONTEXT_LINES,
+                    max_summary_items=_EXPANDED_RELATED_FUNCTION_SUMMARIES,
+                )
+                if expanded_related_evidence != related_evidence:
+                    expanded_packet = prepare_evidence_packet(
+                        assessment,
+                        source,
+                        related_functions=expanded_related_evidence.function_names,
+                        function_summaries=expanded_related_evidence.summary_texts,
+                        knowledge_facts=_knowledge_facts_for_assessment(
+                            assessment,
+                            expanded_related_evidence.function_names,
+                            facts,
+                        ),
+                        related_function_contexts=expanded_related_evidence.context_texts,
+                    )
+                    expanded_adjudication = adjudication_backend.adjudicate(
+                        expanded_packet,
+                        sink_rule_by_id[assessment.candidate.sink_rule_id],
+                    )
+                    expanded_verdict = attach_autofix_patch(
+                        expanded_adjudication.judge,
+                        expanded_packet,
+                        sink_rule_by_id[assessment.candidate.sink_rule_id],
+                    )
+                    final_verdict = verify_verdict(expanded_verdict, expanded_packet)
+            verdicts.append(final_verdict)
     return tuple(verdicts)
 
 
@@ -883,6 +920,18 @@ def _build_related_evidence(
         function_names=tuple(function_names),
         summary_texts=summary_texts,
         context_texts=context_texts,
+    )
+
+
+def _knowledge_facts_for_assessment(
+    assessment: CandidateAssessment,
+    related_functions: tuple[str, ...],
+    facts: tuple[object, ...],
+) -> tuple[object, ...]:
+    return tuple(
+        fact
+        for subject in related_functions + (assessment.candidate.function_scope,)
+        for fact in facts_for_subject(facts, subject)
     )
 
 
