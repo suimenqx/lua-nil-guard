@@ -14,6 +14,7 @@ from .collector import collect_candidates
 from .config_loader import load_confidence_policy, load_sink_rules
 from .knowledge import KnowledgeBase, derive_facts_from_summaries, facts_for_subject
 from .models import (
+    AdjudicationRecord,
     AutofixPatch,
     BenchmarkCacheComparison,
     BenchmarkCaseResult,
@@ -447,7 +448,7 @@ def _run_review_from_assessments(
                 sink_rule_by_id[assessment.candidate.sink_rule_id],
             )
             final_verdict = verify_verdict(verdict, packet)
-            if final_verdict.status == "uncertain":
+            if _should_retry_with_expanded_evidence(adjudication, final_verdict):
                 expanded_related_evidence = _build_related_evidence(
                     assessment,
                     summary_text_by_name=summary_text_by_name,
@@ -933,6 +934,18 @@ def _knowledge_facts_for_assessment(
         for subject in related_functions + (assessment.candidate.function_scope,)
         for fact in facts_for_subject(facts, subject)
     )
+
+
+def _should_retry_with_expanded_evidence(
+    adjudication: AdjudicationRecord,
+    verdict: Verdict,
+) -> bool:
+    if verdict.status != "uncertain":
+        return False
+    return "expand_context" in {
+        adjudication.prosecutor.recommended_next_action,
+        adjudication.defender.recommended_next_action,
+    }
 
 
 def _select_function_summaries(
