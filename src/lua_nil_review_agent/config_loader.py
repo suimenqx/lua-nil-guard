@@ -148,12 +148,13 @@ def _parse_function_contract(data: Any) -> FunctionContract:
     if not isinstance(returns_non_nil, bool):
         raise ConfigError("Function contract field 'returns_non_nil' must be a boolean")
     ensures_non_nil_args = _optional_positive_int_list(data, "ensures_non_nil_args")
+    returns_non_nil_from_args = _optional_positive_int_list(data, "returns_non_nil_from_args")
 
     notes = data.get("notes")
     if notes is not None and not isinstance(notes, str):
         raise ConfigError("Function contract field 'notes' must be a string when provided")
 
-    if not returns_non_nil and not ensures_non_nil_args:
+    if not returns_non_nil and not ensures_non_nil_args and not returns_non_nil_from_args:
         raise ConfigError(
             f"Function contract for {qualified_name} must enable at least one supported contract flag"
         )
@@ -162,6 +163,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         qualified_name=qualified_name,
         returns_non_nil=returns_non_nil,
         ensures_non_nil_args=tuple(ensures_non_nil_args),
+        returns_non_nil_from_args=tuple(returns_non_nil_from_args),
         notes=notes,
     )
 

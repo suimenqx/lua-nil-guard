@@ -45,6 +45,13 @@ def analyze_candidate(
     )
     if contract_guard is not None:
         observed_guards.append(contract_guard)
+    return_contract_guard = _origin_return_contract_guard(
+        origin,
+        function_contracts=function_contracts,
+        current_module=current_module,
+    )
+    if return_contract_guard is not None:
+        observed_guards.append(return_contract_guard)
     if _has_defaulting_origin(origin):
         observed_guards.append(f"{candidate.symbol} = {candidate.symbol} or ...")
 
@@ -273,6 +280,42 @@ def _active_contract_guard(
     return active_guard
 
 
+def _origin_return_contract_guard(
+    origin: str | None,
+    *,
+    function_contracts: tuple[FunctionContract, ...],
+    current_module: str | None,
+) -> str | None:
+    if origin is None:
+        return None
+
+    contract_by_name = {
+        contract.qualified_name: contract
+        for contract in function_contracts
+        if contract.returns_non_nil_from_args
+    }
+    if not contract_by_name:
+        return None
+
+    parsed_call = _parse_simple_call(_strip_lua_comment(origin).strip())
+    if parsed_call is None:
+        return None
+
+    raw_name, args = parsed_call
+    resolved_name = _resolve_contract_name(
+        raw_name,
+        current_module=current_module,
+        known_contract_names=frozenset(contract_by_name),
+    )
+    contract = contract_by_name.get(resolved_name)
+    if contract is None:
+        return None
+
+    if not _contract_has_all_required_args(contract.returns_non_nil_from_args, args):
+        return None
+    return f"{resolved_name}(...) returns non-nil"
+
+
 def _split_top_level_values(values_text: str) -> list[str]:
     values: list[str] = []
     start = 0
@@ -341,6 +384,13 @@ def _contract_matches_symbol(
         if 1 <= index <= len(args) and args[index - 1].strip() == symbol:
             return True
     return False
+
+
+def _contract_has_all_required_args(
+    required_positions: tuple[int, ...],
+    args: tuple[str, ...],
+) -> bool:
+    return all(1 <= index <= len(args) for index in required_positions)
 
 
 def _is_if_open_for_symbol(stripped_line: str, symbol: str) -> bool:

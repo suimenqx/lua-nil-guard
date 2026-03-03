@@ -280,6 +280,45 @@ def test_analyze_candidate_treats_contract_guard_call_as_safe() -> None:
     assert result.origin_candidates == ("req.params.username",)
 
 
+def test_analyze_candidate_treats_normalizer_return_contract_as_safe() -> None:
+    source = "\n".join(
+        [
+            "local username = normalize_name(req.params.username)",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_return_contract",
+        file="demo.lua",
+        line=2,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        function_contracts=(
+            FunctionContract(
+                qualified_name="normalize_name",
+                returns_non_nil=False,
+                returns_non_nil_from_args=(1,),
+                notes="normalizes nil usernames",
+            ),
+        ),
+    )
+
+    assert result.state == "safe_static"
+    assert result.observed_guards == ("normalize_name(...) returns non-nil",)
+    assert result.origin_candidates == ("normalize_name(req.params.username)",)
+
+
 def test_analyze_candidate_keeps_assert_active_across_non_assignments() -> None:
     source = "\n".join(
         [

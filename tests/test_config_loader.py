@@ -103,3 +103,24 @@ def test_load_function_contracts_allows_guard_only_contracts(tmp_path: Path) -> 
     assert len(contracts) == 1
     assert contracts[0].returns_non_nil is False
     assert contracts[0].ensures_non_nil_args == (1,)
+
+
+def test_load_function_contracts_allows_return_normalizer_contracts(tmp_path: Path) -> None:
+    config_path = tmp_path / "function_contracts.json"
+    config_path.write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "normalize_name",
+                    "returns_non_nil_from_args": [1],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    contracts = load_function_contracts(config_path)
+
+    assert len(contracts) == 1
+    assert contracts[0].returns_non_nil is False
+    assert contracts[0].returns_non_nil_from_args == (1,)
