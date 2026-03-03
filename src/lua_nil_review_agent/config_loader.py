@@ -12,6 +12,7 @@ class ConfigError(ValueError):
 
 
 _SUPPORTED_CALL_ROLES = frozenset({"assignment_origin", "sink_expression", "guard_call"})
+_SUPPORTED_USAGE_MODES = frozenset({"single_assignment", "multi_assignment", "direct_sink"})
 
 
 def initialize_repository_config(
@@ -155,12 +156,18 @@ def _parse_function_contract(data: Any) -> FunctionContract:
     applies_in_modules = _optional_str_list(data, "applies_in_modules")
     applies_to_sinks = _optional_str_list(data, "applies_to_sinks")
     applies_to_call_roles = _optional_str_list(data, "applies_to_call_roles")
+    applies_to_usage_modes = _optional_str_list(data, "applies_to_usage_modes")
     applies_with_arg_count = _optional_positive_int(data, "applies_with_arg_count")
     required_literal_args = _optional_literal_arg_map(data, "required_literal_args")
     if any(role not in _SUPPORTED_CALL_ROLES for role in applies_to_call_roles):
         raise ConfigError(
             "Function contract field 'applies_to_call_roles' must contain only "
             "assignment_origin, sink_expression, or guard_call"
+        )
+    if any(mode not in _SUPPORTED_USAGE_MODES for mode in applies_to_usage_modes):
+        raise ConfigError(
+            "Function contract field 'applies_to_usage_modes' must contain only "
+            "single_assignment, multi_assignment, or direct_sink"
         )
 
     notes = data.get("notes")
@@ -180,6 +187,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         applies_in_modules=tuple(applies_in_modules),
         applies_to_sinks=tuple(applies_to_sinks),
         applies_to_call_roles=tuple(dict.fromkeys(applies_to_call_roles)),
+        applies_to_usage_modes=tuple(dict.fromkeys(applies_to_usage_modes)),
         applies_with_arg_count=applies_with_arg_count,
         required_literal_args=required_literal_args,
         notes=notes,

@@ -596,6 +596,86 @@ def test_analyze_candidate_limits_return_contracts_to_configured_call_roles() ->
     assert result.origin_candidates == ("normalize_name(req.params.username)",)
 
 
+def test_analyze_candidate_respects_return_contract_single_assignment_usage() -> None:
+    source = "\n".join(
+        [
+            "local username = normalize_name(req.params.username)",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_single_assignment_usage",
+        file="demo.lua",
+        line=2,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        function_contracts=(
+            FunctionContract(
+                qualified_name="normalize_name",
+                returns_non_nil=False,
+                returns_non_nil_from_args=(1,),
+                applies_to_usage_modes=("single_assignment",),
+            ),
+        ),
+    )
+
+    assert result.state == "safe_static"
+    assert result.observed_guards == ("normalize_name(...) returns non-nil",)
+    assert result.origin_candidates == ("normalize_name(req.params.username)",)
+    assert result.origin_usage_modes == ("single_assignment",)
+
+
+def test_analyze_candidate_limits_return_contracts_to_single_assignment_usage() -> None:
+    source = "\n".join(
+        [
+            "local username, tag = normalize_name(req.params.username)",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_multi_assignment_usage",
+        file="demo.lua",
+        line=2,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        function_contracts=(
+            FunctionContract(
+                qualified_name="normalize_name",
+                returns_non_nil=False,
+                returns_non_nil_from_args=(1,),
+                applies_to_usage_modes=("single_assignment",),
+            ),
+        ),
+    )
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
+    assert result.origin_candidates == ("normalize_name(req.params.username)",)
+    assert result.origin_usage_modes == ("multi_assignment",)
+
+
 def test_analyze_candidate_respects_return_contract_arg_count() -> None:
     source = "\n".join(
         [

@@ -12,6 +12,7 @@ def build_evidence_packet(
     knowledge_facts: tuple[str, ...],
     origin_candidates: tuple[str, ...],
     observed_guards: tuple[str, ...],
+    origin_usage_modes: tuple[str, ...] = (),
     related_function_contexts: tuple[str, ...] = (),
 ) -> EvidencePacket:
     """Assemble the normalized context bundle for agent adjudication."""
@@ -33,6 +34,7 @@ def build_evidence_packet(
         static_reasoning={
             "state": candidate.static_state,
             "origin_candidates": tuple(origin_candidates),
+            "origin_usage_modes": tuple(origin_usage_modes),
             "observed_guards": tuple(observed_guards),
         },
         related_function_contexts=tuple(related_function_contexts),

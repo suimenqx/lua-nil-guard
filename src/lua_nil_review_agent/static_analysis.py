@@ -24,11 +24,13 @@ def analyze_candidate(
             state="unknown_static",
             observed_guards=(),
             origin_candidates=(candidate.expression,),
+            origin_usage_modes=("direct_sink",),
         )
 
     lines = source.splitlines()
     prior_lines = lines[: max(0, candidate.line - 1)]
-    origin = _find_last_assignment(prior_lines, candidate.symbol)
+    origin_context = _find_last_assignment(prior_lines, candidate.symbol)
+    origin = origin_context[0] if origin_context is not None else None
     observed_guards: list[str] = []
     current_module = detect_module_name(source)
 
@@ -49,7 +51,7 @@ def analyze_candidate(
     if contract_guard is not None:
         observed_guards.append(contract_guard)
     return_contract_guard = _origin_return_contract_guard(
-        origin,
+        origin_context,
         function_contracts=function_contracts,
         current_module=current_module,
         sink_rule_id=candidate.sink_rule_id,
@@ -62,14 +64,20 @@ def analyze_candidate(
 
     state = "safe_static" if observed_guards else "unknown_static"
     origins = (origin,) if origin is not None else (candidate.expression,)
+    origin_usage_modes = (
+        (origin_context[1],)
+        if origin_context is not None
+        else ("direct_sink",)
+    )
     return StaticAnalysisResult(
         state=state,
         observed_guards=tuple(observed_guards),
         origin_candidates=origins,
+        origin_usage_modes=origin_usage_modes,
     )
 
 
-def _find_last_assignment(lines: list[str], symbol: str) -> str | None:
+def _find_last_assignment(lines: list[str], symbol: str) -> tuple[str, str] | None:
     single_pattern = re.compile(
         rf"^\s*(?:local\s+)?{re.escape(symbol)}\s*=\s*(.+?)\s*$",
     )
@@ -84,7 +92,7 @@ def _find_last_assignment(lines: list[str], symbol: str) -> str | None:
             continue
         match = single_pattern.match(line)
         if match:
-            return match.group(1)
+            return match.group(1), "single_assignment"
         match = multi_pattern.match(line)
         if match:
             names = [name.strip() for name in match.group(1).split(",")]
@@ -97,10 +105,10 @@ def _find_last_assignment(lines: list[str], symbol: str) -> str | None:
 
             position = names.index(symbol)
             if position < len(values):
-                return values[position]
+                return values[position], "multi_assignment"
             if len(values) == 1:
                 # A single function call can populate multiple targets in Lua.
-                return values[0]
+                return values[0], "multi_assignment"
     return None
 
 
@@ -301,15 +309,16 @@ def _active_contract_guard(
 
 
 def _origin_return_contract_guard(
-    origin: str | None,
+    origin_context: tuple[str, str] | None,
     *,
     function_contracts: tuple[FunctionContract, ...],
     current_module: str | None,
     sink_rule_id: str,
     sink_name: str,
 ) -> str | None:
-    if origin is None:
+    if origin_context is None:
         return None
+    origin, usage_mode = origin_context
 
     contract_by_name = {
         contract.qualified_name: contract
@@ -343,6 +352,7 @@ def _origin_return_contract_guard(
         arg_count=len(args),
         arg_values=args,
         call_role="assignment_origin",
+        usage_mode=usage_mode,
     ):
         return None
 

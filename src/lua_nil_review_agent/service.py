@@ -228,6 +228,7 @@ def prepare_evidence_packet(
         function_summaries=function_summaries,
         knowledge_facts=knowledge_facts,
         origin_candidates=assessment.static_analysis.origin_candidates,
+        origin_usage_modes=assessment.static_analysis.origin_usage_modes,
         observed_guards=assessment.static_analysis.observed_guards,
         related_function_contexts=related_function_contexts,
     )
@@ -1068,7 +1069,12 @@ def _knowledge_facts_for_assessment(
             continue
         if contract.qualified_name not in related_functions:
             continue
-        if not (contract.applies_with_arg_count or contract.required_literal_args):
+        if not (
+            contract.applies_to_call_roles
+            or contract.applies_to_usage_modes
+            or contract.applies_with_arg_count
+            or contract.required_literal_args
+        ):
             continue
         call_contexts = call_contexts_by_function.get(contract.qualified_name, ())
         if not any(
@@ -1077,8 +1083,9 @@ def _knowledge_facts_for_assessment(
                 arg_count=len(args),
                 arg_values=args,
                 call_role=call_role,
+                usage_mode=usage_mode,
             )
-            for args, call_role in call_contexts
+            for args, call_role, usage_mode in call_contexts
         ):
             continue
         scoped_contract_statements.append(
@@ -1528,9 +1535,10 @@ def _contract_calls_from_assessment(
     *,
     current_module: str | None = None,
     known_function_names: frozenset[str] | set[str] = frozenset(),
-) -> dict[str, tuple[tuple[tuple[str, ...], str], ...]]:
-    call_args: dict[str, list[tuple[tuple[str, ...], str]]] = {}
-    for origin in assessment.static_analysis.origin_candidates:
+) -> dict[str, tuple[tuple[tuple[str, ...], str, str | None], ...]]:
+    call_args: dict[str, list[tuple[tuple[str, ...], str, str | None]]] = {}
+    usage_modes = assessment.static_analysis.origin_usage_modes
+    for index, origin in enumerate(assessment.static_analysis.origin_candidates):
         parsed = _parse_call_expression(
             origin,
             default_module=current_module,
@@ -1539,8 +1547,12 @@ def _contract_calls_from_assessment(
         if parsed is None:
             continue
         function_name, args = parsed
+        usage_mode = usage_modes[index] if index < len(usage_modes) else _usage_mode_for_origin(
+            assessment,
+            origin,
+        )
         call_args.setdefault(function_name, []).append(
-            (args, _call_role_for_origin(assessment, origin))
+            (args, _call_role_for_origin(assessment, origin), usage_mode)
         )
     return {key: tuple(value) for key, value in call_args.items()}
 
@@ -1626,6 +1638,12 @@ def _call_role_for_origin(assessment: CandidateAssessment, origin: str) -> str:
     if origin == assessment.candidate.expression:
         return "sink_expression"
     return "assignment_origin"
+
+
+def _usage_mode_for_origin(assessment: CandidateAssessment, origin: str) -> str:
+    if origin == assessment.candidate.expression:
+        return "direct_sink"
+    return "single_assignment"
 
 
 def _build_file_module_index(snapshot: RepositorySnapshot) -> dict[str, str | None]:
