@@ -68,11 +68,15 @@ def derive_facts_from_summaries(summaries: tuple[FunctionSummary, ...]) -> tuple
 
 def derive_facts_from_contracts(
     contracts: tuple[FunctionContract, ...],
+    *,
+    current_module: str | None = None,
 ) -> tuple[KnowledgeFact, ...]:
     """Convert configured contracts into high-confidence reusable safety facts."""
 
     facts: list[KnowledgeFact] = []
     for contract in contracts:
+        if not contract_applies_in_module(contract, current_module):
+            continue
         if contract.returns_non_nil:
             facts.append(
                 KnowledgeFact(
@@ -84,6 +88,19 @@ def derive_facts_from_contracts(
                 )
             )
     return tuple(facts)
+
+
+def contract_applies_in_module(
+    contract: FunctionContract,
+    current_module: str | None,
+) -> bool:
+    """Return whether a contract is active for the current caller module."""
+
+    if not contract.applies_in_modules:
+        return True
+    if current_module is None:
+        return False
+    return current_module in contract.applies_in_modules
 
 
 def _returns_non_nil_value(summary: FunctionSummary) -> bool:

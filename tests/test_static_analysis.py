@@ -319,6 +319,45 @@ def test_analyze_candidate_treats_normalizer_return_contract_as_safe() -> None:
     assert result.origin_candidates == ("normalize_name(req.params.username)",)
 
 
+def test_analyze_candidate_ignores_scoped_normalizer_contract_outside_module() -> None:
+    source = "\n".join(
+        [
+            "module(\"admin.profile\", package.seeall)",
+            "local username = normalize_name(req.params.username)",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_scoped_return_contract",
+        file="demo.lua",
+        line=3,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        function_contracts=(
+            FunctionContract(
+                qualified_name="normalize_name",
+                returns_non_nil=False,
+                returns_non_nil_from_args=(1,),
+                applies_in_modules=("user.profile",),
+            ),
+        ),
+    )
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
+
+
 def test_analyze_candidate_keeps_assert_active_across_non_assignments() -> None:
     source = "\n".join(
         [

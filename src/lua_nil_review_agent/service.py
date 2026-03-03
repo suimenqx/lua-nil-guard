@@ -14,6 +14,7 @@ from .collector import collect_candidates
 from .config_loader import load_confidence_policy, load_function_contracts, load_sink_rules
 from .knowledge import (
     KnowledgeBase,
+    contract_applies_in_module,
     derive_facts_from_contracts,
     derive_facts_from_summaries,
     facts_for_subject,
@@ -472,6 +473,8 @@ def _run_review_from_assessments(
                 assessment,
                 related_evidence.function_names,
                 facts,
+                function_contracts=snapshot.function_contracts,
+                current_module=file_module_by_path.get(_normalize_path_key(assessment.candidate.file)),
             )
             packet = prepare_evidence_packet(
                 assessment,
@@ -516,6 +519,10 @@ def _run_review_from_assessments(
                             assessment,
                             expanded_related_evidence.function_names,
                             facts,
+                            function_contracts=snapshot.function_contracts,
+                            current_module=file_module_by_path.get(
+                                _normalize_path_key(assessment.candidate.file)
+                            ),
                         ),
                         related_function_contexts=expanded_related_evidence.context_texts,
                     )
@@ -596,9 +603,13 @@ def export_adjudication_tasks(
                 file_module_by_path=file_module_by_path,
             )
             knowledge_facts = tuple(
-                fact
-                for subject in related_evidence.function_names + (assessment.candidate.function_scope,)
-                for fact in facts_for_subject(facts, subject)
+                _knowledge_facts_for_assessment(
+                    assessment,
+                    related_evidence.function_names,
+                    facts,
+                    function_contracts=snapshot.function_contracts,
+                    current_module=file_module_by_path.get(_normalize_path_key(assessment.candidate.file)),
+                )
             )
             packet = prepare_evidence_packet(
                 assessment,
@@ -1013,12 +1024,27 @@ def _knowledge_facts_for_assessment(
     assessment: CandidateAssessment,
     related_functions: tuple[str, ...],
     facts: tuple[object, ...],
+    *,
+    function_contracts: tuple[object, ...] = (),
+    current_module: str | None = None,
 ) -> tuple[object, ...]:
-    return tuple(
+    fact_texts = list(
         fact
         for subject in related_functions + (assessment.candidate.function_scope,)
         for fact in facts_for_subject(facts, subject)
     )
+    scoped_contract_facts = derive_facts_from_contracts(
+        tuple(
+            contract
+            for contract in function_contracts
+            if contract_applies_in_module(contract, current_module)
+        ),
+        current_module=current_module,
+    )
+    for fact in scoped_contract_facts:
+        if fact.subject in related_functions:
+            fact_texts.append(fact.statement)
+    return tuple(dict.fromkeys(fact_texts))
 
 
 def _should_retry_with_expanded_evidence(
@@ -1195,9 +1221,7 @@ def _load_knowledge_facts(
     knowledge_path: str | Path | None,
 ) -> tuple[object, ...]:
     path = Path(knowledge_path) if knowledge_path is not None else snapshot.root / "data" / "knowledge.json"
-    persisted = KnowledgeBase(path).load()
-    contract_facts = derive_facts_from_contracts(snapshot.function_contracts)
-    return _merge_knowledge_facts(persisted, contract_facts)
+    return KnowledgeBase(path).load()
 
 
 def _merge_knowledge_facts(*fact_groups: tuple[object, ...]) -> tuple[object, ...]:

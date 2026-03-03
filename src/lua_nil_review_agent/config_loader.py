@@ -149,6 +149,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         raise ConfigError("Function contract field 'returns_non_nil' must be a boolean")
     ensures_non_nil_args = _optional_positive_int_list(data, "ensures_non_nil_args")
     returns_non_nil_from_args = _optional_positive_int_list(data, "returns_non_nil_from_args")
+    applies_in_modules = _optional_str_list(data, "applies_in_modules")
 
     notes = data.get("notes")
     if notes is not None and not isinstance(notes, str):
@@ -164,6 +165,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         returns_non_nil=returns_non_nil,
         ensures_non_nil_args=tuple(ensures_non_nil_args),
         returns_non_nil_from_args=tuple(returns_non_nil_from_args),
+        applies_in_modules=tuple(applies_in_modules),
         notes=notes,
     )
 
@@ -210,6 +212,13 @@ def _optional_positive_int_list(data: dict[str, Any], key: str) -> list[int]:
     value = data.get(key, [])
     if not isinstance(value, list) or any(not isinstance(item, int) or item < 1 for item in value):
         raise ConfigError(f"Function contract field '{key}' must be a positive integer array")
+    return value
+
+
+def _optional_str_list(data: dict[str, Any], key: str) -> list[str]:
+    value = data.get(key, [])
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        raise ConfigError(f"Function contract field '{key}' must be a non-empty string array")
     return value
 
 

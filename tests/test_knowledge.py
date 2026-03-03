@@ -106,3 +106,19 @@ def test_derive_facts_from_contracts_emits_high_confidence_non_nil_fact() -> Non
     assert facts[0].subject == "user.profile.normalize_name"
     assert facts[0].confidence == "high"
     assert facts[0].source == "config"
+
+
+def test_derive_facts_from_contracts_filters_scoped_contracts_by_module() -> None:
+    contracts = (
+        FunctionContract(
+            qualified_name="normalize_name",
+            returns_non_nil=True,
+            applies_in_modules=("user.profile",),
+        ),
+    )
+
+    assert derive_facts_from_contracts(contracts) == ()
+    scoped = derive_facts_from_contracts(contracts, current_module="user.profile")
+
+    assert len(scoped) == 1
+    assert scoped[0].subject == "normalize_name"

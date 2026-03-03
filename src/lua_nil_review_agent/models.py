@@ -152,6 +152,7 @@ class FunctionContract:
     returns_non_nil: bool
     ensures_non_nil_args: tuple[int, ...] = ()
     returns_non_nil_from_args: tuple[int, ...] = ()
+    applies_in_modules: tuple[str, ...] = ()
     notes: str | None = None
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from .knowledge import contract_applies_in_module
 from .models import CandidateCase, FunctionContract, StaticAnalysisResult
 from .summaries import detect_module_name
 
@@ -241,6 +242,7 @@ def _active_contract_guard(
         contract.qualified_name: contract
         for contract in function_contracts
         if contract.ensures_non_nil_args
+        and contract_applies_in_module(contract, current_module)
     }
     if not contract_by_name:
         return None
@@ -293,6 +295,7 @@ def _origin_return_contract_guard(
         contract.qualified_name: contract
         for contract in function_contracts
         if contract.returns_non_nil_from_args
+        and contract_applies_in_module(contract, current_module)
     }
     if not contract_by_name:
         return None
