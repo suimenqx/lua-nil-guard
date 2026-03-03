@@ -13,7 +13,10 @@ from .parser_backend import (
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _FUNCTION_NAME_RE = re.compile(
-    r"^\s*(?:local\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+    r"^\s*(?:local\s+)?function\s+([A-Za-z_][A-Za-z0-9_.:]*)\s*\(",
+)
+_MODULE_DECLARATION_RE = re.compile(
+    r"^\s*module\s*\(\s*(['\"])([^'\"]+)\1(?:\s*,\s*package\.seeall)?\s*\)\s*$",
 )
 
 
@@ -113,8 +116,31 @@ def collect_candidates(
 
 def _find_enclosing_function(prefix: str) -> str:
     function_name = "main"
+    module_name: str | None = None
     for line in prefix.splitlines():
-        match = _FUNCTION_NAME_RE.match(line)
+        code = _strip_lua_comment(line)
+        module_match = _MODULE_DECLARATION_RE.match(code.strip())
+        if module_match is not None:
+            module_name = module_match.group(2)
+            continue
+
+        match = _FUNCTION_NAME_RE.match(code)
         if match:
-            function_name = match.group(1)
+            function_name = _qualify_function_name(match.group(1), module_name)
     return function_name
+
+
+def _qualify_function_name(defined_name: str, module_name: str | None) -> str:
+    normalized = defined_name.strip().replace(":", ".")
+    if "." in normalized:
+        return normalized
+    if module_name:
+        return f"{module_name}.{normalized}"
+    return normalized
+
+
+def _strip_lua_comment(line: str) -> str:
+    comment_index = line.find("--")
+    if comment_index == -1:
+        return line
+    return line[:comment_index]

@@ -56,9 +56,9 @@ def derive_facts_from_summaries(summaries: tuple[FunctionSummary, ...]) -> tuple
         if _returns_non_nil_value(summary):
             facts.append(
                 KnowledgeFact(
-                    key=f"{summary.function_name}.returns_non_nil",
-                    subject=summary.function_name,
-                    statement=f"{summary.function_name} returns non-nil value",
+                    key=f"{summary.qualified_name}.returns_non_nil",
+                    subject=summary.qualified_name,
+                    statement=f"{summary.qualified_name} returns non-nil value",
                     confidence="medium",
                     source="summary",
                 )

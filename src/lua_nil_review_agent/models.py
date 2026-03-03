@@ -133,12 +133,14 @@ class FunctionSummary:
     function_id: str
     file: str
     function_name: str
+    qualified_name: str
     line: int
     params: dict[str, str]
     guards: tuple[str, ...]
     returns: tuple[str, ...]
     confidence: str
     source: str
+    module_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

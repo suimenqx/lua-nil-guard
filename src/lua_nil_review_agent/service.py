@@ -29,13 +29,15 @@ from .models import (
 from .pipeline import build_evidence_packet, should_report
 from .prompting import build_adjudication_prompt
 from .repository import discover_lua_files
-from .summaries import SummaryStore, summarize_source
+from .summaries import SummaryStore, detect_module_name, summarize_source
 from .static_analysis import analyze_candidate
 from .verification import verify_verdict
 
 
-_CALL_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(")
-_INLINE_CALL_RE = re.compile(r"(?<![.:A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_CALL_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*(?:[.:][A-Za-z_][A-Za-z0-9_]*)*)\s*\(")
+_INLINE_CALL_RE = re.compile(
+    r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*(?:[.:][A-Za-z_][A-Za-z0-9_]*)*)\s*\("
+)
 _FUNCTION_BLOCK_RE = re.compile(
     r"\b(?:local\s+)?function(?:\s+[A-Za-z_][A-Za-z0-9_.:]*|\s*)\s*\("
 )
@@ -71,7 +73,7 @@ _TRUNCATED_CONTEXT_MARKER = "  ... (truncated)"
 
 @dataclass(frozen=True, slots=True)
 class _FunctionContextBlock:
-    function_name: str
+    qualified_name: str
     file: str
     line: int
     evidence_score: int
@@ -207,6 +209,7 @@ def run_repository_review(
     summaries = _collect_repository_summaries(snapshot)
     summary_text_by_name = _build_summary_text_index(summaries)
     function_context_by_name = _build_function_context_index(snapshot, summaries)
+    file_module_by_path = _build_file_module_index(snapshot)
     facts = _load_knowledge_facts(snapshot, knowledge_path)
     adjudication_backend = backend or HeuristicAdjudicationBackend()
 
@@ -216,6 +219,7 @@ def run_repository_review(
         adjudication_backend=adjudication_backend,
         summary_text_by_name=summary_text_by_name,
         function_context_by_name=function_context_by_name,
+        file_module_by_path=file_module_by_path,
         facts=facts,
     )
 
@@ -233,6 +237,7 @@ def run_file_review(
     summaries = _collect_repository_summaries(snapshot)
     summary_text_by_name = _build_summary_text_index(summaries)
     function_context_by_name = _build_function_context_index(snapshot, summaries)
+    file_module_by_path = _build_file_module_index(snapshot)
     facts = _load_knowledge_facts(snapshot, knowledge_path)
     adjudication_backend = backend or HeuristicAdjudicationBackend()
 
@@ -242,6 +247,7 @@ def run_file_review(
         adjudication_backend=adjudication_backend,
         summary_text_by_name=summary_text_by_name,
         function_context_by_name=function_context_by_name,
+        file_module_by_path=file_module_by_path,
         facts=facts,
     )
 
@@ -269,6 +275,7 @@ def benchmark_repository_review(
     summaries = _collect_repository_summaries(snapshot)
     summary_text_by_name = _build_summary_text_index(summaries)
     function_context_by_name = _build_function_context_index(snapshot, summaries)
+    file_module_by_path = _build_file_module_index(snapshot)
     facts = (
         _load_knowledge_facts(snapshot, knowledge_path)
         if knowledge_path is not None
@@ -281,6 +288,7 @@ def benchmark_repository_review(
         adjudication_backend=adjudication_backend,
         summary_text_by_name=summary_text_by_name,
         function_context_by_name=function_context_by_name,
+        file_module_by_path=file_module_by_path,
         facts=facts,
     )
     verdict_by_case_id = {verdict.case_id: verdict for verdict in verdicts}
@@ -409,6 +417,7 @@ def _run_review_from_assessments(
     adjudication_backend: AdjudicationBackend,
     summary_text_by_name: dict[str, tuple[str, ...]],
     function_context_by_name: dict[str, tuple[_FunctionContextBlock, ...]],
+    file_module_by_path: dict[str, str | None],
     facts: tuple[object, ...],
 ) -> tuple[Verdict, ...]:
     sink_rule_by_id = {rule.id: rule for rule in snapshot.sink_rules}
@@ -424,6 +433,7 @@ def _run_review_from_assessments(
                 assessment,
                 summary_text_by_name=summary_text_by_name,
                 function_context_by_name=function_context_by_name,
+                file_module_by_path=file_module_by_path,
             )
             knowledge_facts = _knowledge_facts_for_assessment(
                 assessment,
@@ -457,6 +467,7 @@ def _run_review_from_assessments(
                     assessment,
                     summary_text_by_name=summary_text_by_name,
                     function_context_by_name=function_context_by_name,
+                    file_module_by_path=file_module_by_path,
                     max_depth=2,
                     max_contexts=_EXPANDED_RELATED_FUNCTION_CONTEXTS,
                     max_context_lines=_EXPANDED_RELATED_FUNCTION_CONTEXT_LINES,
@@ -530,6 +541,7 @@ def export_adjudication_tasks(
     summaries = _collect_repository_summaries(snapshot)
     summary_text_by_name = _build_summary_text_index(summaries)
     function_context_by_name = _build_function_context_index(snapshot, summaries)
+    file_module_by_path = _build_file_module_index(snapshot)
     facts = _load_knowledge_facts(snapshot, knowledge_path)
     tasks: list[dict[str, object]] = []
 
@@ -540,6 +552,7 @@ def export_adjudication_tasks(
                 assessment,
                 summary_text_by_name=summary_text_by_name,
                 function_context_by_name=function_context_by_name,
+                file_module_by_path=file_module_by_path,
             )
             knowledge_facts = tuple(
                 fact
@@ -793,10 +806,10 @@ def _build_summary_text_index(summaries: tuple[object, ...]) -> dict[str, tuple[
     index: dict[str, list[str]] = {}
     for summary in summaries:
         text = (
-            f"{summary.function_name} params={summary.params} "
+            f"{summary.qualified_name} params={summary.params} "
             f"guards={list(summary.guards)} returns={list(summary.returns)}"
         )
-        index.setdefault(summary.function_name, []).append(text)
+        index.setdefault(summary.qualified_name, []).append(text)
     return {key: tuple(value) for key, value in index.items()}
 
 
@@ -816,18 +829,22 @@ def _build_function_context_index(
                 source_lookup[path_key] = file_path.read_text(encoding="utf-8")
             except OSError:
                 continue
-        snippet, callees = _extract_function_context_snippet(source_lookup[path_key], summary.line)
+        snippet, callees = _extract_function_context_snippet(
+            source_lookup[path_key],
+            summary.line,
+            summary.module_name,
+        )
         if not snippet:
             continue
         rendered = "\n".join(
             [
-                f"{summary.function_name} @ {summary.file}:{summary.line}",
+                f"{summary.qualified_name} @ {summary.file}:{summary.line}",
                 snippet,
             ]
         )
-        index.setdefault(summary.function_name, []).append(
+        index.setdefault(summary.qualified_name, []).append(
             _FunctionContextBlock(
-                function_name=summary.function_name,
+                qualified_name=summary.qualified_name,
                 file=str(summary.file),
                 line=summary.line,
                 evidence_score=_summary_evidence_score(summary),
@@ -842,6 +859,7 @@ def _build_function_context_index(
 def _extract_function_context_snippet(
     source: str,
     start_line: int,
+    module_name: str | None,
 ) -> tuple[str, tuple[str, ...]]:
     lines = source.splitlines()
     start_index = max(0, start_line - 1)
@@ -856,7 +874,7 @@ def _extract_function_context_snippet(
     while index < len(lines):
         line = lines[index]
         snippet_lines.append(line)
-        callee_names.extend(_call_names_from_line(line))
+        callee_names.extend(_call_names_from_line(line, default_module=module_name))
         depth += _opened_block_count(line)
         depth -= _closed_block_count(line)
         if depth <= 0:
@@ -884,12 +902,17 @@ def _build_related_evidence(
     *,
     summary_text_by_name: dict[str, tuple[str, ...]],
     function_context_by_name: dict[str, tuple[_FunctionContextBlock, ...]],
+    file_module_by_path: dict[str, str | None],
     max_depth: int = 1,
     max_contexts: int = _MAX_RELATED_FUNCTION_CONTEXTS,
     max_context_lines: int = _MAX_RELATED_FUNCTION_CONTEXT_LINES,
     max_summary_items: int = _MAX_RELATED_FUNCTION_SUMMARIES,
 ) -> _RelatedEvidenceSelection:
-    direct_related_functions = _related_functions_from_assessment(assessment)
+    current_file_key = _normalize_path_key(assessment.candidate.file)
+    direct_related_functions = _related_functions_from_assessment(
+        assessment,
+        current_module=file_module_by_path.get(current_file_key),
+    )
     ordered_functions, depth_by_function = _expand_related_functions(
         direct_related_functions,
         function_context_by_name,
@@ -905,14 +928,14 @@ def _build_related_evidence(
     )
 
     function_names: list[str] = list(direct_related_functions)
-    for function_name, _ in selected_contexts:
-        if function_name not in function_names:
-            function_names.append(function_name)
-    for function_name in ordered_functions:
-        if function_name in function_names:
+    for qualified_name, _ in selected_contexts:
+        if qualified_name not in function_names:
+            function_names.append(qualified_name)
+    for qualified_name in ordered_functions:
+        if qualified_name in function_names:
             continue
-        if summary_text_by_name.get(function_name):
-            function_names.append(function_name)
+        if summary_text_by_name.get(qualified_name):
+            function_names.append(qualified_name)
 
     summary_texts = _select_function_summaries(
         tuple(function_names),
@@ -998,10 +1021,10 @@ def _select_related_function_contexts(
 
     candidates.sort(
         key=lambda block: (
-            depth_by_function.get(block.function_name, max(function_order.values(), default=0) + 1),
+            depth_by_function.get(block.qualified_name, max(function_order.values(), default=0) + 1),
             0 if _normalize_path_key(block.file) == current_file_key else 1,
             -block.evidence_score,
-            function_order.get(block.function_name, len(function_order)),
+            function_order.get(block.qualified_name, len(function_order)),
             block.line,
             block.file,
         )
@@ -1028,7 +1051,7 @@ def _select_related_function_contexts(
                 break
             rendered = _truncate_context_text(rendered, remaining_lines)
 
-        selected.append((block.function_name, rendered))
+        selected.append((block.qualified_name, rendered))
         seen_contexts.add(block.rendered)
         used_lines += len(rendered.splitlines())
 
@@ -1046,15 +1069,23 @@ def _truncate_context_text(rendered: str, max_lines: int) -> str:
     return "\n".join(truncated)
 
 
-def _call_names_from_line(line: str) -> tuple[str, ...]:
+def _call_names_from_line(
+    line: str,
+    *,
+    default_module: str | None = None,
+) -> tuple[str, ...]:
     code = _strip_lua_comment(line)
     if not code.strip():
         return ()
-    names = [
-        match.group(1)
-        for match in _INLINE_CALL_RE.finditer(code)
-        if match.group(1) not in _LUA_KEYWORDS
-    ]
+    if re.match(r"^\s*(?:local\s+)?function\b", code):
+        return ()
+    names = []
+    for match in _INLINE_CALL_RE.finditer(code):
+        raw_name = match.group(1)
+        short_name = raw_name.rsplit(".", 1)[-1].rsplit(":", 1)[-1]
+        if short_name in _LUA_KEYWORDS:
+            continue
+        names.append(_normalize_related_name(raw_name, default_module=default_module))
     return tuple(dict.fromkeys(names))
 
 
@@ -1307,10 +1338,49 @@ def _expand_related_functions(
     return tuple(ordered), depth_by_function
 
 
-def _related_functions_from_assessment(assessment: CandidateAssessment) -> tuple[str, ...]:
+def _related_functions_from_assessment(
+    assessment: CandidateAssessment,
+    *,
+    current_module: str | None = None,
+) -> tuple[str, ...]:
     related: list[str] = []
     for origin in assessment.static_analysis.origin_candidates:
-        match = _CALL_RE.match(origin)
-        if match is not None:
-            related.append(match.group(1))
+        resolved = _call_name_from_expression(origin, default_module=current_module)
+        if resolved is not None:
+            related.append(resolved)
     return tuple(dict.fromkeys(related))
+
+
+def _call_name_from_expression(
+    expression: str,
+    *,
+    default_module: str | None = None,
+) -> str | None:
+    match = _CALL_RE.match(expression)
+    if match is None:
+        return None
+    return _normalize_related_name(match.group(1), default_module=default_module)
+
+
+def _normalize_related_name(
+    raw_name: str,
+    *,
+    default_module: str | None = None,
+) -> str:
+    normalized = raw_name.strip().replace(":", ".")
+    if "." in normalized:
+        return normalized
+    if default_module:
+        return f"{default_module}.{normalized}"
+    return normalized
+
+
+def _build_file_module_index(snapshot: RepositorySnapshot) -> dict[str, str | None]:
+    index: dict[str, str | None] = {}
+    for file_path in snapshot.lua_files:
+        try:
+            source = file_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        index[_normalize_path_key(file_path)] = detect_module_name(source)
+    return index

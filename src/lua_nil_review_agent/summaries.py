@@ -8,7 +8,10 @@ from .models import FunctionSummary
 
 
 _FUNCTION_START_RE = re.compile(
-    r"^\s*(?:local\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*?)\)\s*$",
+    r"^\s*(?:local\s+)?function\s+([A-Za-z_][A-Za-z0-9_.:]*)\s*\((.*?)\)\s*$",
+)
+_MODULE_DECLARATION_RE = re.compile(
+    r"^\s*module\s*\(\s*(['\"])([^'\"]+)\1(?:\s*,\s*package\.seeall)?\s*\)\s*$",
 )
 
 
@@ -27,12 +30,14 @@ class SummaryStore:
                 function_id=item["function_id"],
                 file=item["file"],
                 function_name=item["function_name"],
+                qualified_name=item.get("qualified_name", item["function_name"]),
                 line=item["line"],
                 params=dict(item["params"]),
                 guards=tuple(item["guards"]),
                 returns=tuple(item["returns"]),
                 confidence=item["confidence"],
                 source=item["source"],
+                module_name=item.get("module_name"),
             )
             for item in data
         )
@@ -44,12 +49,14 @@ class SummaryStore:
                 "function_id": summary.function_id,
                 "file": summary.file,
                 "function_name": summary.function_name,
+                "qualified_name": summary.qualified_name,
                 "line": summary.line,
                 "params": summary.params,
                 "guards": list(summary.guards),
                 "returns": list(summary.returns),
                 "confidence": summary.confidence,
                 "source": summary.source,
+                "module_name": summary.module_name,
             }
             for summary in summaries
         ]
@@ -63,6 +70,7 @@ def summarize_source(file_path: str | Path, source: str) -> tuple[FunctionSummar
     lines = source.splitlines()
     summaries: list[FunctionSummary] = []
     index = 0
+    module_name = detect_module_name(source)
 
     while index < len(lines):
         match = _FUNCTION_START_RE.match(lines[index])
@@ -70,7 +78,9 @@ def summarize_source(file_path: str | Path, source: str) -> tuple[FunctionSummar
             index += 1
             continue
 
-        function_name = match.group(1)
+        defined_name = match.group(1)
+        function_name = _short_function_name(defined_name)
+        qualified_name = _qualify_function_name(defined_name, module_name)
         params = _parse_params(match.group(2))
         body_lines, end_index = _capture_function_body(lines, index + 1)
         guard_lines: list[str] = []
@@ -93,20 +103,35 @@ def summarize_source(file_path: str | Path, source: str) -> tuple[FunctionSummar
 
         summaries.append(
             FunctionSummary(
-                function_id=f"{file_text}::{function_name}:{index + 1}",
+                function_id=f"{file_text}::{qualified_name}:{index + 1}",
                 file=file_text,
                 function_name=function_name,
+                qualified_name=qualified_name,
                 line=index + 1,
                 params=params,
                 guards=tuple(dict.fromkeys(guard_lines)),
                 returns=tuple(returns),
                 confidence="medium",
                 source="static",
+                module_name=module_name,
             )
         )
         index = end_index + 1
 
     return tuple(summaries)
+
+
+def detect_module_name(source: str) -> str | None:
+    """Return the legacy module name declared via module(..., package.seeall)."""
+
+    for line in source.splitlines():
+        code = _strip_lua_comment(line)
+        if not code.strip():
+            continue
+        match = _MODULE_DECLARATION_RE.match(code.strip())
+        if match is not None:
+            return match.group(2)
+    return None
 
 
 def _parse_params(raw: str) -> dict[str, str]:
@@ -116,6 +141,24 @@ def _parse_params(raw: str) -> dict[str, str]:
         if name:
             params[name] = "unknown"
     return params
+
+
+def _qualify_function_name(defined_name: str, module_name: str | None) -> str:
+    normalized = _normalize_callable_name(defined_name)
+    if "." in normalized:
+        return normalized
+    if module_name:
+        return f"{module_name}.{normalized}"
+    return normalized
+
+
+def _short_function_name(defined_name: str) -> str:
+    normalized = _normalize_callable_name(defined_name)
+    return normalized.rsplit(".", 1)[-1]
+
+
+def _normalize_callable_name(name: str) -> str:
+    return name.strip().replace(":", ".")
 
 
 def _capture_function_body(lines: list[str], start: int) -> tuple[list[str], int]:
@@ -136,3 +179,10 @@ def _capture_function_body(lines: list[str], start: int) -> tuple[list[str], int
         index += 1
 
     return body, len(lines) - 1
+
+
+def _strip_lua_comment(line: str) -> str:
+    comment_index = line.find("--")
+    if comment_index == -1:
+        return line
+    return line[:comment_index]

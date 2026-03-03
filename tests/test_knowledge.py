@@ -68,3 +68,22 @@ def test_derive_facts_from_summaries_supports_first_value_of_multi_return() -> N
     assert len(facts) == 1
     assert facts[0].subject == "normalize_pair"
     assert facts[0].statement == "normalize_pair returns non-nil value"
+
+
+def test_derive_facts_from_summaries_uses_qualified_module_names() -> None:
+    source = "\n".join(
+        [
+            "module('account.profile', package.seeall)",
+            "function normalize_name(name)",
+            "  name = name or 'guest'",
+            "  return name",
+            "end",
+        ]
+    )
+
+    summaries = summarize_source(Path("profile.lua"), source)
+    facts = derive_facts_from_summaries(summaries)
+
+    assert len(facts) == 1
+    assert facts[0].subject == "account.profile.normalize_name"
+    assert facts[0].statement == "account.profile.normalize_name returns non-nil value"
