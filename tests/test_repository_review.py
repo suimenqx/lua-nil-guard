@@ -1754,16 +1754,19 @@ def test_run_repository_review_limits_return_normalizer_chain_depth(
                 "",
                 "function wrap_name(value)",
                 "  local result = value",
+                "  result = result",
                 "  return result",
                 "end",
                 "",
                 "function finalize_name(value)",
                 "  local result = value",
+                "  result = result",
                 "  return result",
                 "end",
                 "",
                 "function seal_name(value)",
                 "  local result = value",
+                "  result = result",
                 "  return result",
                 "end",
                 "",
@@ -1950,6 +1953,67 @@ def test_run_repository_review_uses_cross_file_transparent_wrappers(
                 "",
                 "function finalize_name(value)",
                 "  return value",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status.startswith("safe")
+
+
+def test_run_repository_review_uses_cross_file_defaulting_wrappers_without_contracts(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local final = wrap_name(req.params.username)",
+                "return string.match(final, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "wrappers.lua").write_text(
+        "\n".join(
+            [
+                "function wrap_name(value)",
+                "  local normalized = value or ''",
+                "  return normalized",
                 "end",
             ]
         ),

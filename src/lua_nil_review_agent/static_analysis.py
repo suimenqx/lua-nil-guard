@@ -18,6 +18,7 @@ from .summaries import detect_module_name
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SIMPLE_CALL_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_:.]*)\s*\((.*)\)\s*$")
 _FUNCTION_DEF_RE = re.compile(r"^\s*(?:local\s+)?function\s+([A-Za-z_][A-Za-z0-9_:.]*)\s*\((.*?)\)\s*$")
+_ASSIGNMENT_RE = re.compile(r"^\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$")
 _MAX_CHAINED_RETURN_PROOF_DEPTH = 2
 
 
@@ -381,9 +382,6 @@ def _origin_return_contract_guard(
             current_sink_name=sink_name,
         )
     }
-    if not contract_by_name:
-        return None
-
     parsed_call = _parse_simple_call(_strip_lua_comment(origin).strip())
     if parsed_call is None:
         return None
@@ -444,7 +442,7 @@ def _origin_return_contract_guard(
         transparent_return_wrappers=transparent_return_wrappers,
         remaining_chain_depth=_MAX_CHAINED_RETURN_PROOF_DEPTH,
     ):
-        return f"{wrapper_name}(...) transparently preserves non-nil input"
+        return f"{wrapper_name}(...) preserves or defaults to non-nil"
     return None
 
 
@@ -750,6 +748,8 @@ def _transparent_wrapper_returns_safe_value(
         return_slot,
     )
     if passthrough_index is None or passthrough_index < 1 or passthrough_index > len(args):
+        if passthrough_index == 0:
+            return True
         return False
     next_remaining_depth = remaining_chain_depth - 1
     if next_remaining_depth < 0:
@@ -933,21 +933,76 @@ def _transparent_return_mapping(
         if _strip_lua_comment(line).strip()
     ]
     if len(meaningful_lines) != 1:
+        if len(meaningful_lines) == 2:
+            return _aliased_wrapper_return_mapping(meaningful_lines, params)
         return ()
     statement = meaningful_lines[0]
     if not statement.startswith("return "):
         return ()
-    return_values = _split_top_level_values(statement[len("return ") :])
+    return _direct_wrapper_return_mapping(statement[len("return ") :], params)
+
+
+def _direct_wrapper_return_mapping(
+    return_text: str,
+    params: list[str],
+) -> tuple[tuple[int, int], ...]:
+    return_values = _split_top_level_values(return_text)
     if not return_values:
         return ()
 
     mapping: list[tuple[int, int]] = []
     for slot, value in enumerate(return_values, start=1):
-        value_name = value.strip()
-        if value_name not in params:
+        source_arg = _wrapper_return_source_arg(value, params)
+        if source_arg is None:
             return ()
-        mapping.append((slot, params.index(value_name) + 1))
+        mapping.append((slot, source_arg))
     return tuple(mapping)
+
+
+def _aliased_wrapper_return_mapping(
+    meaningful_lines: list[str],
+    params: list[str],
+) -> tuple[tuple[int, int], ...]:
+    assign_match = _ASSIGNMENT_RE.match(meaningful_lines[0])
+    if assign_match is None:
+        return ()
+    alias = assign_match.group(1)
+    if meaningful_lines[1] != f"return {alias}":
+        return ()
+    source_arg = _wrapper_return_source_arg(assign_match.group(2), params)
+    if source_arg is None:
+        return ()
+    return ((1, source_arg),)
+
+
+def _wrapper_return_source_arg(
+    expression: str,
+    params: list[str],
+) -> int | None:
+    value = expression.strip()
+    if value in params:
+        return params.index(value) + 1
+    if _is_non_nil_literal(value):
+        return 0
+    match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s+or\s+(.+)$", value)
+    if match is None:
+        return None
+    if match.group(1) not in params:
+        return None
+    if not _is_non_nil_literal(match.group(2).strip()):
+        return None
+    return 0
+
+
+def _is_non_nil_literal(value: str) -> bool:
+    stripped = value.strip()
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {"'", '"'}:
+        return True
+    if stripped in {"true", "false"}:
+        return True
+    if re.match(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$", stripped):
+        return True
+    return stripped.startswith("{") and stripped.endswith("}")
 
 
 def _normalize_defined_function_name(

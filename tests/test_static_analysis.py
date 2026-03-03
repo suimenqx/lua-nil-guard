@@ -1529,8 +1529,42 @@ def test_analyze_candidate_proves_transparent_wrapper_chain() -> None:
     )
 
     assert result.state == "safe_static"
-    assert result.observed_guards == ("finalize_name(...) transparently preserves non-nil input",)
+    assert result.observed_guards == ("finalize_name(...) preserves or defaults to non-nil",)
     assert result.origin_candidates == ("finalize_name(wrapped)",)
+    assert result.origin_return_slots == (1,)
+
+
+def test_analyze_candidate_proves_defaulting_wrapper_without_contract() -> None:
+    source = "\n".join(
+        [
+            "function wrap_name(value)",
+            "  local normalized = value or ''",
+            "  return normalized",
+            "end",
+            "",
+            "local final = wrap_name(req.params.username)",
+            "return string.match(final, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_defaulting_wrapper_without_contract",
+        file="demo.lua",
+        line=7,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="final",
+        symbol="final",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "safe_static"
+    assert result.observed_guards == ("wrap_name(...) preserves or defaults to non-nil",)
+    assert result.origin_candidates == ("wrap_name(req.params.username)",)
     assert result.origin_return_slots == (1,)
 
 

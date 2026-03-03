@@ -155,7 +155,10 @@ def test_agent_semantic_suite_strict_backend_distinguishes_risky_safe_and_uncert
     assert any("provable_safe_table_insert_default.lua" in case_id and status == "safe_verified" for case_id, status in statuses.items())
     assert any("provable_safe_pairs_default.lua" in case_id and status == "safe_verified" for case_id, status in statuses.items())
     assert any("provable_safe_length_default.lua" in case_id and status == "safe_verified" for case_id, status in statuses.items())
-    assert any("provable_safe_normalized.lua" in case_id and status == "safe" for case_id, status in statuses.items())
+    assert any(
+        "provable_safe_normalized.lua" in case_id and status.startswith("safe")
+        for case_id, status in statuses.items()
+    )
     assert any("provable_safe_multi_return.lua" in case_id and status == "safe" for case_id, status in statuses.items())
     assert any("provable_uncertain_field.lua" in case_id and status == "uncertain" for case_id, status in statuses.items())
     assert any("provable_uncertain_wrapper.lua" in case_id and status == "uncertain" for case_id, status in statuses.items())

@@ -31,8 +31,8 @@ def test_semantic_suite_static_scan_covers_multiple_patterns(tmp_path: Path) -> 
         sink_ids.add(assessment.candidate.sink_rule_id)
 
     assert len(assessments) == 7
-    assert by_state["safe_static"] == 3
-    assert by_state["unknown_static"] == 4
+    assert by_state["safe_static"] == 4
+    assert by_state["unknown_static"] == 3
     assert by_state["risky_static"] == 0
     assert sink_ids == {"string.match.arg1", "string.find.arg1"}
 

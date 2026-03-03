@@ -321,7 +321,7 @@ def test_run_file_review_uses_repository_context_for_cross_file_function_chains(
     verdicts = run_file_review(snapshot, target_file, backend=SummaryAwareBackend())
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "safe"
+    assert verdicts[0].status.startswith("safe")
     assert seen["related_functions"] == ("normalize_name", "coerce_name")
     assert any("normalize_name" in summary for summary in seen["function_summaries"])
     assert any("coerce_name" in summary for summary in seen["function_summaries"])
@@ -534,7 +534,7 @@ def test_run_file_review_budgets_and_prioritizes_related_function_contexts(
     verdicts = run_file_review(snapshot, target_file, backend=BudgetAwareBackend())
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "safe"
+    assert verdicts[0].status.startswith("safe")
     assert len(seen["related_function_contexts"]) == 4
     assert seen["related_functions"][:4] == (
         "normalize_name",
@@ -707,7 +707,7 @@ def test_run_file_review_expands_to_second_hop_only_after_uncertain(
     verdicts = run_file_review(snapshot, target_file, backend=backend)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "safe"
+    assert verdicts[0].status.startswith("safe")
     assert backend.calls == 2
     assert not any("ensure_name @ " in context for context in backend.seen_contexts[0])
     assert any("coerce_name @ " in context for context in backend.seen_contexts[0])
@@ -963,7 +963,7 @@ def test_run_file_review_disambiguates_same_name_functions_by_module(
     verdicts = run_file_review(snapshot, target_file, backend=ModuleAwareBackend())
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "safe"
+    assert verdicts[0].status.startswith("safe")
     assert seen["related_functions"] == ("user.normalizer.normalize_name",)
     assert any(
         "user.normalizer.normalize_name params=" in summary
@@ -1092,7 +1092,7 @@ def test_run_file_review_qualifies_bare_calls_inside_module_files(
     verdicts = run_file_review(snapshot, target_file, backend=ModuleCallBackend())
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "safe"
+    assert verdicts[0].status.startswith("safe")
     assert seen["related_functions"] == ("user.profile.normalize_name",)
     assert any(
         "user.profile.normalize_name params=" in summary
@@ -1207,7 +1207,7 @@ def test_run_file_review_falls_back_to_global_bare_helper_when_module_symbol_mis
     verdicts = run_file_review(snapshot, target_file, backend=GlobalFallbackBackend())
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "safe"
+    assert verdicts[0].status.startswith("safe")
     assert seen["related_functions"] == ("normalize_global",)
     assert any(
         "normalize_global params=" in summary
@@ -1641,7 +1641,7 @@ def test_run_file_review_allows_explicit_cli_retry_override(
     verdicts = run_file_review(snapshot, target_file, backend=backend)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "safe"
+    assert verdicts[0].status.startswith("safe")
     assert backend.calls == 2
     assert not any("ensure_name @ " in context for context in backend.seen_contexts[0])
     assert any("ensure_name @ " in context for context in backend.seen_contexts[1])
