@@ -39,6 +39,7 @@ def build_adjudication_prompt(
             f"- state: {packet.static_reasoning['state']}",
             f"- origin_candidates: {', '.join(packet.static_reasoning['origin_candidates']) or '(none)'}",
             f"- origin_usage_modes: {', '.join(packet.static_reasoning.get('origin_usage_modes', ())) or '(none)'}",
+            f"- origin_return_slots: {', '.join(packet.static_reasoning.get('origin_return_slots', ())) or '(none)'}",
             f"- observed_guards: {', '.join(packet.static_reasoning['observed_guards']) or '(none)'}",
             "",
             "Local context:",

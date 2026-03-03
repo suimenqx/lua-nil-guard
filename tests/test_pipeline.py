@@ -27,6 +27,7 @@ def test_build_evidence_packet_preserves_core_case_data() -> None:
         knowledge_facts=("normalize_name always returns string", "req.params may be nil"),
         origin_candidates=("req.params.username",),
         observed_guards=(),
+        origin_return_slots=(1,),
     )
 
     assert packet.case_id == "case_001"
@@ -34,6 +35,7 @@ def test_build_evidence_packet_preserves_core_case_data() -> None:
     assert packet.target.sink == "string.match"
     assert packet.target.arg_index == 1
     assert packet.static_reasoning["origin_candidates"] == ("req.params.username",)
+    assert packet.static_reasoning["origin_return_slots"] == ("1",)
     assert packet.knowledge_facts == (
         "normalize_name always returns string",
         "req.params may be nil",

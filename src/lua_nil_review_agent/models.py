@@ -118,6 +118,7 @@ class StaticAnalysisResult:
     observed_guards: tuple[str, ...]
     origin_candidates: tuple[str, ...]
     origin_usage_modes: tuple[str, ...] = ()
+    origin_return_slots: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +161,7 @@ class FunctionContract:
     applies_to_sinks: tuple[str, ...] = ()
     applies_to_call_roles: tuple[str, ...] = ()
     applies_to_usage_modes: tuple[str, ...] = ()
+    applies_to_return_slots: tuple[int, ...] = ()
     applies_with_arg_count: int | None = None
     required_literal_args: tuple[tuple[int, tuple[str, ...]], ...] = ()
     required_arg_shapes: tuple[tuple[int, tuple[str, ...]], ...] = ()

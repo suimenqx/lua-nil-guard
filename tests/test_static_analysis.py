@@ -1106,6 +1106,89 @@ def test_analyze_candidate_limits_return_contracts_to_single_assignment_usage() 
     assert result.observed_guards == ()
     assert result.origin_candidates == ("normalize_name(req.params.username)",)
     assert result.origin_usage_modes == ("multi_assignment",)
+    assert result.origin_return_slots == (1,)
+
+
+def test_analyze_candidate_respects_return_contract_first_slot_in_multi_assignment() -> None:
+    source = "\n".join(
+        [
+            "local username, tag = normalize_pair(req.params.username)",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_return_slot_first",
+        file="demo.lua",
+        line=2,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        function_contracts=(
+            FunctionContract(
+                qualified_name="normalize_pair",
+                returns_non_nil=False,
+                returns_non_nil_from_args=(1,),
+                applies_to_return_slots=(1,),
+            ),
+        ),
+    )
+
+    assert result.state == "safe_static"
+    assert result.observed_guards == ("normalize_pair(...) returns non-nil",)
+    assert result.origin_candidates == ("normalize_pair(req.params.username)",)
+    assert result.origin_usage_modes == ("multi_assignment",)
+    assert result.origin_return_slots == (1,)
+
+
+def test_analyze_candidate_limits_return_contract_to_first_slot_in_multi_assignment() -> None:
+    source = "\n".join(
+        [
+            "local username, tag = normalize_pair(req.params.username)",
+            "return string.match(tag, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_return_slot_second",
+        file="demo.lua",
+        line=2,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="tag",
+        symbol="tag",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        function_contracts=(
+            FunctionContract(
+                qualified_name="normalize_pair",
+                returns_non_nil=False,
+                returns_non_nil_from_args=(1,),
+                applies_to_return_slots=(1,),
+            ),
+        ),
+    )
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
+    assert result.origin_candidates == ("normalize_pair(req.params.username)",)
+    assert result.origin_usage_modes == ("multi_assignment",)
+    assert result.origin_return_slots == (2,)
 
 
 def test_analyze_candidate_respects_return_contract_arg_count() -> None:

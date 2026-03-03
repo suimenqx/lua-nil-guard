@@ -165,6 +165,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
     applies_to_sinks = _optional_str_list(data, "applies_to_sinks")
     applies_to_call_roles = _optional_str_list(data, "applies_to_call_roles")
     applies_to_usage_modes = _optional_str_list(data, "applies_to_usage_modes")
+    applies_to_return_slots = _optional_positive_int_list(data, "applies_to_return_slots")
     applies_with_arg_count = _optional_positive_int(data, "applies_with_arg_count")
     required_literal_args = _optional_choice_arg_map(
         data,
@@ -242,6 +243,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         applies_to_sinks=tuple(applies_to_sinks),
         applies_to_call_roles=tuple(dict.fromkeys(applies_to_call_roles)),
         applies_to_usage_modes=tuple(dict.fromkeys(applies_to_usage_modes)),
+        applies_to_return_slots=tuple(dict.fromkeys(applies_to_return_slots)),
         applies_with_arg_count=applies_with_arg_count,
         required_literal_args=required_literal_args,
         required_arg_shapes=required_arg_shapes,

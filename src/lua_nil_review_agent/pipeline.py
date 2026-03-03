@@ -13,6 +13,7 @@ def build_evidence_packet(
     origin_candidates: tuple[str, ...],
     observed_guards: tuple[str, ...],
     origin_usage_modes: tuple[str, ...] = (),
+    origin_return_slots: tuple[int, ...] = (),
     related_function_contexts: tuple[str, ...] = (),
 ) -> EvidencePacket:
     """Assemble the normalized context bundle for agent adjudication."""
@@ -35,6 +36,7 @@ def build_evidence_packet(
             "state": candidate.static_state,
             "origin_candidates": tuple(origin_candidates),
             "origin_usage_modes": tuple(origin_usage_modes),
+            "origin_return_slots": tuple(str(slot) for slot in origin_return_slots),
             "observed_guards": tuple(observed_guards),
         },
         related_function_contexts=tuple(related_function_contexts),

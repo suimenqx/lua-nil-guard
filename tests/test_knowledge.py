@@ -294,6 +294,20 @@ def test_derive_facts_from_contracts_skips_access_path_scoped_contracts_without_
     assert facts == ()
 
 
+def test_derive_facts_from_contracts_skips_return_slot_scoped_contracts_without_call_context() -> None:
+    contracts = (
+        FunctionContract(
+            qualified_name="normalize_pair",
+            returns_non_nil=True,
+            applies_to_return_slots=(1,),
+        ),
+    )
+
+    facts = derive_facts_from_contracts(contracts)
+
+    assert facts == ()
+
+
 def test_derive_facts_from_contracts_skips_role_scoped_contracts_without_call_context() -> None:
     contracts = (
         FunctionContract(

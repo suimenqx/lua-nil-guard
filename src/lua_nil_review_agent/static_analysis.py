@@ -33,6 +33,7 @@ def analyze_candidate(
             observed_guards=(),
             origin_candidates=(candidate.expression,),
             origin_usage_modes=("direct_sink",),
+            origin_return_slots=(1,),
         )
 
     lines = source.splitlines()
@@ -85,15 +86,21 @@ def analyze_candidate(
         if origin_context is not None
         else ("direct_sink",)
     )
+    origin_return_slots = (
+        (origin_context[2],)
+        if origin_context is not None
+        else ()
+    )
     return StaticAnalysisResult(
         state=state,
         observed_guards=tuple(observed_guards),
         origin_candidates=origins,
         origin_usage_modes=origin_usage_modes,
+        origin_return_slots=origin_return_slots,
     )
 
 
-def _find_last_assignment(lines: list[str], symbol: str) -> tuple[str, str] | None:
+def _find_last_assignment(lines: list[str], symbol: str) -> tuple[str, str, int] | None:
     single_pattern = re.compile(
         rf"^\s*(?:local\s+)?{re.escape(symbol)}\s*=\s*(.+?)\s*$",
     )
@@ -108,7 +115,7 @@ def _find_last_assignment(lines: list[str], symbol: str) -> tuple[str, str] | No
             continue
         match = single_pattern.match(line)
         if match:
-            return match.group(1), "single_assignment"
+            return match.group(1), "single_assignment", 1
         match = multi_pattern.match(line)
         if match:
             names = [name.strip() for name in match.group(1).split(",")]
@@ -121,10 +128,10 @@ def _find_last_assignment(lines: list[str], symbol: str) -> tuple[str, str] | No
 
             position = names.index(symbol)
             if position < len(values):
-                return values[position], "multi_assignment"
+                return values[position], "multi_assignment", 1
             if len(values) == 1:
                 # A single function call can populate multiple targets in Lua.
-                return values[0], "multi_assignment"
+                return values[0], "multi_assignment", position + 1
     return None
 
 
@@ -331,7 +338,7 @@ def _active_contract_guard(
 
 
 def _origin_return_contract_guard(
-    origin_context: tuple[str, str] | None,
+    origin_context: tuple[str, str, int] | None,
     *,
     function_contracts: tuple[FunctionContract, ...],
     current_module: str | None,
@@ -343,7 +350,7 @@ def _origin_return_contract_guard(
 ) -> str | None:
     if origin_context is None:
         return None
-    origin, usage_mode = origin_context
+    origin, usage_mode, return_slot = origin_context
 
     contract_by_name = {
         contract.qualified_name: contract
@@ -381,6 +388,7 @@ def _origin_return_contract_guard(
         arg_values=args,
         call_role="assignment_origin",
         usage_mode=usage_mode,
+        return_slot=return_slot,
     ):
         return None
 
