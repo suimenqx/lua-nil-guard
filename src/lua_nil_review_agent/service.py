@@ -17,6 +17,7 @@ from .knowledge import (
     contract_applies_in_function_scope,
     contract_applies_in_module,
     contract_applies_to_call,
+    contract_applies_to_scope_kind,
     contract_applies_to_sink,
     derive_facts_from_contracts,
     derive_facts_from_summaries,
@@ -1043,6 +1044,10 @@ def _knowledge_facts_for_assessment(
             contract,
             assessment.candidate.function_scope,
         )
+        and contract_applies_to_scope_kind(
+            contract,
+            _scope_kind_for_function_scope(assessment.candidate.function_scope),
+        )
         and contract_applies_to_sink(
             contract,
             current_sink_rule_id=assessment.candidate.sink_rule_id,
@@ -1065,6 +1070,7 @@ def _knowledge_facts_for_assessment(
             applicable_contracts,
             current_module=current_module,
             current_function_scope=assessment.candidate.function_scope,
+            current_scope_kind=_scope_kind_for_function_scope(assessment.candidate.function_scope),
             current_sink_rule_id=assessment.candidate.sink_rule_id,
             current_sink_name=assessment.candidate.sink_name,
         )
@@ -1650,6 +1656,12 @@ def _usage_mode_for_origin(assessment: CandidateAssessment, origin: str) -> str:
     if origin == assessment.candidate.expression:
         return "direct_sink"
     return "single_assignment"
+
+
+def _scope_kind_for_function_scope(function_scope: str | None) -> str | None:
+    if function_scope is None:
+        return None
+    return "top_level" if function_scope == "main" else "function_body"
 
 
 def _build_file_module_index(snapshot: RepositorySnapshot) -> dict[str, str | None]:

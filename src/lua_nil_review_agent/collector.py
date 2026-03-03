@@ -15,6 +15,7 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _FUNCTION_NAME_RE = re.compile(
     r"^\s*(?:local\s+)?function\s+([A-Za-z_][A-Za-z0-9_.:]*)\s*\(",
 )
+_ANONYMOUS_FUNCTION_RE = re.compile(r"(?:=\s*|return\s+)function\b")
 _MODULE_DECLARATION_RE = re.compile(
     r"^\s*module\s*\(\s*(['\"])([^'\"]+)\1(?:\s*,\s*package\.seeall)?\s*\)\s*$",
 )
@@ -115,10 +116,14 @@ def collect_candidates(
 
 
 def _find_enclosing_function(prefix: str) -> str:
-    function_name = "main"
+    scope_stack: list[str] = []
+    block_stack: list[str] = []
     module_name: str | None = None
     for line in prefix.splitlines():
         code = _strip_lua_comment(line)
+        stripped = code.strip()
+        if not stripped:
+            continue
         module_match = _MODULE_DECLARATION_RE.match(code.strip())
         if module_match is not None:
             module_name = module_match.group(2)
@@ -126,8 +131,33 @@ def _find_enclosing_function(prefix: str) -> str:
 
         match = _FUNCTION_NAME_RE.match(code)
         if match:
-            function_name = _qualify_function_name(match.group(1), module_name)
-    return function_name
+            scope_stack.append(_qualify_function_name(match.group(1), module_name))
+            block_stack.append("function")
+            continue
+
+        if _ANONYMOUS_FUNCTION_RE.search(stripped):
+            block_stack.append("anon_function")
+            continue
+        if stripped == "repeat":
+            block_stack.append("repeat")
+            continue
+        if _opens_non_function_block(stripped):
+            block_stack.append("block")
+            continue
+        if stripped == "end":
+            if not block_stack:
+                continue
+            closing = block_stack.pop()
+            if closing == "function" and scope_stack:
+                scope_stack.pop()
+            continue
+        if stripped.startswith("until "):
+            if block_stack and block_stack[-1] == "repeat":
+                block_stack.pop()
+
+    if scope_stack:
+        return scope_stack[-1]
+    return "main"
 
 
 def _qualify_function_name(defined_name: str, module_name: str | None) -> str:
@@ -144,3 +174,13 @@ def _strip_lua_comment(line: str) -> str:
     if comment_index == -1:
         return line
     return line[:comment_index]
+
+
+def _opens_non_function_block(stripped_line: str) -> bool:
+    return (
+        (stripped_line.startswith("if ") and stripped_line.endswith(" then"))
+        or (stripped_line.startswith("elseif ") and stripped_line.endswith(" then"))
+        or (stripped_line.startswith("for ") and stripped_line.endswith(" do"))
+        or (stripped_line.startswith("while ") and stripped_line.endswith(" do"))
+        or stripped_line == "do"
+    )

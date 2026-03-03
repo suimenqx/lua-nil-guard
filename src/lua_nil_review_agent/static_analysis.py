@@ -6,6 +6,7 @@ from .knowledge import (
     contract_applies_in_function_scope,
     contract_applies_in_module,
     contract_applies_to_call,
+    contract_applies_to_scope_kind,
     contract_applies_to_sink,
 )
 from .models import CandidateCase, FunctionContract, StaticAnalysisResult
@@ -38,6 +39,7 @@ def analyze_candidate(
     origin = origin_context[0] if origin_context is not None else None
     observed_guards: list[str] = []
     current_module = detect_module_name(source)
+    current_scope_kind = _scope_kind_for_function_scope(candidate.function_scope)
 
     if _has_active_positive_guard(prior_lines, candidate.symbol):
         observed_guards.append(f"if {candidate.symbol} then")
@@ -51,6 +53,7 @@ def analyze_candidate(
         function_contracts=function_contracts,
         current_module=current_module,
         current_function_scope=candidate.function_scope,
+        current_scope_kind=current_scope_kind,
         sink_rule_id=candidate.sink_rule_id,
         sink_name=candidate.sink_name,
     )
@@ -61,6 +64,7 @@ def analyze_candidate(
         function_contracts=function_contracts,
         current_module=current_module,
         current_function_scope=candidate.function_scope,
+        current_scope_kind=current_scope_kind,
         sink_rule_id=candidate.sink_rule_id,
         sink_name=candidate.sink_name,
     )
@@ -257,6 +261,7 @@ def _active_contract_guard(
     function_contracts: tuple[FunctionContract, ...],
     current_module: str | None,
     current_function_scope: str,
+    current_scope_kind: str | None,
     sink_rule_id: str,
     sink_name: str,
 ) -> str | None:
@@ -266,6 +271,7 @@ def _active_contract_guard(
         if contract.ensures_non_nil_args
         and contract_applies_in_module(contract, current_module)
         and contract_applies_in_function_scope(contract, current_function_scope)
+        and contract_applies_to_scope_kind(contract, current_scope_kind)
         and contract_applies_to_sink(
             contract,
             current_sink_rule_id=sink_rule_id,
@@ -323,6 +329,7 @@ def _origin_return_contract_guard(
     function_contracts: tuple[FunctionContract, ...],
     current_module: str | None,
     current_function_scope: str,
+    current_scope_kind: str | None,
     sink_rule_id: str,
     sink_name: str,
 ) -> str | None:
@@ -336,6 +343,7 @@ def _origin_return_contract_guard(
         if contract.returns_non_nil_from_args
         and contract_applies_in_module(contract, current_module)
         and contract_applies_in_function_scope(contract, current_function_scope)
+        and contract_applies_to_scope_kind(contract, current_scope_kind)
         and contract_applies_to_sink(
             contract,
             current_sink_rule_id=sink_rule_id,
@@ -447,6 +455,12 @@ def _contract_has_all_required_args(
     args: tuple[str, ...],
 ) -> bool:
     return all(1 <= index <= len(args) for index in required_positions)
+
+
+def _scope_kind_for_function_scope(function_scope: str | None) -> str | None:
+    if function_scope is None:
+        return None
+    return "top_level" if function_scope == "main" else "function_body"
 
 
 def _is_if_open_for_symbol(stripped_line: str, symbol: str) -> bool:

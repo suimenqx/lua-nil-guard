@@ -13,6 +13,7 @@ class ConfigError(ValueError):
 
 _SUPPORTED_CALL_ROLES = frozenset({"assignment_origin", "sink_expression", "guard_call"})
 _SUPPORTED_USAGE_MODES = frozenset({"single_assignment", "multi_assignment", "direct_sink"})
+_SUPPORTED_SCOPE_KINDS = frozenset({"top_level", "function_body"})
 
 
 def initialize_repository_config(
@@ -155,6 +156,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
     returns_non_nil_from_args = _optional_positive_int_list(data, "returns_non_nil_from_args")
     applies_in_modules = _optional_str_list(data, "applies_in_modules")
     applies_in_function_scopes = _optional_str_list(data, "applies_in_function_scopes")
+    applies_to_scope_kinds = _optional_str_list(data, "applies_to_scope_kinds")
     applies_to_sinks = _optional_str_list(data, "applies_to_sinks")
     applies_to_call_roles = _optional_str_list(data, "applies_to_call_roles")
     applies_to_usage_modes = _optional_str_list(data, "applies_to_usage_modes")
@@ -169,6 +171,11 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         raise ConfigError(
             "Function contract field 'applies_to_usage_modes' must contain only "
             "single_assignment, multi_assignment, or direct_sink"
+        )
+    if any(kind not in _SUPPORTED_SCOPE_KINDS for kind in applies_to_scope_kinds):
+        raise ConfigError(
+            "Function contract field 'applies_to_scope_kinds' must contain only "
+            "top_level or function_body"
         )
 
     notes = data.get("notes")
@@ -187,6 +194,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         returns_non_nil_from_args=tuple(returns_non_nil_from_args),
         applies_in_modules=tuple(applies_in_modules),
         applies_in_function_scopes=tuple(dict.fromkeys(applies_in_function_scopes)),
+        applies_to_scope_kinds=tuple(dict.fromkeys(applies_to_scope_kinds)),
         applies_to_sinks=tuple(applies_to_sinks),
         applies_to_call_roles=tuple(dict.fromkeys(applies_to_call_roles)),
         applies_to_usage_modes=tuple(dict.fromkeys(applies_to_usage_modes)),

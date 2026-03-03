@@ -95,6 +95,37 @@ def test_collect_candidates_tracks_module_qualified_enclosing_function_name() ->
     assert candidates[0].function_scope == "account.profile.parse_name"
 
 
+def test_collect_candidates_resets_to_top_level_after_function_end() -> None:
+    sink_rules = (
+        SinkRule(
+            id="string.find.arg1",
+            kind="function_arg",
+            qualified_name="string.find",
+            arg_index=1,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("assert(x)",),
+        ),
+    )
+    source = "\n".join(
+        [
+            "local function parse_name(name)",
+            "  return string.find(name, 'x')",
+            "end",
+            "",
+            "local top_name = req.params.name",
+            "return string.find(top_name, 'x')",
+        ]
+    )
+
+    candidates = collect_candidates(Path("demo.lua"), source, sink_rules)
+
+    assert len(candidates) == 2
+    assert candidates[0].function_scope == "parse_name"
+    assert candidates[1].function_scope == "main"
+
+
 def test_collect_candidates_finds_configured_receiver_sinks() -> None:
     sink_rules = (
         SinkRule(
