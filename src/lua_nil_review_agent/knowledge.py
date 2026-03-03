@@ -14,6 +14,32 @@ _INDEXED_ACCESS_RE = re.compile(
 )
 _SIMPLE_CALL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_:.]*\s*\(.*\)$")
 _NUMERIC_LITERAL_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
+_ROOT_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)")
+_LUA_KEYWORDS = frozenset(
+    {
+        "and",
+        "break",
+        "do",
+        "else",
+        "elseif",
+        "end",
+        "false",
+        "for",
+        "function",
+        "if",
+        "in",
+        "local",
+        "nil",
+        "not",
+        "or",
+        "repeat",
+        "return",
+        "then",
+        "true",
+        "until",
+        "while",
+    }
+)
 
 
 class KnowledgeBase:
@@ -215,7 +241,11 @@ def contract_applies_to_call(
     if not arg_count_matches:
         return False
 
-    if (contract.required_literal_args or contract.required_arg_shapes) and arg_values is None:
+    if (
+        contract.required_literal_args
+        or contract.required_arg_shapes
+        or contract.required_arg_roots
+    ) and arg_values is None:
         return False
 
     for index, allowed_literals in contract.required_literal_args:
@@ -228,6 +258,13 @@ def contract_applies_to_call(
         if index < 1 or index > len(arg_values):
             return False
         if _classify_arg_shape(arg_values[index - 1]) not in allowed_shapes:
+            return False
+
+    for index, allowed_roots in contract.required_arg_roots:
+        if index < 1 or index > len(arg_values):
+            return False
+        arg_root = _extract_arg_root(arg_values[index - 1])
+        if arg_root is None or arg_root not in allowed_roots:
             return False
     return True
 
@@ -259,6 +296,16 @@ def _is_literal(value: str) -> bool:
     if value.startswith("{") and value.endswith("}"):
         return True
     return False
+
+
+def _extract_arg_root(raw_value: str) -> str | None:
+    match = _ROOT_RE.match(raw_value)
+    if match is None:
+        return None
+    root = match.group(1)
+    if root in _LUA_KEYWORDS:
+        return None
+    return root
 
 
 def _returns_non_nil_value(summary: FunctionSummary) -> bool:

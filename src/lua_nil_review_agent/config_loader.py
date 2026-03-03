@@ -176,6 +176,11 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         "required_arg_shapes",
         value_label="argument shape names",
     )
+    required_arg_roots = _optional_choice_arg_map(
+        data,
+        "required_arg_roots",
+        value_label="argument root names",
+    )
     if any(role not in _SUPPORTED_CALL_ROLES for role in applies_to_call_roles):
         raise ConfigError(
             "Function contract field 'applies_to_call_roles' must contain only "
@@ -230,6 +235,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         applies_with_arg_count=applies_with_arg_count,
         required_literal_args=required_literal_args,
         required_arg_shapes=required_arg_shapes,
+        required_arg_roots=required_arg_roots,
         notes=notes,
     )
 

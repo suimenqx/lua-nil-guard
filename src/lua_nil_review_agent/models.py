@@ -163,6 +163,7 @@ class FunctionContract:
     applies_with_arg_count: int | None = None
     required_literal_args: tuple[tuple[int, tuple[str, ...]], ...] = ()
     required_arg_shapes: tuple[tuple[int, tuple[str, ...]], ...] = ()
+    required_arg_roots: tuple[tuple[int, tuple[str, ...]], ...] = ()
     notes: str | None = None
 
 
