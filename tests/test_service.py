@@ -1015,6 +1015,121 @@ def test_run_file_review_qualifies_bare_calls_inside_module_files(
     )
 
 
+def test_run_file_review_falls_back_to_global_bare_helper_when_module_symbol_missing(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    target_file = tmp_path / "src" / "user_profile.lua"
+    target_file.write_text(
+        "\n".join(
+            [
+                "module(\"user.profile\", package.seeall)",
+                "",
+                "function parse_user(req)",
+                "  local username = normalize_global(req.params.username)",
+                "  return string.match(username, '^a')",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "global_helpers.lua").write_text(
+        "\n".join(
+            [
+                "function normalize_global(value)",
+                "  value = value or 'guest'",
+                "  return value",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    seen: dict[str, tuple[str, ...]] = {}
+
+    class GlobalFallbackBackend:
+        def adjudicate(self, packet, sink_rule):  # noqa: ANN001
+            del sink_rule
+            seen["related_functions"] = packet.related_functions
+            seen["function_summaries"] = packet.function_summaries
+            return AdjudicationRecord(
+                prosecutor=RoleOpinion(
+                    role="prosecutor",
+                    status="safe",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=("global helper selected",),
+                    missing_evidence=(),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                defender=RoleOpinion(
+                    role="defender",
+                    status="safe",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=("global helper selected",),
+                    missing_evidence=(),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                judge=Verdict(
+                    case_id=packet.case_id,
+                    status="safe",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=("global helper selected",),
+                    counterarguments_considered=(),
+                    suggested_fix=None,
+                    needs_human=False,
+                ),
+            )
+
+    verdicts = run_file_review(snapshot, target_file, backend=GlobalFallbackBackend())
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status == "safe"
+    assert seen["related_functions"] == ("normalize_global",)
+    assert any(
+        "normalize_global params=" in summary
+        for summary in seen["function_summaries"]
+    )
+    assert not any(
+        "user.profile.normalize_global params=" in summary
+        for summary in seen["function_summaries"]
+    )
+
+
 def test_run_file_review_skips_second_hop_for_backends_without_retry_support(
     tmp_path: Path,
 ) -> None:

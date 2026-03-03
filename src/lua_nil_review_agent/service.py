@@ -820,6 +820,11 @@ def _build_function_context_index(
     path_lookup = {str(path): path for path in snapshot.lua_files}
     source_lookup: dict[str, str] = {}
     index: dict[str, list[_FunctionContextBlock]] = {}
+    known_function_names = {
+        summary.qualified_name
+        for summary in summaries
+        if isinstance(getattr(summary, "qualified_name", None), str)
+    }
 
     for summary in summaries:
         path_key = str(summary.file)
@@ -833,6 +838,7 @@ def _build_function_context_index(
             source_lookup[path_key],
             summary.line,
             summary.module_name,
+            known_function_names,
         )
         if not snippet:
             continue
@@ -860,6 +866,7 @@ def _extract_function_context_snippet(
     source: str,
     start_line: int,
     module_name: str | None,
+    known_function_names: set[str],
 ) -> tuple[str, tuple[str, ...]]:
     lines = source.splitlines()
     start_index = max(0, start_line - 1)
@@ -874,7 +881,13 @@ def _extract_function_context_snippet(
     while index < len(lines):
         line = lines[index]
         snippet_lines.append(line)
-        callee_names.extend(_call_names_from_line(line, default_module=module_name))
+        callee_names.extend(
+            _call_names_from_line(
+                line,
+                default_module=module_name,
+                known_function_names=known_function_names,
+            )
+        )
         depth += _opened_block_count(line)
         depth -= _closed_block_count(line)
         if depth <= 0:
@@ -909,9 +922,13 @@ def _build_related_evidence(
     max_summary_items: int = _MAX_RELATED_FUNCTION_SUMMARIES,
 ) -> _RelatedEvidenceSelection:
     current_file_key = _normalize_path_key(assessment.candidate.file)
+    known_function_names = frozenset(
+        set(summary_text_by_name) | set(function_context_by_name)
+    )
     direct_related_functions = _related_functions_from_assessment(
         assessment,
         current_module=file_module_by_path.get(current_file_key),
+        known_function_names=known_function_names,
     )
     ordered_functions, depth_by_function = _expand_related_functions(
         direct_related_functions,
@@ -1073,6 +1090,7 @@ def _call_names_from_line(
     line: str,
     *,
     default_module: str | None = None,
+    known_function_names: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[str, ...]:
     code = _strip_lua_comment(line)
     if not code.strip():
@@ -1085,7 +1103,13 @@ def _call_names_from_line(
         short_name = raw_name.rsplit(".", 1)[-1].rsplit(":", 1)[-1]
         if short_name in _LUA_KEYWORDS:
             continue
-        names.append(_normalize_related_name(raw_name, default_module=default_module))
+        names.append(
+            _resolve_related_name(
+                raw_name,
+                default_module=default_module,
+                known_function_names=known_function_names,
+            )
+        )
     return tuple(dict.fromkeys(names))
 
 
@@ -1342,10 +1366,15 @@ def _related_functions_from_assessment(
     assessment: CandidateAssessment,
     *,
     current_module: str | None = None,
+    known_function_names: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[str, ...]:
     related: list[str] = []
     for origin in assessment.static_analysis.origin_candidates:
-        resolved = _call_name_from_expression(origin, default_module=current_module)
+        resolved = _call_name_from_expression(
+            origin,
+            default_module=current_module,
+            known_function_names=known_function_names,
+        )
         if resolved is not None:
             related.append(resolved)
     return tuple(dict.fromkeys(related))
@@ -1355,23 +1384,33 @@ def _call_name_from_expression(
     expression: str,
     *,
     default_module: str | None = None,
+    known_function_names: frozenset[str] | set[str] = frozenset(),
 ) -> str | None:
     match = _CALL_RE.match(expression)
     if match is None:
         return None
-    return _normalize_related_name(match.group(1), default_module=default_module)
+    return _resolve_related_name(
+        match.group(1),
+        default_module=default_module,
+        known_function_names=known_function_names,
+    )
 
 
-def _normalize_related_name(
+def _resolve_related_name(
     raw_name: str,
     *,
     default_module: str | None = None,
+    known_function_names: frozenset[str] | set[str] = frozenset(),
 ) -> str:
     normalized = raw_name.strip().replace(":", ".")
     if "." in normalized:
         return normalized
     if default_module:
-        return f"{default_module}.{normalized}"
+        module_qualified = f"{default_module}.{normalized}"
+        if module_qualified in known_function_names:
+            return module_qualified
+    if normalized in known_function_names:
+        return normalized
     return normalized
 
 
