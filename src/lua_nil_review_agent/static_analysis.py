@@ -355,7 +355,10 @@ def _origin_return_contract_guard(
     contract_by_name = {
         contract.qualified_name: contract
         for contract in function_contracts
-        if contract.returns_non_nil_from_args
+        if (
+            contract.returns_non_nil_from_args
+            or contract.returns_non_nil_from_args_by_return_slot
+        )
         and contract_applies_in_module(contract, current_module)
         and contract_applies_in_function_scope(contract, current_function_scope)
         and contract_applies_to_top_level_phase(contract, current_top_level_phase)
@@ -392,7 +395,10 @@ def _origin_return_contract_guard(
     ):
         return None
 
-    if not _contract_has_all_required_args(contract.returns_non_nil_from_args, args):
+    required_args = _required_return_args_for_slot(contract, return_slot)
+    if required_args is None:
+        return None
+    if not _contract_has_all_required_args(required_args, args):
         return None
     return f"{resolved_name}(...) returns non-nil"
 
@@ -472,6 +478,20 @@ def _contract_has_all_required_args(
     args: tuple[str, ...],
 ) -> bool:
     return all(1 <= index <= len(args) for index in required_positions)
+
+
+def _required_return_args_for_slot(
+    contract: FunctionContract,
+    return_slot: int,
+) -> tuple[int, ...] | None:
+    for slot, positions in contract.returns_non_nil_from_args_by_return_slot:
+        if slot == return_slot:
+            return positions
+    if contract.returns_non_nil_from_args:
+        return contract.returns_non_nil_from_args
+    if contract.returns_non_nil_from_args_by_return_slot:
+        return None
+    return ()
 
 
 def _scope_kind_for_function_scope(function_scope: str | None) -> str | None:

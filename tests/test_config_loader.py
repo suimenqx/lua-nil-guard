@@ -345,6 +345,32 @@ def test_load_function_contracts_reads_return_slot_restrictions(tmp_path: Path) 
     assert contracts[0].applies_to_return_slots == (1, 3)
 
 
+def test_load_function_contracts_reads_return_args_by_slot_restrictions(tmp_path: Path) -> None:
+    config_path = tmp_path / "function_contracts.json"
+    config_path.write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "normalize_pair",
+                    "returns_non_nil_from_args_by_return_slot": {
+                        "1": [2],
+                        "2": [1, 3],
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    contracts = load_function_contracts(config_path)
+
+    assert len(contracts) == 1
+    assert contracts[0].returns_non_nil_from_args_by_return_slot == (
+        (1, (2,)),
+        (2, (1, 3)),
+    )
+
+
 def test_load_function_contracts_reads_call_role_restrictions(tmp_path: Path) -> None:
     config_path = tmp_path / "function_contracts.json"
     config_path.write_text(

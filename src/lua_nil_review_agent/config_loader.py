@@ -158,6 +158,10 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         raise ConfigError("Function contract field 'returns_non_nil' must be a boolean")
     ensures_non_nil_args = _optional_positive_int_list(data, "ensures_non_nil_args")
     returns_non_nil_from_args = _optional_positive_int_list(data, "returns_non_nil_from_args")
+    returns_non_nil_from_args_by_return_slot = _optional_positive_int_index_map(
+        data,
+        "returns_non_nil_from_args_by_return_slot",
+    )
     applies_in_modules = _optional_str_list(data, "applies_in_modules")
     applies_in_function_scopes = _optional_str_list(data, "applies_in_function_scopes")
     applies_to_top_level_phases = _optional_str_list(data, "applies_to_top_level_phases")
@@ -226,7 +230,12 @@ def _parse_function_contract(data: Any) -> FunctionContract:
     if notes is not None and not isinstance(notes, str):
         raise ConfigError("Function contract field 'notes' must be a string when provided")
 
-    if not returns_non_nil and not ensures_non_nil_args and not returns_non_nil_from_args:
+    if (
+        not returns_non_nil
+        and not ensures_non_nil_args
+        and not returns_non_nil_from_args
+        and not returns_non_nil_from_args_by_return_slot
+    ):
         raise ConfigError(
             f"Function contract for {qualified_name} must enable at least one supported contract flag"
         )
@@ -236,6 +245,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         returns_non_nil=returns_non_nil,
         ensures_non_nil_args=tuple(ensures_non_nil_args),
         returns_non_nil_from_args=tuple(returns_non_nil_from_args),
+        returns_non_nil_from_args_by_return_slot=returns_non_nil_from_args_by_return_slot,
         applies_in_modules=tuple(applies_in_modules),
         applies_in_function_scopes=tuple(dict.fromkeys(applies_in_function_scopes)),
         applies_to_top_level_phases=tuple(dict.fromkeys(applies_to_top_level_phases)),
@@ -340,6 +350,41 @@ def _optional_choice_arg_map(
                 f"Function contract field '{key}' values must be a non-empty string or string array"
             )
         pairs.append((arg_index, literals))
+
+    pairs.sort(key=lambda item: item[0])
+    return tuple(pairs)
+
+
+def _optional_positive_int_index_map(
+    data: dict[str, Any],
+    key: str,
+) -> tuple[tuple[int, tuple[int, ...]], ...]:
+    value = data.get(key, {})
+    if not isinstance(value, dict):
+        raise ConfigError(
+            f"Function contract field '{key}' must be an object mapping positive integer slots to positive integer argument indexes"
+        )
+
+    pairs: list[tuple[int, tuple[int, ...]]] = []
+    for raw_index, raw_positions in value.items():
+        if not isinstance(raw_index, str) or not raw_index.isdigit() or int(raw_index) < 1:
+            raise ConfigError(
+                f"Function contract field '{key}' must use positive integer string keys"
+            )
+        slot = int(raw_index)
+        if isinstance(raw_positions, int) and raw_positions >= 1:
+            positions = (raw_positions,)
+        elif (
+            isinstance(raw_positions, list)
+            and raw_positions
+            and all(isinstance(item, int) and item >= 1 for item in raw_positions)
+        ):
+            positions = tuple(dict.fromkeys(raw_positions))
+        else:
+            raise ConfigError(
+                f"Function contract field '{key}' values must be a positive integer or positive integer array"
+            )
+        pairs.append((slot, positions))
 
     pairs.sort(key=lambda item: item[0])
     return tuple(pairs)

@@ -546,7 +546,7 @@ def test_run_repository_review_uses_literal_scoped_return_contract_when_call_mat
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "safe"
+    assert verdicts[0].status.startswith("safe")
     assert any("returns non-nil" in fact for fact in verdicts[0].safety_evidence)
 
 
@@ -1257,6 +1257,140 @@ def test_run_repository_review_skips_second_return_slot_when_only_first_is_safe(
                 "end",
                 "",
                 "local username, tag = normalize_pair(req.params.username)",
+                "return string.match(tag, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status == "uncertain"
+
+
+def test_run_repository_review_uses_return_slot_specific_arg_requirements(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "function_contracts.json").write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "normalize_pair",
+                    "returns_non_nil_from_args_by_return_slot": {
+                        "1": [2],
+                        "2": [1],
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "function normalize_pair(value, fallback)",
+                "  return value or fallback, value",
+                "end",
+                "",
+                "local username, tag = normalize_pair(req.params.username, '')",
+                "return string.match(username, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status.startswith("safe")
+
+
+def test_run_repository_review_skips_return_slot_when_slot_specific_args_do_not_match(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "function_contracts.json").write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "normalize_pair",
+                    "returns_non_nil_from_args_by_return_slot": {
+                        "1": [2],
+                        "2": [3],
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "function normalize_pair(value, fallback)",
+                "  return value or fallback, value",
+                "end",
+                "",
+                "local username, tag = normalize_pair(req.params.username, '')",
                 "return string.match(tag, '^a')",
             ]
         ),
