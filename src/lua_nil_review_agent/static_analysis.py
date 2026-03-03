@@ -17,6 +17,7 @@ from .summaries import detect_module_name
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SIMPLE_CALL_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_:.]*)\s*\((.*)\)\s*$")
+_MAX_CHAINED_RETURN_PROOF_DEPTH = 2
 
 
 def analyze_candidate(
@@ -407,6 +408,7 @@ def _origin_return_contract_guard(
         guarded_args,
         args,
         lines=lines,
+        return_contracts=contract_by_name,
         function_contracts=function_contracts,
         current_module=current_module,
         current_function_scope=current_function_scope,
@@ -414,6 +416,7 @@ def _origin_return_contract_guard(
         current_scope_kind=current_scope_kind,
         sink_rule_id=sink_rule_id,
         sink_name=sink_name,
+        remaining_chain_depth=_MAX_CHAINED_RETURN_PROOF_DEPTH,
     ):
         return None
     return f"{resolved_name}(...) returns non-nil"
@@ -525,6 +528,7 @@ def _contract_has_guarded_args(
     args: tuple[str, ...],
     *,
     lines: list[str],
+    return_contracts: dict[str, FunctionContract],
     function_contracts: tuple[FunctionContract, ...],
     current_module: str | None,
     current_function_scope: str,
@@ -532,6 +536,7 @@ def _contract_has_guarded_args(
     current_scope_kind: str | None,
     sink_rule_id: str,
     sink_name: str,
+    remaining_chain_depth: int,
 ) -> bool:
     for index in required_positions:
         if index < 1 or index > len(args):
@@ -542,6 +547,7 @@ def _contract_has_guarded_args(
         if _is_symbol_guarded(
             lines,
             symbol,
+            return_contracts=return_contracts,
             function_contracts=function_contracts,
             current_module=current_module,
             current_function_scope=current_function_scope,
@@ -549,6 +555,7 @@ def _contract_has_guarded_args(
             current_scope_kind=current_scope_kind,
             sink_rule_id=sink_rule_id,
             sink_name=sink_name,
+            remaining_chain_depth=remaining_chain_depth,
         ):
             continue
         return False
@@ -559,6 +566,7 @@ def _is_symbol_guarded(
     lines: list[str],
     symbol: str,
     *,
+    return_contracts: dict[str, FunctionContract],
     function_contracts: tuple[FunctionContract, ...],
     current_module: str | None,
     current_function_scope: str,
@@ -566,6 +574,7 @@ def _is_symbol_guarded(
     current_scope_kind: str | None,
     sink_rule_id: str,
     sink_name: str,
+    remaining_chain_depth: int,
 ) -> bool:
     if _has_active_positive_guard(lines, symbol):
         return True
@@ -574,9 +583,24 @@ def _is_symbol_guarded(
     if _has_active_assert(lines, symbol):
         return True
     return (
-        _active_contract_guard(
+        (
+            _active_contract_guard(
+                lines,
+                symbol,
+                function_contracts=function_contracts,
+                current_module=current_module,
+                current_function_scope=current_function_scope,
+                current_top_level_phase=current_top_level_phase,
+                current_scope_kind=current_scope_kind,
+                sink_rule_id=sink_rule_id,
+                sink_name=sink_name,
+            )
+            is not None
+        )
+        or _is_symbol_derived_from_safe_return_chain(
             lines,
             symbol,
+            return_contracts=return_contracts,
             function_contracts=function_contracts,
             current_module=current_module,
             current_function_scope=current_function_scope,
@@ -584,8 +608,74 @@ def _is_symbol_guarded(
             current_scope_kind=current_scope_kind,
             sink_rule_id=sink_rule_id,
             sink_name=sink_name,
+            remaining_chain_depth=remaining_chain_depth,
         )
-        is not None
+    )
+
+
+def _is_symbol_derived_from_safe_return_chain(
+    lines: list[str],
+    symbol: str,
+    *,
+    return_contracts: dict[str, FunctionContract],
+    function_contracts: tuple[FunctionContract, ...],
+    current_module: str | None,
+    current_function_scope: str,
+    current_top_level_phase: str | None,
+    current_scope_kind: str | None,
+    sink_rule_id: str,
+    sink_name: str,
+    remaining_chain_depth: int,
+) -> bool:
+    if remaining_chain_depth <= 0:
+        return False
+    origin_context = _find_last_assignment(lines, symbol)
+    if origin_context is None:
+        return False
+    origin, usage_mode, return_slot = origin_context
+    if origin.strip() == symbol:
+        return False
+    parsed_call = _parse_simple_call(_strip_lua_comment(origin).strip())
+    if parsed_call is None:
+        return _has_defaulting_origin(origin)
+
+    raw_name, args = parsed_call
+    resolved_name = _resolve_contract_name(
+        raw_name,
+        current_module=current_module,
+        known_contract_names=frozenset(return_contracts),
+    )
+    contract = return_contracts.get(resolved_name)
+    if contract is None:
+        return False
+    if not contract_applies_to_call(
+        contract,
+        arg_count=len(args),
+        arg_values=args,
+        call_role="assignment_origin",
+        usage_mode=usage_mode,
+        return_slot=return_slot,
+    ):
+        return False
+
+    required_args = _required_return_args_for_slot(contract, return_slot)
+    if required_args is None or not _contract_has_all_required_args(required_args, args):
+        return False
+
+    guarded_args = _required_guarded_args_for_slot(contract, return_slot)
+    return _contract_has_guarded_args(
+        guarded_args,
+        args,
+        lines=lines,
+        return_contracts=return_contracts,
+        function_contracts=function_contracts,
+        current_module=current_module,
+        current_function_scope=current_function_scope,
+        current_top_level_phase=current_top_level_phase,
+        current_scope_kind=current_scope_kind,
+        sink_rule_id=sink_rule_id,
+        sink_name=sink_name,
+        remaining_chain_depth=remaining_chain_depth - 1,
     )
 
 
