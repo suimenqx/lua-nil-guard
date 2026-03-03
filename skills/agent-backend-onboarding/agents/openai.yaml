@@ -1,4 +1,0 @@
-interface:
-  display_name: "Agent Backend Onboarding"
-  short_description: "Onboard new agent backends with protocol guidance"
-  default_prompt: "Use this skill to probe a new agent CLI, choose or extend a backend protocol, generate a provider manifest, validate it, and smoke test the integration in this repository."
