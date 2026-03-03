@@ -17,6 +17,7 @@ from .summaries import detect_module_name
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SIMPLE_CALL_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_:.]*)\s*\((.*)\)\s*$")
+_FUNCTION_DEF_RE = re.compile(r"^\s*(?:local\s+)?function\s+([A-Za-z_][A-Za-z0-9_:.]*)\s*\((.*?)\)\s*$")
 _MAX_CHAINED_RETURN_PROOF_DEPTH = 2
 
 
@@ -43,6 +44,10 @@ def analyze_candidate(
     origin = origin_context[0] if origin_context is not None else None
     observed_guards: list[str] = []
     current_module = detect_module_name(source)
+    transparent_return_wrappers = _collect_transparent_return_wrappers(
+        source,
+        current_module=current_module,
+    )
     current_scope_kind = _scope_kind_for_function_scope(candidate.function_scope)
     current_top_level_phase = _top_level_phase_for_candidate(source, candidate)
 
@@ -75,6 +80,7 @@ def analyze_candidate(
         current_scope_kind=current_scope_kind,
         sink_rule_id=candidate.sink_rule_id,
         sink_name=candidate.sink_name,
+        transparent_return_wrappers=transparent_return_wrappers,
     )
     if return_contract_guard is not None:
         observed_guards.append(return_contract_guard)
@@ -350,6 +356,7 @@ def _origin_return_contract_guard(
     current_scope_kind: str | None,
     sink_rule_id: str,
     sink_name: str,
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]],
 ) -> str | None:
     if origin_context is None:
         return None
@@ -386,9 +393,7 @@ def _origin_return_contract_guard(
         known_contract_names=frozenset(contract_by_name),
     )
     contract = contract_by_name.get(resolved_name)
-    if contract is None:
-        return None
-    if not contract_applies_to_call(
+    if contract is not None and contract_applies_to_call(
         contract,
         arg_count=len(args),
         arg_values=args,
@@ -396,17 +401,35 @@ def _origin_return_contract_guard(
         usage_mode=usage_mode,
         return_slot=return_slot,
     ):
-        return None
+        required_args = _required_return_args_for_slot(contract, return_slot)
+        if required_args is not None and _contract_has_all_required_args(required_args, args):
+            guarded_args = _required_guarded_args_for_slot(contract, return_slot)
+            if _contract_has_guarded_args(
+                guarded_args,
+                args,
+                lines=lines,
+                return_contracts=contract_by_name,
+                function_contracts=function_contracts,
+                current_module=current_module,
+                current_function_scope=current_function_scope,
+                current_top_level_phase=current_top_level_phase,
+                current_scope_kind=current_scope_kind,
+                sink_rule_id=sink_rule_id,
+                sink_name=sink_name,
+                transparent_return_wrappers=transparent_return_wrappers,
+                remaining_chain_depth=_MAX_CHAINED_RETURN_PROOF_DEPTH,
+            ):
+                return f"{resolved_name}(...) returns non-nil"
 
-    required_args = _required_return_args_for_slot(contract, return_slot)
-    if required_args is None:
-        return None
-    if not _contract_has_all_required_args(required_args, args):
-        return None
-    guarded_args = _required_guarded_args_for_slot(contract, return_slot)
-    if not _contract_has_guarded_args(
-        guarded_args,
+    wrapper_name = _resolve_contract_name(
+        raw_name,
+        current_module=current_module,
+        known_contract_names=frozenset(transparent_return_wrappers),
+    )
+    if _transparent_wrapper_returns_safe_value(
+        wrapper_name,
         args,
+        return_slot=return_slot,
         lines=lines,
         return_contracts=contract_by_name,
         function_contracts=function_contracts,
@@ -416,10 +439,11 @@ def _origin_return_contract_guard(
         current_scope_kind=current_scope_kind,
         sink_rule_id=sink_rule_id,
         sink_name=sink_name,
+        transparent_return_wrappers=transparent_return_wrappers,
         remaining_chain_depth=_MAX_CHAINED_RETURN_PROOF_DEPTH,
     ):
-        return None
-    return f"{resolved_name}(...) returns non-nil"
+        return f"{wrapper_name}(...) transparently preserves non-nil input"
+    return None
 
 
 def _split_top_level_values(values_text: str) -> list[str]:
@@ -536,6 +560,7 @@ def _contract_has_guarded_args(
     current_scope_kind: str | None,
     sink_rule_id: str,
     sink_name: str,
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]],
     remaining_chain_depth: int,
 ) -> bool:
     for index in required_positions:
@@ -555,6 +580,7 @@ def _contract_has_guarded_args(
             current_scope_kind=current_scope_kind,
             sink_rule_id=sink_rule_id,
             sink_name=sink_name,
+            transparent_return_wrappers=transparent_return_wrappers,
             remaining_chain_depth=remaining_chain_depth,
         ):
             continue
@@ -574,6 +600,7 @@ def _is_symbol_guarded(
     current_scope_kind: str | None,
     sink_rule_id: str,
     sink_name: str,
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]],
     remaining_chain_depth: int,
 ) -> bool:
     if _has_active_positive_guard(lines, symbol):
@@ -608,6 +635,7 @@ def _is_symbol_guarded(
             current_scope_kind=current_scope_kind,
             sink_rule_id=sink_rule_id,
             sink_name=sink_name,
+            transparent_return_wrappers=transparent_return_wrappers,
             remaining_chain_depth=remaining_chain_depth,
         )
     )
@@ -625,6 +653,7 @@ def _is_symbol_derived_from_safe_return_chain(
     current_scope_kind: str | None,
     sink_rule_id: str,
     sink_name: str,
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]],
     remaining_chain_depth: int,
 ) -> bool:
     if remaining_chain_depth <= 0:
@@ -635,6 +664,161 @@ def _is_symbol_derived_from_safe_return_chain(
     origin, usage_mode, return_slot = origin_context
     if origin.strip() == symbol:
         return False
+    parsed_call = _parse_simple_call(_strip_lua_comment(origin).strip())
+    if parsed_call is None:
+        return _has_defaulting_origin(origin)
+
+    raw_name, args = parsed_call
+    resolved_name = _resolve_contract_name(
+        raw_name,
+        current_module=current_module,
+        known_contract_names=frozenset(return_contracts),
+    )
+    contract = return_contracts.get(resolved_name)
+    if contract is not None and contract_applies_to_call(
+        contract,
+        arg_count=len(args),
+        arg_values=args,
+        call_role="assignment_origin",
+        usage_mode=usage_mode,
+        return_slot=return_slot,
+    ):
+        required_args = _required_return_args_for_slot(contract, return_slot)
+        if required_args is not None and _contract_has_all_required_args(required_args, args):
+            guarded_args = _required_guarded_args_for_slot(contract, return_slot)
+            if _contract_has_guarded_args(
+                guarded_args,
+                args,
+                lines=lines,
+                return_contracts=return_contracts,
+                function_contracts=function_contracts,
+                current_module=current_module,
+                current_function_scope=current_function_scope,
+                current_top_level_phase=current_top_level_phase,
+                current_scope_kind=current_scope_kind,
+                sink_rule_id=sink_rule_id,
+                sink_name=sink_name,
+                transparent_return_wrappers=transparent_return_wrappers,
+                remaining_chain_depth=remaining_chain_depth - 1,
+            ):
+                return True
+
+    wrapper_name = _resolve_contract_name(
+        raw_name,
+        current_module=current_module,
+        known_contract_names=frozenset(transparent_return_wrappers),
+    )
+    return _transparent_wrapper_returns_safe_value(
+        wrapper_name,
+        args,
+        return_slot=return_slot,
+        lines=lines,
+        return_contracts=return_contracts,
+        function_contracts=function_contracts,
+        current_module=current_module,
+        current_function_scope=current_function_scope,
+        current_top_level_phase=current_top_level_phase,
+        current_scope_kind=current_scope_kind,
+        sink_rule_id=sink_rule_id,
+        sink_name=sink_name,
+        transparent_return_wrappers=transparent_return_wrappers,
+        remaining_chain_depth=remaining_chain_depth,
+    )
+
+
+def _transparent_wrapper_returns_safe_value(
+    resolved_name: str,
+    args: tuple[str, ...],
+    *,
+    return_slot: int,
+    lines: list[str],
+    return_contracts: dict[str, FunctionContract],
+    function_contracts: tuple[FunctionContract, ...],
+    current_module: str | None,
+    current_function_scope: str,
+    current_top_level_phase: str | None,
+    current_scope_kind: str | None,
+    sink_rule_id: str,
+    sink_name: str,
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]],
+    remaining_chain_depth: int,
+) -> bool:
+    passthrough_index = _transparent_wrapper_arg_for_slot(
+        transparent_return_wrappers.get(resolved_name),
+        return_slot,
+    )
+    if passthrough_index is None or passthrough_index < 1 or passthrough_index > len(args):
+        return False
+    next_remaining_depth = remaining_chain_depth - 1
+    if next_remaining_depth < 0:
+        return False
+    passthrough_value = args[passthrough_index - 1].strip()
+    if not passthrough_value or passthrough_value == resolved_name:
+        return False
+    if _IDENTIFIER_RE.match(passthrough_value):
+        if _is_symbol_guarded(
+            lines,
+            passthrough_value,
+            return_contracts=return_contracts,
+            function_contracts=function_contracts,
+            current_module=current_module,
+            current_function_scope=current_function_scope,
+            current_top_level_phase=current_top_level_phase,
+            current_scope_kind=current_scope_kind,
+            sink_rule_id=sink_rule_id,
+            sink_name=sink_name,
+            transparent_return_wrappers=transparent_return_wrappers,
+            remaining_chain_depth=next_remaining_depth,
+        ):
+            return True
+        if next_remaining_depth == 0:
+            return _has_terminal_safe_return_origin(
+                lines,
+                passthrough_value,
+                return_contracts=return_contracts,
+                function_contracts=function_contracts,
+                current_module=current_module,
+                current_function_scope=current_function_scope,
+                current_top_level_phase=current_top_level_phase,
+                current_scope_kind=current_scope_kind,
+                sink_rule_id=sink_rule_id,
+                sink_name=sink_name,
+                transparent_return_wrappers=transparent_return_wrappers,
+            )
+        return False
+    return _has_defaulting_origin(passthrough_value)
+
+
+def _transparent_wrapper_arg_for_slot(
+    slot_mappings: tuple[tuple[int, int], ...] | None,
+    return_slot: int,
+) -> int | None:
+    if slot_mappings is None:
+        return None
+    for slot, arg_index in slot_mappings:
+        if slot == return_slot:
+            return arg_index
+    return None
+
+
+def _has_terminal_safe_return_origin(
+    lines: list[str],
+    symbol: str,
+    *,
+    return_contracts: dict[str, FunctionContract],
+    function_contracts: tuple[FunctionContract, ...],
+    current_module: str | None,
+    current_function_scope: str,
+    current_top_level_phase: str | None,
+    current_scope_kind: str | None,
+    sink_rule_id: str,
+    sink_name: str,
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]],
+) -> bool:
+    origin_context = _find_last_assignment(lines, symbol)
+    if origin_context is None:
+        return False
+    origin, usage_mode, return_slot = origin_context
     parsed_call = _parse_simple_call(_strip_lua_comment(origin).strip())
     if parsed_call is None:
         return _has_defaulting_origin(origin)
@@ -661,7 +845,6 @@ def _is_symbol_derived_from_safe_return_chain(
     required_args = _required_return_args_for_slot(contract, return_slot)
     if required_args is None or not _contract_has_all_required_args(required_args, args):
         return False
-
     guarded_args = _required_guarded_args_for_slot(contract, return_slot)
     return _contract_has_guarded_args(
         guarded_args,
@@ -675,8 +858,91 @@ def _is_symbol_derived_from_safe_return_chain(
         current_scope_kind=current_scope_kind,
         sink_rule_id=sink_rule_id,
         sink_name=sink_name,
-        remaining_chain_depth=remaining_chain_depth - 1,
+        transparent_return_wrappers=transparent_return_wrappers,
+        remaining_chain_depth=-1,
     )
+
+
+def _collect_transparent_return_wrappers(
+    source: str,
+    *,
+    current_module: str | None,
+) -> dict[str, tuple[tuple[int, int], ...]]:
+    lines = source.splitlines()
+    wrappers: dict[str, tuple[tuple[int, int], ...]] = {}
+    index = 0
+
+    while index < len(lines):
+        stripped = _strip_lua_comment(lines[index]).strip()
+        match = _FUNCTION_DEF_RE.match(stripped)
+        if match is None:
+            index += 1
+            continue
+
+        raw_name = match.group(1)
+        params_text = match.group(2).strip()
+        params = _split_top_level_values(params_text) if params_text else []
+        body_lines: list[str] = []
+        depth = 1
+        index += 1
+
+        while index < len(lines) and depth > 0:
+            body_line = lines[index]
+            body_stripped = _strip_lua_comment(body_line).strip()
+            if body_stripped and (_is_if_open(body_stripped) or _opens_non_if_block(body_stripped)):
+                depth += 1
+            if body_stripped and _closes_block(body_stripped):
+                depth -= 1
+                if depth == 0:
+                    index += 1
+                    break
+            if depth > 0:
+                body_lines.append(body_line)
+            index += 1
+
+        transparent_mapping = _transparent_return_mapping(body_lines, params)
+        if transparent_mapping:
+            wrappers[_normalize_defined_function_name(raw_name, current_module=current_module)] = transparent_mapping
+
+    return wrappers
+
+
+def _transparent_return_mapping(
+    body_lines: list[str],
+    params: list[str],
+) -> tuple[tuple[int, int], ...]:
+    meaningful_lines = [
+        _strip_lua_comment(line).strip()
+        for line in body_lines
+        if _strip_lua_comment(line).strip()
+    ]
+    if len(meaningful_lines) != 1:
+        return ()
+    statement = meaningful_lines[0]
+    if not statement.startswith("return "):
+        return ()
+    return_values = _split_top_level_values(statement[len("return ") :])
+    if not return_values:
+        return ()
+
+    mapping: list[tuple[int, int]] = []
+    for slot, value in enumerate(return_values, start=1):
+        value_name = value.strip()
+        if value_name not in params:
+            return ()
+        mapping.append((slot, params.index(value_name) + 1))
+    return tuple(mapping)
+
+
+def _normalize_defined_function_name(
+    raw_name: str,
+    *,
+    current_module: str | None,
+) -> str:
+    normalized = raw_name.replace(":", ".")
+    if "." in normalized or not current_module:
+        return normalized
+    return f"{current_module}.{normalized}"
 
 
 def _scope_kind_for_function_scope(function_scope: str | None) -> str | None:

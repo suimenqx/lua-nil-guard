@@ -1469,6 +1469,141 @@ def test_analyze_candidate_limits_return_normalizer_chain_depth() -> None:
     assert result.origin_return_slots == (1,)
 
 
+def test_analyze_candidate_proves_transparent_wrapper_chain() -> None:
+    source = "\n".join(
+        [
+            "function assert_present(value)",
+            "  if not value then error('missing') end",
+            "end",
+            "",
+            "function normalize_name(value, fallback)",
+            "  return value or fallback",
+            "end",
+            "",
+            "function wrap_name(value)",
+            "  return value",
+            "end",
+            "",
+            "function finalize_name(value)",
+            "  return value",
+            "end",
+            "",
+            "local username = req.params.username",
+            "assert_present(username)",
+            "local normalized = normalize_name(username, '')",
+            "local wrapped = wrap_name(normalized)",
+            "local final = finalize_name(wrapped)",
+            "return string.match(final, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_transparent_wrapper_chain",
+        file="demo.lua",
+        line=22,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="final",
+        symbol="final",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        function_contracts=(
+            FunctionContract(
+                qualified_name="assert_present",
+                returns_non_nil=False,
+                ensures_non_nil_args=(1,),
+            ),
+            FunctionContract(
+                qualified_name="normalize_name",
+                returns_non_nil=False,
+                returns_non_nil_from_args_by_return_slot=((1, (2,)),),
+                requires_guarded_args_by_return_slot=((1, (1,)),),
+            ),
+        ),
+    )
+
+    assert result.state == "safe_static"
+    assert result.observed_guards == ("finalize_name(...) transparently preserves non-nil input",)
+    assert result.origin_candidates == ("finalize_name(wrapped)",)
+    assert result.origin_return_slots == (1,)
+
+
+def test_analyze_candidate_limits_transparent_wrapper_chain_depth() -> None:
+    source = "\n".join(
+        [
+            "function assert_present(value)",
+            "  if not value then error('missing') end",
+            "end",
+            "",
+            "function normalize_name(value, fallback)",
+            "  return value or fallback",
+            "end",
+            "",
+            "function wrap_name(value)",
+            "  return value",
+            "end",
+            "",
+            "function finalize_name(value)",
+            "  return value",
+            "end",
+            "",
+            "function seal_name(value)",
+            "  return value",
+            "end",
+            "",
+            "local username = req.params.username",
+            "assert_present(username)",
+            "local normalized = normalize_name(username, '')",
+            "local wrapped = wrap_name(normalized)",
+            "local final = finalize_name(wrapped)",
+            "local sealed = seal_name(final)",
+            "return string.match(sealed, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_transparent_wrapper_chain_depth",
+        file="demo.lua",
+        line=27,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="sealed",
+        symbol="sealed",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        function_contracts=(
+            FunctionContract(
+                qualified_name="assert_present",
+                returns_non_nil=False,
+                ensures_non_nil_args=(1,),
+            ),
+            FunctionContract(
+                qualified_name="normalize_name",
+                returns_non_nil=False,
+                returns_non_nil_from_args_by_return_slot=((1, (2,)),),
+                requires_guarded_args_by_return_slot=((1, (1,)),),
+            ),
+        ),
+    )
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
+    assert result.origin_candidates == ("seal_name(final)",)
+    assert result.origin_return_slots == (1,)
+
+
 def test_analyze_candidate_respects_return_contract_arg_count() -> None:
     source = "\n".join(
         [
