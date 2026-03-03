@@ -99,6 +99,7 @@ class CliAgentBackend:
         strict_skill: bool = True,
         timeout_seconds: float | None = None,
         max_attempts: int = 1,
+        expanded_evidence_retry: bool | None = None,
         fallback_to_uncertain_on_error: bool = False,
         cache_path: str | Path | None = None,
     ) -> None:
@@ -109,6 +110,7 @@ class CliAgentBackend:
         self.strict_skill = strict_skill
         self.timeout_seconds = timeout_seconds
         self.max_attempts = max(1, max_attempts)
+        self.expanded_evidence_retry = expanded_evidence_retry
         self.fallback_to_uncertain_on_error = fallback_to_uncertain_on_error
         self.cache_path = Path(cache_path).resolve() if cache_path is not None else None
         self.cache_hits = 0
@@ -405,6 +407,7 @@ class CodexCliBackend(CliAgentBackend):
         executable: str | None = None,
         timeout_seconds: float | None = None,
         max_attempts: int | None = None,
+        expanded_evidence_retry: bool | None = None,
         fallback_to_uncertain_on_error: bool | None = None,
         config_overrides: tuple[str, ...] = (),
         cache_path: str | Path | None = None,
@@ -432,6 +435,7 @@ class CodexCliBackend(CliAgentBackend):
             strict_skill=strict_skill,
             timeout_seconds=resolved_timeout,
             max_attempts=resolved_attempts,
+            expanded_evidence_retry=expanded_evidence_retry,
             fallback_to_uncertain_on_error=resolved_fallback,
             cache_path=cache_path,
         )
@@ -499,6 +503,7 @@ class ClaudeCliBackend(CliAgentBackend):
         executable: str | None = None,
         timeout_seconds: float | None = None,
         max_attempts: int | None = None,
+        expanded_evidence_retry: bool | None = None,
         fallback_to_uncertain_on_error: bool | None = None,
         config_overrides: tuple[str, ...] = (),
         cache_path: str | Path | None = None,
@@ -527,6 +532,7 @@ class ClaudeCliBackend(CliAgentBackend):
             strict_skill=strict_skill,
             timeout_seconds=resolved_timeout,
             max_attempts=resolved_attempts,
+            expanded_evidence_retry=expanded_evidence_retry,
             fallback_to_uncertain_on_error=resolved_fallback,
             cache_path=cache_path,
         )
@@ -728,6 +734,7 @@ class CodeAgentCliBackend(CliAgentBackend):
         executable: str | None = None,
         timeout_seconds: float | None = None,
         max_attempts: int | None = None,
+        expanded_evidence_retry: bool | None = None,
         fallback_to_uncertain_on_error: bool | None = None,
         config_overrides: tuple[str, ...] = (),
         cache_path: str | Path | None = None,
@@ -755,6 +762,7 @@ class CodeAgentCliBackend(CliAgentBackend):
             strict_skill=strict_skill,
             timeout_seconds=resolved_timeout,
             max_attempts=resolved_attempts,
+            expanded_evidence_retry=expanded_evidence_retry,
             fallback_to_uncertain_on_error=resolved_fallback,
             cache_path=cache_path,
         )
@@ -913,6 +921,7 @@ def build_provider_spec_backed_backend_factory(
         executable: str | None = None,
         timeout_seconds: float | None = None,
         max_attempts: int | None = None,
+        expanded_evidence_retry: bool | None = None,
         cache_path: str | Path | None = None,
         config_overrides: tuple[str, ...] = (),
         runner=None,
@@ -927,6 +936,7 @@ def build_provider_spec_backed_backend_factory(
             executable=executable,
             timeout_seconds=timeout_seconds,
             max_attempts=max_attempts,
+            expanded_evidence_retry=expanded_evidence_retry,
             cache_path=cache_path,
             config_overrides=config_overrides,
             runner=runner,
@@ -962,6 +972,7 @@ def _instantiate_manifest_backed_backend(
     executable: str | None = None,
     timeout_seconds: float | None = None,
     max_attempts: int | None = None,
+    expanded_evidence_retry: bool | None = None,
     cache_path: str | Path | None = None,
     config_overrides: tuple[str, ...] = (),
     runner=None,
@@ -978,6 +989,8 @@ def _instantiate_manifest_backed_backend(
         options["timeout_seconds"] = timeout_seconds
     if max_attempts is not None:
         options["max_attempts"] = max_attempts
+    if expanded_evidence_retry is not None:
+        options["expanded_evidence_retry"] = expanded_evidence_retry
     if cache_path is not None:
         options["cache_path"] = cache_path
     if config_overrides:
@@ -1004,6 +1017,7 @@ def create_adjudication_backend(
     executable: str | None = None,
     timeout_seconds: float | None = None,
     max_attempts: int | None = None,
+    expanded_evidence_retry: bool | None = None,
     cache_path: str | Path | None = None,
     config_overrides: tuple[str, ...] = (),
     runner=None,
@@ -1011,18 +1025,21 @@ def create_adjudication_backend(
     """Create a named adjudication backend."""
 
     factory = get_adjudication_backend_factory(name)
-    return factory(
-        workdir=workdir,
-        model=model,
-        skill_path=skill_path,
-        strict_skill=strict_skill,
-        executable=executable,
-        timeout_seconds=timeout_seconds,
-        max_attempts=max_attempts,
-        cache_path=cache_path,
-        config_overrides=config_overrides,
-        runner=runner,
-    )
+    options: dict[str, object] = {
+        "workdir": workdir,
+        "model": model,
+        "skill_path": skill_path,
+        "strict_skill": strict_skill,
+        "executable": executable,
+        "timeout_seconds": timeout_seconds,
+        "max_attempts": max_attempts,
+        "cache_path": cache_path,
+        "config_overrides": config_overrides,
+        "runner": runner,
+    }
+    if expanded_evidence_retry is not None:
+        options["expanded_evidence_retry"] = expanded_evidence_retry
+    return factory(**options)
 
 
 def _default_runner(

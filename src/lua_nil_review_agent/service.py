@@ -957,6 +957,9 @@ def _should_retry_with_expanded_evidence(
 
 def _supports_expanded_evidence_retry(backend: AdjudicationBackend) -> bool:
     if isinstance(backend, CliAgentBackend):
+        explicit_setting = getattr(backend, "expanded_evidence_retry", None)
+        if isinstance(explicit_setting, bool):
+            return explicit_setting
         max_attempts = getattr(backend, "max_attempts", 1)
         return isinstance(max_attempts, int) and max_attempts == 1
     return bool(getattr(backend, "supports_expanded_evidence_retry", False))

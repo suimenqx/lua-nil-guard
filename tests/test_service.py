@@ -1021,6 +1021,171 @@ def test_run_file_review_skips_second_hop_for_cli_backends_with_internal_retries
     assert not any("ensure_name @ " in context for context in backend.seen_contexts[0])
 
 
+def test_run_file_review_allows_explicit_cli_retry_override(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    target_file = tmp_path / "src" / "demo.lua"
+    target_file.write_text(
+        "\n".join(
+            [
+                "local function parse_user()",
+                "  local username = normalize_name(req.params.username)",
+                "  return string.match(username, '^a')",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "normalizer.lua").write_text(
+        "\n".join(
+            [
+                "function normalize_name(value)",
+                "  return coerce_name(value)",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "coerce.lua").write_text(
+        "\n".join(
+            [
+                "function coerce_name(value)",
+                "  return ensure_name(value)",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "ensure.lua").write_text(
+        "\n".join(
+            [
+                "function ensure_name(value)",
+                "  value = value or ''",
+                "  return value",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+
+    class OverriddenCliBackend(CliAgentBackend):
+        def __init__(self) -> None:
+            super().__init__(max_attempts=2, expanded_evidence_retry=True)
+            self.calls = 0
+            self.seen_contexts: list[tuple[str, ...]] = []
+
+        def adjudicate(self, packet, sink_rule):  # noqa: ANN001
+            del sink_rule
+            self.calls += 1
+            self.seen_contexts.append(packet.related_function_contexts)
+            if any("ensure_name @ " in context for context in packet.related_function_contexts):
+                return AdjudicationRecord(
+                    prosecutor=RoleOpinion(
+                        role="prosecutor",
+                        status="uncertain",
+                        confidence="low",
+                        risk_path=(),
+                        safety_evidence=(),
+                        missing_evidence=("override enabled deeper evidence",),
+                        recommended_next_action="suppress",
+                        suggested_fix=None,
+                    ),
+                    defender=RoleOpinion(
+                        role="defender",
+                        status="safe",
+                        confidence="medium",
+                        risk_path=(),
+                        safety_evidence=("ensure_name returns a non-nil fallback",),
+                        missing_evidence=(),
+                        recommended_next_action="suppress",
+                        suggested_fix=None,
+                    ),
+                    judge=Verdict(
+                        case_id=packet.case_id,
+                        status="safe",
+                        confidence="medium",
+                        risk_path=(),
+                        safety_evidence=("ensure_name returns a non-nil fallback",),
+                        counterarguments_considered=(),
+                        suggested_fix=None,
+                        needs_human=False,
+                    ),
+                )
+            return AdjudicationRecord(
+                prosecutor=RoleOpinion(
+                    role="prosecutor",
+                    status="uncertain",
+                    confidence="low",
+                    risk_path=(),
+                    safety_evidence=(),
+                    missing_evidence=("need deeper call evidence",),
+                    recommended_next_action="expand_context",
+                    suggested_fix=None,
+                ),
+                defender=RoleOpinion(
+                    role="defender",
+                    status="uncertain",
+                    confidence="low",
+                    risk_path=(),
+                    safety_evidence=(),
+                    missing_evidence=("first hop is still inconclusive",),
+                    recommended_next_action="expand_context",
+                    suggested_fix=None,
+                ),
+                judge=Verdict(
+                    case_id=packet.case_id,
+                    status="uncertain",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=(),
+                    counterarguments_considered=("first hop is still inconclusive",),
+                    suggested_fix=None,
+                    needs_human=True,
+                ),
+            )
+
+    backend = OverriddenCliBackend()
+    verdicts = run_file_review(snapshot, target_file, backend=backend)
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status == "safe"
+    assert backend.calls == 2
+    assert not any("ensure_name @ " in context for context in backend.seen_contexts[0])
+    assert any("ensure_name @ " in context for context in backend.seen_contexts[1])
+
+
 def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -> None:
     project_root = Path(__file__).resolve().parents[1] / "examples" / "mvp_cases" / "agent_semantic_suite"
     runtime_root = tmp_path / "agent_semantic_suite"

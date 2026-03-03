@@ -213,6 +213,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
+                expanded_evidence_retry,
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
@@ -236,6 +237,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
@@ -255,6 +257,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
+                expanded_evidence_retry,
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
@@ -280,6 +283,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
@@ -299,6 +303,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
+                expanded_evidence_retry,
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
@@ -322,6 +327,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
@@ -341,6 +347,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
+                expanded_evidence_retry,
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
@@ -366,6 +373,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
@@ -385,6 +393,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
+                expanded_evidence_retry,
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
@@ -408,6 +417,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
@@ -427,6 +437,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
+                expanded_evidence_retry,
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
@@ -451,6 +462,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
@@ -480,6 +492,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
+                expanded_evidence_retry,
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
@@ -506,6 +519,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
@@ -525,6 +539,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
+                expanded_evidence_retry,
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
@@ -552,6 +567,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
@@ -585,6 +601,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
+                expanded_evidence_retry,
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
@@ -609,6 +626,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
@@ -636,6 +654,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
+                expanded_evidence_retry,
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
@@ -660,6 +679,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
@@ -716,6 +736,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
+                expanded_evidence_retry,
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
@@ -740,6 +761,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
@@ -799,6 +821,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_manifest_path,
                 backend_timeout,
                 backend_attempts,
+                expanded_evidence_retry,
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
@@ -823,6 +846,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     backend_manifest_path=backend_manifest_path,
                     timeout_seconds=backend_timeout,
                     max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
                 ),
@@ -930,6 +954,7 @@ def _create_review_backend(
     backend_manifest_path: Path | None,
     timeout_seconds: float | None,
     max_attempts: int | None,
+    expanded_evidence_retry: bool | None,
     cache_path: Path | None,
     config_overrides: tuple[str, ...],
 ):
@@ -944,6 +969,7 @@ def _create_review_backend(
         executable=executable,
         timeout_seconds=timeout_seconds,
         max_attempts=max_attempts,
+        expanded_evidence_retry=expanded_evidence_retry,
         cache_path=cache_path,
         config_overrides=config_overrides,
     )
@@ -1553,24 +1579,24 @@ def _usage() -> str:
             "  lua-nil-review-agent register-backend-manifest [--replace] <manifest-path>",
             "  lua-nil-review-agent register-backend-manifest-json [--replace] <manifest-path> [output]",
             "  lua-nil-review-agent compare-benchmark-json <before> <after> [output]",
-            "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
-            "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
-            "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
-            "  lua-nil-review-agent benchmark-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
-            "  lua-nil-review-agent benchmark-cache-compare [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] --backend-cache PATH [--backend-config KEY=VALUE] <repository>",
-            "  lua-nil-review-agent benchmark-cache-compare-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] --backend-cache PATH [--backend-config KEY=VALUE] <repository> [output]",
-            "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <output>",
-            "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <baseline>",
+            "  lua-nil-review-agent report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent benchmark-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
+            "  lua-nil-review-agent benchmark-cache-compare [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] --backend-cache PATH [--backend-config KEY=VALUE] <repository>",
+            "  lua-nil-review-agent benchmark-cache-compare-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] --backend-cache PATH [--backend-config KEY=VALUE] <repository> [output]",
+            "  lua-nil-review-agent baseline-create [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <output>",
+            "  lua-nil-review-agent report-new [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <baseline>",
             "  lua-nil-review-agent refresh-summaries <repository> [output]",
             "  lua-nil-review-agent refresh-knowledge <repository> [output]",
-            "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <baseline>",
+            "  lua-nil-review-agent ci-check [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <baseline>",
             "  lua-nil-review-agent export-prompts [--skill SKILL] [--allow-skill-fallback] <repository> [output]",
-            "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
+            "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
             "  lua-nil-review-agent apply-autofix [--dry-run] [--case-id CASE_ID] [--file PATH] <autofix-manifest>",
             "  lua-nil-review-agent export-unified-diff [--case-id CASE_ID] [--file PATH] <autofix-manifest> [output]",
             "  lua-nil-review-agent scan-file <file.lua>",
-            "  lua-nil-review-agent report-file [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <file.lua>",
-            "  lua-nil-review-agent report-file-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <file.lua>",
+            "  lua-nil-review-agent report-file [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <file.lua>",
+            "  lua-nil-review-agent report-file-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <file.lua>",
             "",
             "Backend values: heuristic | codex | claude | gemini | codeagent",
         ]
@@ -1589,6 +1615,7 @@ def _parse_review_options(
     float | None,
     int | None,
     Path | None,
+    bool | None,
     tuple[str, ...],
     list[str],
 ]:
@@ -1600,6 +1627,7 @@ def _parse_review_options(
     backend_manifest_path: Path | None = None
     backend_timeout: float | None = None
     backend_attempts: int | None = None
+    expanded_evidence_retry: bool | None = None
     backend_cache_path: Path | None = None
     backend_config_overrides: list[str] = []
     positional: list[str] = []
@@ -1663,6 +1691,20 @@ def _parse_review_options(
                 raise ValueError("--backend-attempts must be an integer >= 1")
             index += 2
             continue
+        if token == "--expanded-evidence-retry":
+            if index + 1 >= len(args):
+                raise ValueError("--expanded-evidence-retry requires a value")
+            raw_mode = args[index + 1].strip().lower()
+            if raw_mode == "auto":
+                expanded_evidence_retry = None
+            elif raw_mode == "on":
+                expanded_evidence_retry = True
+            elif raw_mode == "off":
+                expanded_evidence_retry = False
+            else:
+                raise ValueError("--expanded-evidence-retry must be one of: auto, on, off")
+            index += 2
+            continue
         if token == "--backend-cache":
             if index + 1 >= len(args):
                 raise ValueError("--backend-cache requires a value")
@@ -1690,6 +1732,7 @@ def _parse_review_options(
         backend_manifest_path,
         backend_timeout,
         backend_attempts,
+        expanded_evidence_retry,
         backend_cache_path,
         tuple(backend_config_overrides),
         positional,

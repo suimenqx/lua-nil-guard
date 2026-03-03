@@ -1238,6 +1238,16 @@ def test_create_adjudication_backend_passes_timeout_and_attempts() -> None:
     assert backend.max_attempts == 3
 
 
+def test_create_adjudication_backend_passes_expanded_evidence_retry_override() -> None:
+    backend = create_adjudication_backend(
+        "gemini",
+        expanded_evidence_retry=True,
+    )
+
+    assert isinstance(backend, CodeAgentCliBackend)
+    assert backend.expanded_evidence_retry is True
+
+
 def test_create_adjudication_backend_passes_config_overrides() -> None:
     backend = create_adjudication_backend(
         "codex",
