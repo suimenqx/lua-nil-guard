@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "lua-nil-review-agent"
 version = "0.1.0"
 description = "High-precision Lua nil risk review agent"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = ["tree-sitter>=0.25.2"]
 
