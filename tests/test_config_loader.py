@@ -82,3 +82,24 @@ def test_load_function_contracts_rejects_duplicate_names(tmp_path: Path) -> None
 
     with pytest.raises(ConfigError, match="Duplicate function contract"):
         load_function_contracts(config_path)
+
+
+def test_load_function_contracts_allows_guard_only_contracts(tmp_path: Path) -> None:
+    config_path = tmp_path / "function_contracts.json"
+    config_path.write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "assert_profile",
+                    "ensures_non_nil_args": [1],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    contracts = load_function_contracts(config_path)
+
+    assert len(contracts) == 1
+    assert contracts[0].returns_non_nil is False
+    assert contracts[0].ensures_non_nil_args == (1,)

@@ -144,15 +144,16 @@ def _parse_function_contract(data: Any) -> FunctionContract:
     except KeyError as exc:
         raise ConfigError(f"Missing required function contract field: {exc.args[0]}") from exc
 
-    returns_non_nil = data.get("returns_non_nil")
+    returns_non_nil = data.get("returns_non_nil", False)
     if not isinstance(returns_non_nil, bool):
         raise ConfigError("Function contract field 'returns_non_nil' must be a boolean")
+    ensures_non_nil_args = _optional_positive_int_list(data, "ensures_non_nil_args")
 
     notes = data.get("notes")
     if notes is not None and not isinstance(notes, str):
         raise ConfigError("Function contract field 'notes' must be a string when provided")
 
-    if not returns_non_nil:
+    if not returns_non_nil and not ensures_non_nil_args:
         raise ConfigError(
             f"Function contract for {qualified_name} must enable at least one supported contract flag"
         )
@@ -160,6 +161,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
     return FunctionContract(
         qualified_name=qualified_name,
         returns_non_nil=returns_non_nil,
+        ensures_non_nil_args=tuple(ensures_non_nil_args),
         notes=notes,
     )
 
@@ -199,6 +201,13 @@ def _require_str_list(data: dict[str, Any], key: str) -> list[str]:
     value = data[key]
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise ConfigError(f"Sink rule field '{key}' must be a string array")
+    return value
+
+
+def _optional_positive_int_list(data: dict[str, Any], key: str) -> list[int]:
+    value = data.get(key, [])
+    if not isinstance(value, list) or any(not isinstance(item, int) or item < 1 for item in value):
+        raise ConfigError(f"Function contract field '{key}' must be a positive integer array")
     return value
 
 

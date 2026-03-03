@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import re
 
-from .models import CandidateCase, StaticAnalysisResult
+from .models import CandidateCase, FunctionContract, StaticAnalysisResult
+from .summaries import detect_module_name
 
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SIMPLE_CALL_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_:.]*)\s*\((.*)\)\s*$")
 
 
-def analyze_candidate(source: str, candidate: CandidateCase) -> StaticAnalysisResult:
+def analyze_candidate(
+    source: str,
+    candidate: CandidateCase,
+    *,
+    function_contracts: tuple[FunctionContract, ...] = (),
+) -> StaticAnalysisResult:
     """Apply bounded local heuristics before escalating to agent review."""
 
     if not _IDENTIFIER_RE.match(candidate.symbol):
@@ -22,6 +29,7 @@ def analyze_candidate(source: str, candidate: CandidateCase) -> StaticAnalysisRe
     prior_lines = lines[: max(0, candidate.line - 1)]
     origin = _find_last_assignment(prior_lines, candidate.symbol)
     observed_guards: list[str] = []
+    current_module = detect_module_name(source)
 
     if _has_active_positive_guard(prior_lines, candidate.symbol):
         observed_guards.append(f"if {candidate.symbol} then")
@@ -29,6 +37,14 @@ def analyze_candidate(source: str, candidate: CandidateCase) -> StaticAnalysisRe
         observed_guards.append(f"if not {candidate.symbol} then return")
     if _has_active_assert(prior_lines, candidate.symbol):
         observed_guards.append(f"assert({candidate.symbol})")
+    contract_guard = _active_contract_guard(
+        prior_lines,
+        candidate.symbol,
+        function_contracts=function_contracts,
+        current_module=current_module,
+    )
+    if contract_guard is not None:
+        observed_guards.append(contract_guard)
     if _has_defaulting_origin(origin):
         observed_guards.append(f"{candidate.symbol} = {candidate.symbol} or ...")
 
@@ -207,6 +223,56 @@ def _has_defaulting_origin(origin: str | None) -> bool:
     return True
 
 
+def _active_contract_guard(
+    lines: list[str],
+    symbol: str,
+    *,
+    function_contracts: tuple[FunctionContract, ...],
+    current_module: str | None,
+) -> str | None:
+    contract_by_name = {
+        contract.qualified_name: contract
+        for contract in function_contracts
+        if contract.ensures_non_nil_args
+    }
+    if not contract_by_name:
+        return None
+
+    line_paths, final_path = _scan_branch_paths(lines)
+    active_guard: str | None = None
+    known_contract_names = frozenset(contract_by_name)
+
+    for line, path in zip(lines, line_paths):
+        if not _branch_path_is_prefix(path, final_path):
+            continue
+
+        stripped = _strip_lua_comment(line).strip()
+        if not stripped:
+            continue
+
+        if _assigns_symbol(stripped, symbol):
+            active_guard = None
+            continue
+
+        parsed_call = _parse_simple_call(stripped)
+        if parsed_call is None:
+            continue
+
+        raw_name, args = parsed_call
+        resolved_name = _resolve_contract_name(
+            raw_name,
+            current_module=current_module,
+            known_contract_names=known_contract_names,
+        )
+        contract = contract_by_name.get(resolved_name)
+        if contract is None:
+            continue
+        if _contract_matches_symbol(contract, args, symbol):
+            active_guard = f"{resolved_name}({symbol})"
+
+    return active_guard
+
+
 def _split_top_level_values(values_text: str) -> list[str]:
     values: list[str] = []
     start = 0
@@ -241,6 +307,40 @@ def _split_top_level_values(values_text: str) -> list[str]:
     if tail:
         values.append(tail)
     return values
+
+
+def _parse_simple_call(stripped_line: str) -> tuple[str, tuple[str, ...]] | None:
+    match = _SIMPLE_CALL_RE.match(stripped_line)
+    if match is None:
+        return None
+    return match.group(1), tuple(_split_top_level_values(match.group(2)))
+
+
+def _resolve_contract_name(
+    raw_name: str,
+    *,
+    current_module: str | None,
+    known_contract_names: frozenset[str],
+) -> str:
+    normalized = raw_name.replace(":", ".")
+    if "." in normalized:
+        return normalized
+    if current_module:
+        module_qualified = f"{current_module}.{normalized}"
+        if module_qualified in known_contract_names:
+            return module_qualified
+    return normalized
+
+
+def _contract_matches_symbol(
+    contract: FunctionContract,
+    args: tuple[str, ...],
+    symbol: str,
+) -> bool:
+    for index in contract.ensures_non_nil_args:
+        if 1 <= index <= len(args) and args[index - 1].strip() == symbol:
+            return True
+    return False
 
 
 def _is_if_open_for_symbol(stripped_line: str, symbol: str) -> bool:
@@ -339,6 +439,10 @@ def _scan_branch_paths(lines: list[str]) -> tuple[tuple[tuple[int, ...], ...], t
             stack.pop()
 
     return tuple(line_paths), _current_if_branch_path(stack)
+
+
+def _strip_lua_comment(line: str) -> str:
+    return line.partition("--")[0]
 
 
 def _current_if_branch_path(stack: list[dict[str, int | str]]) -> tuple[int, ...]:

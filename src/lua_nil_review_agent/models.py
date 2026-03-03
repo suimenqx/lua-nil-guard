@@ -150,6 +150,7 @@ class FunctionContract:
 
     qualified_name: str
     returns_non_nil: bool
+    ensures_non_nil_args: tuple[int, ...] = ()
     notes: str | None = None
 
 

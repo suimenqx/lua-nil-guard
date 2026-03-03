@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lua_nil_review_agent.models import CandidateCase
+from lua_nil_review_agent.models import CandidateCase, FunctionContract
 from lua_nil_review_agent.static_analysis import analyze_candidate
 
 
@@ -237,6 +237,46 @@ def test_analyze_candidate_keeps_early_return_guard_active_across_non_assignment
 
     assert result.state == "safe_static"
     assert result.observed_guards == ("if not username then return",)
+    assert result.origin_candidates == ("req.params.username",)
+
+
+def test_analyze_candidate_treats_contract_guard_call_as_safe() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "assert_present(username)",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_contract_guard",
+        file="demo.lua",
+        line=3,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        function_contracts=(
+            FunctionContract(
+                qualified_name="assert_present",
+                returns_non_nil=False,
+                ensures_non_nil_args=(1,),
+                notes="raises when username is nil",
+            ),
+        ),
+    )
+
+    assert result.state == "safe_static"
+    assert result.observed_guards == ("assert_present(username)",)
     assert result.origin_candidates == ("req.params.username",)
 
 

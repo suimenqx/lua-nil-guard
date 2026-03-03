@@ -144,12 +144,18 @@ def review_source(
     file_path: str | Path,
     source: str,
     sink_rules: tuple[SinkRule, ...],
+    *,
+    function_contracts: tuple[object, ...] = (),
 ) -> tuple[CandidateAssessment, ...]:
     """Collect candidates from one source file and attach local static analysis."""
 
     assessments: list[CandidateAssessment] = []
     for candidate in collect_candidates(file_path, source, sink_rules):
-        static_analysis = analyze_candidate(source, candidate)
+        static_analysis = analyze_candidate(
+            source,
+            candidate,
+            function_contracts=tuple(function_contracts),
+        )
         assessments.append(
             CandidateAssessment(
                 candidate=with_candidate_state(candidate, static_analysis.state),
@@ -165,7 +171,14 @@ def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment
     assessments: list[CandidateAssessment] = []
     for file_path in snapshot.lua_files:
         source = file_path.read_text(encoding="utf-8")
-        assessments.extend(review_source(file_path, source, snapshot.sink_rules))
+        assessments.extend(
+            review_source(
+                file_path,
+                source,
+                snapshot.sink_rules,
+                function_contracts=snapshot.function_contracts,
+            )
+        )
     return tuple(assessments)
 
 
@@ -177,7 +190,12 @@ def review_repository_file(
 
     resolved_file = _resolve_snapshot_lua_file(snapshot, file_path)
     source = resolved_file.read_text(encoding="utf-8")
-    return review_source(resolved_file, source, snapshot.sink_rules)
+    return review_source(
+        resolved_file,
+        source,
+        snapshot.sink_rules,
+        function_contracts=snapshot.function_contracts,
+    )
 
 
 def prepare_evidence_packet(
@@ -565,7 +583,12 @@ def export_adjudication_tasks(
 
     for file_path in snapshot.lua_files:
         source = file_path.read_text(encoding="utf-8")
-        for assessment in review_source(file_path, source, snapshot.sink_rules):
+        for assessment in review_source(
+            file_path,
+            source,
+            snapshot.sink_rules,
+            function_contracts=snapshot.function_contracts,
+        ):
             related_evidence = _build_related_evidence(
                 assessment,
                 summary_text_by_name=summary_text_by_name,
