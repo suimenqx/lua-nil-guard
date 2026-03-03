@@ -16,6 +16,7 @@ from .agent_driver_manifest import (
     load_agent_provider_spec_manifest_file,
 )
 from .baseline import BaselineStore, build_baseline, filter_new_findings
+from .config_loader import ConfigError, initialize_repository_config
 from .parser_backend import get_parser_backend_info
 from .reporting import render_json_report, render_markdown_report
 from .skill_runtime import SkillRuntimeError
@@ -65,6 +66,30 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         except (OSError, ValueError) as exc:
             return 2, str(exc)
         return 0, _render_scan_summary(snapshot.root, assessments, target_file=file_path)
+
+    if command == "init-config":
+        force = False
+        positional: list[str] = []
+        for token in args[1:]:
+            if token == "--force":
+                force = True
+            else:
+                positional.append(token)
+        if len(positional) != 1:
+            return 2, "init-config requires exactly one repository path"
+        root = Path(positional[0])
+        try:
+            sink_path, policy_path = initialize_repository_config(root, force=force)
+        except (ConfigError, OSError) as exc:
+            return 2, str(exc)
+        return 0, "\n".join(
+            [
+                "Repository config initialized.",
+                f"Force overwrite: {'yes' if force else 'no'}",
+                f"Sink rules: {sink_path}",
+                f"Confidence policy: {policy_path}",
+            ]
+        )
 
     if command == "clear-backend-cache":
         if len(args) != 2:
@@ -1600,6 +1625,7 @@ def _usage() -> str:
         [
             "Usage:",
             "  lua-nil-review-agent scan <repository>",
+            "  lua-nil-review-agent init-config [--force] <repository>",
             "  lua-nil-review-agent clear-backend-cache <cache-file>",
             "  lua-nil-review-agent generate-backend-manifest <name> <protocol> [output]",
             "  lua-nil-review-agent validate-backend-manifest <manifest-path>",

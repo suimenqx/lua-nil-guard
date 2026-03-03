@@ -11,6 +11,38 @@ class ConfigError(ValueError):
     """Raised when project configuration is malformed."""
 
 
+def initialize_repository_config(
+    root: str | Path,
+    *,
+    force: bool = False,
+) -> tuple[Path, Path]:
+    """Write the default review config into a target repository root."""
+
+    root_path = Path(root)
+    template_root = _default_config_template_root()
+    sink_source = template_root / "sink_rules.json"
+    policy_source = template_root / "confidence_policy.json"
+
+    for source_path in (sink_source, policy_source):
+        if not source_path.is_file():
+            raise ConfigError(f"Default config template not found: {source_path}")
+
+    config_dir = root_path / "config"
+    sink_target = config_dir / "sink_rules.json"
+    policy_target = config_dir / "confidence_policy.json"
+
+    for target_path in (sink_target, policy_target):
+        if target_path.exists() and not force:
+            raise ConfigError(
+                f"Config file already exists: {target_path} (use --force to overwrite)"
+            )
+
+    config_dir.mkdir(parents=True, exist_ok=True)
+    sink_target.write_text(sink_source.read_text(encoding="utf-8"), encoding="utf-8")
+    policy_target.write_text(policy_source.read_text(encoding="utf-8"), encoding="utf-8")
+    return sink_target, policy_target
+
+
 def load_sink_rules(path: str | Path) -> list[SinkRule]:
     """Load and validate the sink rule catalog."""
 
@@ -118,3 +150,7 @@ def _require_str_list(data: dict[str, Any], key: str) -> list[str]:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise ConfigError(f"Sink rule field '{key}' must be a string array")
     return value
+
+
+def _default_config_template_root() -> Path:
+    return Path(__file__).resolve().parents[2] / "config"
