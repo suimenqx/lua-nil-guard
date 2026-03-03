@@ -8,6 +8,7 @@ from .models import FunctionContract, FunctionSummary, KnowledgeFact
 
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_IDENTIFIER_PREFIX_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*")
 _MEMBER_ACCESS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$")
 _INDEXED_ACCESS_RE = re.compile(
     r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?:\[[^\]]+\])+$"
@@ -247,6 +248,7 @@ def contract_applies_to_call(
         or contract.required_arg_shapes
         or contract.required_arg_roots
         or contract.required_arg_prefixes
+        or contract.required_arg_access_paths
     ) and arg_values is None:
         return False
 
@@ -276,6 +278,13 @@ def contract_applies_to_call(
         if arg_prefix is None:
             return False
         if not any(_prefix_matches(arg_prefix, prefix) for prefix in allowed_prefixes):
+            return False
+
+    for index, allowed_paths in contract.required_arg_access_paths:
+        if index < 1 or index > len(arg_values):
+            return False
+        arg_path = _extract_arg_access_path(arg_values[index - 1])
+        if arg_path is None or arg_path not in allowed_paths:
             return False
     return True
 
@@ -335,6 +344,94 @@ def _prefix_matches(arg_prefix: str, required_prefix: str) -> bool:
     if not normalized:
         return False
     return arg_prefix == normalized or arg_prefix.startswith(f"{normalized}.")
+
+
+def _extract_arg_access_path(raw_value: str) -> str | None:
+    value = raw_value.strip()
+    match = _ROOT_RE.match(value)
+    if match is None:
+        return None
+    root = match.group(1)
+    if root in _LUA_KEYWORDS:
+        return None
+
+    position = match.end()
+    parts: list[str] = [root]
+    while position < len(value):
+        while position < len(value) and value[position].isspace():
+            position += 1
+        if position >= len(value):
+            break
+        if value[position] == ".":
+            position += 1
+            while position < len(value) and value[position].isspace():
+                position += 1
+            name_match = _IDENTIFIER_PREFIX_RE.match(value[position:])
+            if name_match is None:
+                return None
+            segment = name_match.group(0)
+            parts.append(segment)
+            position += len(segment)
+            continue
+        if value[position] == "[":
+            bracket_end = _find_matching_bracket(value, position)
+            if bracket_end is None:
+                return None
+            segment = _normalize_bracket_segment(value[position + 1 : bracket_end].strip())
+            if segment is None:
+                return None
+            parts.append(segment)
+            position = bracket_end + 1
+            continue
+        return None
+
+    path = parts[0]
+    for segment in parts[1:]:
+        if segment.startswith("["):
+            path += segment
+        else:
+            path += f".{segment}"
+    return path
+
+
+def _find_matching_bracket(value: str, start: int) -> int | None:
+    quote: str | None = None
+    escaped = False
+
+    for index in range(start + 1, len(value)):
+        char = value[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char == "]":
+            return index
+    return None
+
+
+def _normalize_bracket_segment(bracket_value: str) -> str | None:
+    if not bracket_value:
+        return None
+    if _NUMERIC_LITERAL_RE.match(bracket_value):
+        return f"[{bracket_value}]"
+    if len(bracket_value) >= 2 and bracket_value[0] == bracket_value[-1] and bracket_value[0] in {
+        "'",
+        '"',
+    }:
+        inner_value = bracket_value[1:-1]
+        if _IDENTIFIER_RE.match(inner_value):
+            return inner_value
+        return None
+    return None
 
 
 def _returns_non_nil_value(summary: FunctionSummary) -> bool:

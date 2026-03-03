@@ -165,6 +165,7 @@ class FunctionContract:
     required_arg_shapes: tuple[tuple[int, tuple[str, ...]], ...] = ()
     required_arg_roots: tuple[tuple[int, tuple[str, ...]], ...] = ()
     required_arg_prefixes: tuple[tuple[int, tuple[str, ...]], ...] = ()
+    required_arg_access_paths: tuple[tuple[int, tuple[str, ...]], ...] = ()
     notes: str | None = None
 
 
