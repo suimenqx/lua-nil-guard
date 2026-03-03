@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import difflib
+from dataclasses import dataclass
 import json
 import re
 from pathlib import Path
@@ -33,6 +34,37 @@ from .verification import verify_verdict
 
 
 _CALL_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_INLINE_CALL_RE = re.compile(r"(?<![.:A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_FUNCTION_BLOCK_RE = re.compile(
+    r"\b(?:local\s+)?function(?:\s+[A-Za-z_][A-Za-z0-9_.:]*|\s*)\s*\("
+)
+_CONTROL_FLOW_START_RE = re.compile(r"^\s*(if|for|while)\b")
+_LUA_KEYWORDS = frozenset(
+    {
+        "and",
+        "break",
+        "do",
+        "elseif",
+        "end",
+        "for",
+        "function",
+        "if",
+        "local",
+        "not",
+        "or",
+        "repeat",
+        "return",
+        "then",
+        "until",
+        "while",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _FunctionContextBlock:
+    rendered: str
+    callees: tuple[str, ...]
 
 
 def bootstrap_repository(root: str | Path) -> RepositorySnapshot:
@@ -357,7 +389,7 @@ def _run_review_from_assessments(
     *,
     adjudication_backend: AdjudicationBackend,
     summary_text_by_name: dict[str, tuple[str, ...]],
-    function_context_by_name: dict[str, tuple[str, ...]],
+    function_context_by_name: dict[str, tuple[_FunctionContextBlock, ...]],
     facts: tuple[object, ...],
 ) -> tuple[Verdict, ...]:
     sink_rule_by_id = {rule.id: rule for rule in snapshot.sink_rules}
@@ -369,14 +401,18 @@ def _run_review_from_assessments(
     for file_path in snapshot.lua_files:
         source = file_path.read_text(encoding="utf-8")
         for assessment in assessments_by_file.get(str(file_path), ()):
-            related_functions = _related_functions_from_assessment(assessment)
+            direct_related_functions = _related_functions_from_assessment(assessment)
+            related_functions = _expand_related_functions(
+                direct_related_functions,
+                function_context_by_name,
+            )
             function_summaries = tuple(
                 summary
                 for function_name in related_functions
                 for summary in summary_text_by_name.get(function_name, ())
             )
             related_function_contexts = tuple(
-                context
+                context.rendered
                 for function_name in related_functions
                 for context in function_context_by_name.get(function_name, ())
             )
@@ -453,14 +489,18 @@ def export_adjudication_tasks(
     for file_path in snapshot.lua_files:
         source = file_path.read_text(encoding="utf-8")
         for assessment in review_source(file_path, source, snapshot.sink_rules):
-            related_functions = _related_functions_from_assessment(assessment)
+            direct_related_functions = _related_functions_from_assessment(assessment)
+            related_functions = _expand_related_functions(
+                direct_related_functions,
+                function_context_by_name,
+            )
             function_summaries = tuple(
                 summary
                 for function_name in related_functions
                 for summary in summary_text_by_name.get(function_name, ())
             )
             related_function_contexts = tuple(
-                context
+                context.rendered
                 for function_name in related_functions
                 for context in function_context_by_name.get(function_name, ())
             )
@@ -726,10 +766,10 @@ def _build_summary_text_index(summaries: tuple[object, ...]) -> dict[str, tuple[
 def _build_function_context_index(
     snapshot: RepositorySnapshot,
     summaries: tuple[object, ...],
-) -> dict[str, tuple[str, ...]]:
+) -> dict[str, tuple[_FunctionContextBlock, ...]]:
     path_lookup = {str(path): path for path in snapshot.lua_files}
     source_lookup: dict[str, str] = {}
-    index: dict[str, list[str]] = {}
+    index: dict[str, list[_FunctionContextBlock]] = {}
 
     for summary in summaries:
         path_key = str(summary.file)
@@ -739,7 +779,7 @@ def _build_function_context_index(
                 source_lookup[path_key] = file_path.read_text(encoding="utf-8")
             except OSError:
                 continue
-        snippet = _extract_function_context_snippet(source_lookup[path_key], summary.line)
+        snippet, callees = _extract_function_context_snippet(source_lookup[path_key], summary.line)
         if not snippet:
             continue
         rendered = "\n".join(
@@ -748,7 +788,12 @@ def _build_function_context_index(
                 snippet,
             ]
         )
-        index.setdefault(summary.function_name, []).append(rendered)
+        index.setdefault(summary.function_name, []).append(
+            _FunctionContextBlock(
+                rendered=rendered,
+                callees=callees,
+            )
+        )
 
     return {key: tuple(value) for key, value in index.items()}
 
@@ -756,18 +801,78 @@ def _build_function_context_index(
 def _extract_function_context_snippet(
     source: str,
     start_line: int,
-    *,
-    max_lines: int = 8,
-) -> str:
+) -> tuple[str, tuple[str, ...]]:
     lines = source.splitlines()
     start_index = max(0, start_line - 1)
     if start_index >= len(lines):
-        return ""
-    end_index = min(len(lines), start_index + max_lines)
-    snippet_lines = lines[start_index:end_index]
+        return "", ()
+
+    snippet_lines = [lines[start_index]]
+    callee_names: list[str] = []
+    depth = 1
+    index = start_index + 1
+
+    while index < len(lines):
+        line = lines[index]
+        snippet_lines.append(line)
+        callee_names.extend(_call_names_from_line(line))
+        depth += _opened_block_count(line)
+        depth -= _closed_block_count(line)
+        if depth <= 0:
+            break
+        index += 1
+
     while snippet_lines and not snippet_lines[-1].strip():
         snippet_lines.pop()
-    return "\n".join(snippet_lines)
+    return "\n".join(snippet_lines), tuple(dict.fromkeys(callee_names))
+
+
+def _call_names_from_line(line: str) -> tuple[str, ...]:
+    code = _strip_lua_comment(line)
+    if not code.strip():
+        return ()
+    names = [
+        match.group(1)
+        for match in _INLINE_CALL_RE.finditer(code)
+        if match.group(1) not in _LUA_KEYWORDS
+    ]
+    return tuple(dict.fromkeys(names))
+
+
+def _opened_block_count(line: str) -> int:
+    code = _strip_lua_comment(line).strip()
+    if not code:
+        return 0
+
+    count = 0
+    if _FUNCTION_BLOCK_RE.search(code):
+        count += len(_FUNCTION_BLOCK_RE.findall(code))
+
+    control_match = _CONTROL_FLOW_START_RE.match(code)
+    if control_match is not None:
+        keyword = control_match.group(1)
+        if keyword == "if" and re.search(r"\bthen\b", code):
+            count += 1
+        elif keyword in {"for", "while"} and re.search(r"\bdo\b", code):
+            count += 1
+    elif code == "do":
+        count += 1
+
+    if re.match(r"^\s*repeat\b", code):
+        count += 1
+
+    return count
+
+
+def _closed_block_count(line: str) -> int:
+    code = _strip_lua_comment(line)
+    if not code.strip():
+        return 0
+    return len(re.findall(r"\bend\b", code)) + len(re.findall(r"\buntil\b", code))
+
+
+def _strip_lua_comment(line: str) -> str:
+    return line.partition("--")[0]
 
 
 def _load_knowledge_facts(
@@ -954,6 +1059,25 @@ def _apply_autofix_patch_to_lines(lines: list[str], patch: AutofixPatch) -> None
 
     end_index = patch.end_line
     lines[start_index:end_index] = replacement_lines
+
+
+def _expand_related_functions(
+    related_functions: tuple[str, ...],
+    function_context_by_name: dict[str, tuple[_FunctionContextBlock, ...]],
+) -> tuple[str, ...]:
+    direct_functions = tuple(dict.fromkeys(related_functions))
+    expanded = list(direct_functions)
+    seen = set(direct_functions)
+
+    for function_name in direct_functions:
+        for context in function_context_by_name.get(function_name, ()):
+            for callee in context.callees:
+                if callee in seen or callee not in function_context_by_name:
+                    continue
+                seen.add(callee)
+                expanded.append(callee)
+
+    return tuple(expanded)
 
 
 def _related_functions_from_assessment(assessment: CandidateAssessment) -> tuple[str, ...]:

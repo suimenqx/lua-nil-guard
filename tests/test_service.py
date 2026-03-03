@@ -199,7 +199,9 @@ def test_find_repository_root_for_file_walks_up_to_config_directory(tmp_path: Pa
     assert root == tmp_path
 
 
-def test_run_file_review_uses_repository_context_for_cross_file_summaries(tmp_path: Path) -> None:
+def test_run_file_review_uses_repository_context_for_cross_file_function_chains(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "config").mkdir()
     (tmp_path / "src").mkdir()
     (tmp_path / "lib").mkdir()
@@ -246,6 +248,26 @@ def test_run_file_review_uses_repository_context_for_cross_file_summaries(tmp_pa
         "\n".join(
             [
                 "function normalize_name(value)",
+                "  local raw = value",
+                "  if raw == nil then",
+                "    raw = ''",
+                "  end",
+                "  raw = string.gsub(raw, '^%s+', '')",
+                "  raw = string.gsub(raw, '%s+$', '')",
+                "  local trimmed = raw",
+                "  if trimmed == '' then",
+                "    return coerce_name(trimmed)",
+                "  end",
+                "  return coerce_name(trimmed)",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "coerce.lua").write_text(
+        "\n".join(
+            [
+                "function coerce_name(value)",
                 "  value = value or ''",
                 "  return value",
                 "end",
@@ -260,6 +282,7 @@ def test_run_file_review_uses_repository_context_for_cross_file_summaries(tmp_pa
     class SummaryAwareBackend:
         def adjudicate(self, packet, sink_rule):  # noqa: ANN001
             del sink_rule
+            seen["related_functions"] = packet.related_functions
             seen["function_summaries"] = packet.function_summaries
             seen["related_function_contexts"] = packet.related_function_contexts
             return AdjudicationRecord(
@@ -299,8 +322,12 @@ def test_run_file_review_uses_repository_context_for_cross_file_summaries(tmp_pa
 
     assert len(verdicts) == 1
     assert verdicts[0].status == "safe"
+    assert seen["related_functions"] == ("normalize_name", "coerce_name")
     assert any("normalize_name" in summary for summary in seen["function_summaries"])
+    assert any("coerce_name" in summary for summary in seen["function_summaries"])
     assert any("normalize_name @ " in context for context in seen["related_function_contexts"])
+    assert any("coerce_name @ " in context for context in seen["related_function_contexts"])
+    assert any("return coerce_name(trimmed)" in context for context in seen["related_function_contexts"])
     assert any("value = value or ''" in context for context in seen["related_function_contexts"])
 
 
