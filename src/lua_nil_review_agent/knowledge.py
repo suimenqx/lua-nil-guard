@@ -70,6 +70,7 @@ def derive_facts_from_contracts(
     contracts: tuple[FunctionContract, ...],
     *,
     current_module: str | None = None,
+    current_function_scope: str | None = None,
     current_sink_rule_id: str | None = None,
     current_sink_name: str | None = None,
 ) -> tuple[KnowledgeFact, ...]:
@@ -78,6 +79,8 @@ def derive_facts_from_contracts(
     facts: list[KnowledgeFact] = []
     for contract in contracts:
         if not contract_applies_in_module(contract, current_module):
+            continue
+        if not contract_applies_in_function_scope(contract, current_function_scope):
             continue
         if not contract_applies_to_sink(
             contract,
@@ -111,6 +114,19 @@ def contract_applies_in_module(
     if current_module is None:
         return False
     return current_module in contract.applies_in_modules
+
+
+def contract_applies_in_function_scope(
+    contract: FunctionContract,
+    current_function_scope: str | None,
+) -> bool:
+    """Return whether a contract is active for the current caller function scope."""
+
+    if not contract.applies_in_function_scopes:
+        return True
+    if current_function_scope is None:
+        return False
+    return current_function_scope in contract.applies_in_function_scopes
 
 
 def contract_applies_to_sink(

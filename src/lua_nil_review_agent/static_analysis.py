@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import re
 
-from .knowledge import contract_applies_in_module, contract_applies_to_call, contract_applies_to_sink
+from .knowledge import (
+    contract_applies_in_function_scope,
+    contract_applies_in_module,
+    contract_applies_to_call,
+    contract_applies_to_sink,
+)
 from .models import CandidateCase, FunctionContract, StaticAnalysisResult
 from .summaries import detect_module_name
 
@@ -45,6 +50,7 @@ def analyze_candidate(
         candidate.symbol,
         function_contracts=function_contracts,
         current_module=current_module,
+        current_function_scope=candidate.function_scope,
         sink_rule_id=candidate.sink_rule_id,
         sink_name=candidate.sink_name,
     )
@@ -54,6 +60,7 @@ def analyze_candidate(
         origin_context,
         function_contracts=function_contracts,
         current_module=current_module,
+        current_function_scope=candidate.function_scope,
         sink_rule_id=candidate.sink_rule_id,
         sink_name=candidate.sink_name,
     )
@@ -249,6 +256,7 @@ def _active_contract_guard(
     *,
     function_contracts: tuple[FunctionContract, ...],
     current_module: str | None,
+    current_function_scope: str,
     sink_rule_id: str,
     sink_name: str,
 ) -> str | None:
@@ -257,6 +265,7 @@ def _active_contract_guard(
         for contract in function_contracts
         if contract.ensures_non_nil_args
         and contract_applies_in_module(contract, current_module)
+        and contract_applies_in_function_scope(contract, current_function_scope)
         and contract_applies_to_sink(
             contract,
             current_sink_rule_id=sink_rule_id,
@@ -313,6 +322,7 @@ def _origin_return_contract_guard(
     *,
     function_contracts: tuple[FunctionContract, ...],
     current_module: str | None,
+    current_function_scope: str,
     sink_rule_id: str,
     sink_name: str,
 ) -> str | None:
@@ -325,6 +335,7 @@ def _origin_return_contract_guard(
         for contract in function_contracts
         if contract.returns_non_nil_from_args
         and contract_applies_in_module(contract, current_module)
+        and contract_applies_in_function_scope(contract, current_function_scope)
         and contract_applies_to_sink(
             contract,
             current_sink_rule_id=sink_rule_id,

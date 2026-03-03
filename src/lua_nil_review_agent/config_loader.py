@@ -154,6 +154,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
     ensures_non_nil_args = _optional_positive_int_list(data, "ensures_non_nil_args")
     returns_non_nil_from_args = _optional_positive_int_list(data, "returns_non_nil_from_args")
     applies_in_modules = _optional_str_list(data, "applies_in_modules")
+    applies_in_function_scopes = _optional_str_list(data, "applies_in_function_scopes")
     applies_to_sinks = _optional_str_list(data, "applies_to_sinks")
     applies_to_call_roles = _optional_str_list(data, "applies_to_call_roles")
     applies_to_usage_modes = _optional_str_list(data, "applies_to_usage_modes")
@@ -185,6 +186,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         ensures_non_nil_args=tuple(ensures_non_nil_args),
         returns_non_nil_from_args=tuple(returns_non_nil_from_args),
         applies_in_modules=tuple(applies_in_modules),
+        applies_in_function_scopes=tuple(dict.fromkeys(applies_in_function_scopes)),
         applies_to_sinks=tuple(applies_to_sinks),
         applies_to_call_roles=tuple(dict.fromkeys(applies_to_call_roles)),
         applies_to_usage_modes=tuple(dict.fromkeys(applies_to_usage_modes)),

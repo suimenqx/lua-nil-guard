@@ -14,6 +14,7 @@ from .collector import collect_candidates
 from .config_loader import load_confidence_policy, load_function_contracts, load_sink_rules
 from .knowledge import (
     KnowledgeBase,
+    contract_applies_in_function_scope,
     contract_applies_in_module,
     contract_applies_to_call,
     contract_applies_to_sink,
@@ -1038,6 +1039,10 @@ def _knowledge_facts_for_assessment(
         contract
         for contract in function_contracts
         if contract_applies_in_module(contract, current_module)
+        and contract_applies_in_function_scope(
+            contract,
+            assessment.candidate.function_scope,
+        )
         and contract_applies_to_sink(
             contract,
             current_sink_rule_id=assessment.candidate.sink_rule_id,
@@ -1059,6 +1064,7 @@ def _knowledge_facts_for_assessment(
         for fact in derive_facts_from_contracts(
             applicable_contracts,
             current_module=current_module,
+            current_function_scope=assessment.candidate.function_scope,
             current_sink_rule_id=assessment.candidate.sink_rule_id,
             current_sink_name=assessment.candidate.sink_name,
         )
