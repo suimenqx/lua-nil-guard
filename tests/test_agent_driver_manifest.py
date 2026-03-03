@@ -11,6 +11,7 @@ from lua_nil_review_agent.agent_driver_manifest import (
     CLAUDE_PROVIDER_SPEC,
     CODEX_PROVIDER_SPEC,
     GEMINI_PROVIDER_SPEC,
+    build_agent_provider_manifest_template,
     get_builtin_agent_provider_manifest,
     get_builtin_agent_provider_spec,
     load_agent_provider_spec_manifest,
@@ -111,3 +112,20 @@ def test_load_agent_provider_spec_manifest_file_rejects_invalid_json(tmp_path: P
 
     with pytest.raises(ValueError, match="Invalid provider manifest JSON"):
         load_agent_provider_spec_manifest_file(path)
+
+
+def test_build_agent_provider_manifest_template_sets_protocol_defaults() -> None:
+    payload = build_agent_provider_manifest_template("sample-agent", "stdout_envelope_cli")
+
+    assert payload["name"] == "sample-agent"
+    assert payload["default_executable"] == "sample-agent"
+    assert payload["default_expanded_evidence_retry_mode"] == "auto"
+    assert payload["default_timeout_seconds"] == 45.0
+    assert payload["default_max_attempts"] == 2
+    assert payload["capabilities"]["supports_stdout_json"] is True
+    assert payload["capabilities"]["supports_output_schema"] is False
+
+
+def test_build_agent_provider_manifest_template_rejects_unknown_protocol() -> None:
+    with pytest.raises(ValueError, match="Unknown provider manifest protocol"):
+        build_agent_provider_manifest_template("sample-agent", "sdk_api")

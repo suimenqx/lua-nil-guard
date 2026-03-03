@@ -23,6 +23,7 @@ def test_cli_help_lists_supported_backends() -> None:
 
     assert exit_code == 0
     assert "Backend values: heuristic | codex | claude | gemini | codeagent" in output
+    assert "generate-backend-manifest" in output
     assert "scan-file" in output
     assert "report-file" in output
     assert "report-file-json" in output
@@ -170,6 +171,44 @@ def test_cli_clear_backend_cache_removes_cache_file(tmp_path: Path) -> None:
     assert "Backend cache cleared." in output
     assert "Removed entries: 2" in output
     assert not cache_path.exists()
+
+
+def test_cli_generate_backend_manifest_renders_template_json() -> None:
+    exit_code, output = run(["generate-backend-manifest", "sample-agent", "stdout_envelope_cli"])
+
+    payload = json.loads(output)
+    assert exit_code == 0
+    assert payload["name"] == "sample-agent"
+    assert payload["protocol"] == "stdout_envelope_cli"
+    assert payload["default_expanded_evidence_retry_mode"] == "auto"
+    assert payload["capabilities"]["supports_stdout_json"] is True
+
+
+def test_cli_generate_backend_manifest_writes_output_file(tmp_path: Path) -> None:
+    output_path = tmp_path / "provider.json"
+
+    exit_code, output = run(
+        [
+            "generate-backend-manifest",
+            "sample-agent",
+            "schema_file_cli",
+            str(output_path),
+        ]
+    )
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert "Backend manifest template generated." in output
+    assert payload["protocol"] == "schema_file_cli"
+    assert payload["capabilities"]["supports_output_schema"] is True
+    assert payload["default_expanded_evidence_retry_mode"] == "auto"
+
+
+def test_cli_generate_backend_manifest_rejects_unknown_protocol() -> None:
+    exit_code, output = run(["generate-backend-manifest", "sample-agent", "sdk_api"])
+
+    assert exit_code == 2
+    assert output.startswith("Unknown provider manifest protocol: sdk_api")
 
 
 def test_cli_validate_backend_manifest_reports_summary(tmp_path: Path) -> None:

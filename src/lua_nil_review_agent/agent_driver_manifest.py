@@ -81,6 +81,68 @@ BUILTIN_AGENT_PROVIDER_MANIFESTS: dict[str, dict[str, object]] = {
     },
 }
 
+_PROTOCOL_TEMPLATE_DEFAULTS: dict[str, dict[str, object]] = {
+    "schema_file_cli": {
+        "default_timeout_seconds": 45.0,
+        "default_max_attempts": 2,
+        "capabilities": {
+            "supports_model_override": False,
+            "supports_config_overrides": False,
+            "supports_backend_cache": True,
+            "supports_output_schema": True,
+            "supports_output_file": True,
+            "supports_stdout_json": False,
+            "supports_tool_free_prompting": True,
+        },
+    },
+    "stdout_structured_cli": {
+        "default_timeout_seconds": 75.0,
+        "default_max_attempts": 2,
+        "capabilities": {
+            "supports_model_override": False,
+            "supports_config_overrides": False,
+            "supports_backend_cache": True,
+            "supports_output_schema": True,
+            "supports_output_file": False,
+            "supports_stdout_json": True,
+            "supports_tool_free_prompting": True,
+        },
+    },
+    "stdout_envelope_cli": {
+        "default_timeout_seconds": 45.0,
+        "default_max_attempts": 2,
+        "capabilities": {
+            "supports_model_override": False,
+            "supports_config_overrides": False,
+            "supports_backend_cache": True,
+            "supports_output_schema": False,
+            "supports_output_file": False,
+            "supports_stdout_json": True,
+            "supports_tool_free_prompting": True,
+        },
+    },
+}
+
+
+def build_agent_provider_manifest_template(name: str, protocol: str) -> dict[str, object]:
+    """Build a starter provider manifest payload for a supported CLI protocol."""
+
+    template_defaults = _PROTOCOL_TEMPLATE_DEFAULTS.get(protocol)
+    if template_defaults is None:
+        known_protocols = ", ".join(sorted(_PROTOCOL_TEMPLATE_DEFAULTS))
+        raise ValueError(f"Unknown provider manifest protocol: {protocol}. Known: {known_protocols}")
+
+    return {
+        "name": name,
+        "protocol": protocol,
+        "default_executable": name,
+        "default_timeout_seconds": template_defaults["default_timeout_seconds"],
+        "default_max_attempts": template_defaults["default_max_attempts"],
+        "default_fallback_to_uncertain_on_error": True,
+        "default_expanded_evidence_retry_mode": "auto",
+        "capabilities": dict(template_defaults["capabilities"]),
+    }
+
 
 def load_agent_provider_spec_manifest(payload: dict[str, object]) -> AgentProviderSpec:
     """Validate a manifest payload and convert it into a provider spec."""

@@ -7,6 +7,7 @@ from .agent_driver_models import (
 from .agent_driver_manifest import (
     BUILTIN_AGENT_PROVIDER_MANIFESTS,
     BUILTIN_AGENT_PROVIDER_SPECS,
+    build_agent_provider_manifest_template,
     CODEAGENT_PROVIDER_SPEC,
     CLAUDE_PROVIDER_SPEC,
     CODEX_PROVIDER_SPEC,
@@ -128,6 +129,7 @@ __all__ = [
     "ConfigError",
     "BUILTIN_AGENT_PROVIDER_SPECS",
     "BUILTIN_AGENT_PROVIDER_MANIFESTS",
+    "build_agent_provider_manifest_template",
     "CODEAGENT_PROVIDER_SPEC",
     "CLAUDE_PROVIDER_SPEC",
     "ClaudeCliBackend",

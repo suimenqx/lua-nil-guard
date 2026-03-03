@@ -11,7 +11,10 @@ from .agent_backend import (
     get_cli_protocol_backend,
     register_manifest_backed_adjudication_backend,
 )
-from .agent_driver_manifest import load_agent_provider_spec_manifest_file
+from .agent_driver_manifest import (
+    build_agent_provider_manifest_template,
+    load_agent_provider_spec_manifest_file,
+)
 from .baseline import BaselineStore, build_baseline, filter_new_findings
 from .parser_backend import get_parser_backend_info
 from .reporting import render_json_report, render_markdown_report
@@ -76,6 +79,28 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 "Backend cache cleared.",
                 f"Removed entries: {removed_entries}",
                 f"Output: {cache_path}",
+            ]
+        )
+
+    if command == "generate-backend-manifest":
+        if len(args) not in {3, 4}:
+            return 2, "generate-backend-manifest requires a name, protocol, and optional output path"
+        name = args[1]
+        protocol = args[2]
+        output_path = Path(args[3]) if len(args) == 4 else None
+        try:
+            payload = build_agent_provider_manifest_template(name, protocol)
+        except ValueError as exc:
+            return 2, str(exc)
+        rendered = json.dumps(payload, indent=2, sort_keys=True)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Backend manifest template generated.",
+                f"Output: {output_path}",
             ]
         )
 
@@ -1576,6 +1601,7 @@ def _usage() -> str:
             "Usage:",
             "  lua-nil-review-agent scan <repository>",
             "  lua-nil-review-agent clear-backend-cache <cache-file>",
+            "  lua-nil-review-agent generate-backend-manifest <name> <protocol> [output]",
             "  lua-nil-review-agent validate-backend-manifest <manifest-path>",
             "  lua-nil-review-agent validate-backend-manifest-json <manifest-path> [output]",
             "  lua-nil-review-agent register-backend-manifest [--replace] <manifest-path>",
