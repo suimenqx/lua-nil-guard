@@ -15,6 +15,7 @@ _INDEXED_ACCESS_RE = re.compile(
 _SIMPLE_CALL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_:.]*\s*\(.*\)$")
 _NUMERIC_LITERAL_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 _ROOT_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)")
+_PREFIX_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)")
 _LUA_KEYWORDS = frozenset(
     {
         "and",
@@ -245,6 +246,7 @@ def contract_applies_to_call(
         contract.required_literal_args
         or contract.required_arg_shapes
         or contract.required_arg_roots
+        or contract.required_arg_prefixes
     ) and arg_values is None:
         return False
 
@@ -265,6 +267,15 @@ def contract_applies_to_call(
             return False
         arg_root = _extract_arg_root(arg_values[index - 1])
         if arg_root is None or arg_root not in allowed_roots:
+            return False
+
+    for index, allowed_prefixes in contract.required_arg_prefixes:
+        if index < 1 or index > len(arg_values):
+            return False
+        arg_prefix = _extract_arg_prefix(arg_values[index - 1])
+        if arg_prefix is None:
+            return False
+        if not any(_prefix_matches(arg_prefix, prefix) for prefix in allowed_prefixes):
             return False
     return True
 
@@ -306,6 +317,24 @@ def _extract_arg_root(raw_value: str) -> str | None:
     if root in _LUA_KEYWORDS:
         return None
     return root
+
+
+def _extract_arg_prefix(raw_value: str) -> str | None:
+    match = _PREFIX_RE.match(raw_value)
+    if match is None:
+        return None
+    prefix = match.group(1)
+    root = prefix.split(".", 1)[0]
+    if root in _LUA_KEYWORDS:
+        return None
+    return prefix
+
+
+def _prefix_matches(arg_prefix: str, required_prefix: str) -> bool:
+    normalized = required_prefix.strip()
+    if not normalized:
+        return False
+    return arg_prefix == normalized or arg_prefix.startswith(f"{normalized}.")
 
 
 def _returns_non_nil_value(summary: FunctionSummary) -> bool:

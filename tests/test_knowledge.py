@@ -266,6 +266,20 @@ def test_derive_facts_from_contracts_skips_root_scoped_contracts_without_call_co
     assert facts == ()
 
 
+def test_derive_facts_from_contracts_skips_prefix_scoped_contracts_without_call_context() -> None:
+    contracts = (
+        FunctionContract(
+            qualified_name="normalize_name",
+            returns_non_nil=True,
+            required_arg_prefixes=((1, ("req.params",)),),
+        ),
+    )
+
+    facts = derive_facts_from_contracts(contracts)
+
+    assert facts == ()
+
+
 def test_derive_facts_from_contracts_skips_role_scoped_contracts_without_call_context() -> None:
     contracts = (
         FunctionContract(

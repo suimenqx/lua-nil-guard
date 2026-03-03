@@ -1097,6 +1097,7 @@ def _knowledge_facts_for_assessment(
             or contract.required_literal_args
             or contract.required_arg_shapes
             or contract.required_arg_roots
+            or contract.required_arg_prefixes
         ):
             continue
         call_contexts = call_contexts_by_function.get(contract.qualified_name, ())

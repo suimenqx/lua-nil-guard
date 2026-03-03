@@ -713,6 +713,84 @@ def test_analyze_candidate_limits_return_contracts_to_configured_arg_roots() -> 
     assert result.origin_candidates == ("normalize_name(fallbacks.username)",)
 
 
+def test_analyze_candidate_respects_return_contract_arg_prefixes() -> None:
+    source = "\n".join(
+        [
+            "local username = normalize_name(req.params.username)",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_prefix_return_contract",
+        file="demo.lua",
+        line=2,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        function_contracts=(
+            FunctionContract(
+                qualified_name="normalize_name",
+                returns_non_nil=False,
+                returns_non_nil_from_args=(1,),
+                required_arg_prefixes=((1, ("req.params",)),),
+            ),
+        ),
+    )
+
+    assert result.state == "safe_static"
+    assert result.observed_guards == ("normalize_name(...) returns non-nil",)
+    assert result.origin_candidates == ("normalize_name(req.params.username)",)
+
+
+def test_analyze_candidate_limits_return_contracts_to_configured_arg_prefixes() -> None:
+    source = "\n".join(
+        [
+            "local username = normalize_name(req.headers.username)",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_scoped_prefix_return_contract",
+        file="demo.lua",
+        line=2,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        function_contracts=(
+            FunctionContract(
+                qualified_name="normalize_name",
+                returns_non_nil=False,
+                returns_non_nil_from_args=(1,),
+                required_arg_prefixes=((1, ("req.params",)),),
+            ),
+        ),
+    )
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
+    assert result.origin_candidates == ("normalize_name(req.headers.username)",)
+
+
 def test_analyze_candidate_limits_return_contracts_to_configured_call_roles() -> None:
     source = "\n".join(
         [

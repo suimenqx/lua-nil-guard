@@ -270,6 +270,33 @@ def test_load_function_contracts_reads_arg_root_restrictions(tmp_path: Path) -> 
     )
 
 
+def test_load_function_contracts_reads_arg_prefix_restrictions(tmp_path: Path) -> None:
+    config_path = tmp_path / "function_contracts.json"
+    config_path.write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "normalize_name",
+                    "returns_non_nil": True,
+                    "required_arg_prefixes": {
+                        "1": ["req.params", "ngx.var"],
+                        "2": "fallbacks.names",
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    contracts = load_function_contracts(config_path)
+
+    assert len(contracts) == 1
+    assert contracts[0].required_arg_prefixes == (
+        (1, ("req.params", "ngx.var")),
+        (2, ("fallbacks.names",)),
+    )
+
+
 def test_load_function_contracts_reads_call_role_restrictions(tmp_path: Path) -> None:
     config_path = tmp_path / "function_contracts.json"
     config_path.write_text(
