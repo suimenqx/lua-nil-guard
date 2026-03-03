@@ -59,12 +59,27 @@ _LUA_KEYWORDS = frozenset(
         "while",
     }
 )
+_MAX_RELATED_FUNCTION_CONTEXTS = 4
+_MAX_RELATED_FUNCTION_CONTEXT_LINES = 48
+_MAX_RELATED_FUNCTION_SUMMARIES = 8
+_TRUNCATED_CONTEXT_MARKER = "  ... (truncated)"
 
 
 @dataclass(frozen=True, slots=True)
 class _FunctionContextBlock:
+    function_name: str
+    file: str
+    line: int
+    evidence_score: int
     rendered: str
     callees: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _RelatedEvidenceSelection:
+    function_names: tuple[str, ...]
+    summary_texts: tuple[str, ...]
+    context_texts: tuple[str, ...]
 
 
 def bootstrap_repository(root: str | Path) -> RepositorySnapshot:
@@ -401,33 +416,23 @@ def _run_review_from_assessments(
     for file_path in snapshot.lua_files:
         source = file_path.read_text(encoding="utf-8")
         for assessment in assessments_by_file.get(str(file_path), ()):
-            direct_related_functions = _related_functions_from_assessment(assessment)
-            related_functions = _expand_related_functions(
-                direct_related_functions,
-                function_context_by_name,
-            )
-            function_summaries = tuple(
-                summary
-                for function_name in related_functions
-                for summary in summary_text_by_name.get(function_name, ())
-            )
-            related_function_contexts = tuple(
-                context.rendered
-                for function_name in related_functions
-                for context in function_context_by_name.get(function_name, ())
+            related_evidence = _build_related_evidence(
+                assessment,
+                summary_text_by_name=summary_text_by_name,
+                function_context_by_name=function_context_by_name,
             )
             knowledge_facts = tuple(
                 fact
-                for subject in related_functions + (assessment.candidate.function_scope,)
+                for subject in related_evidence.function_names + (assessment.candidate.function_scope,)
                 for fact in facts_for_subject(facts, subject)
             )
             packet = prepare_evidence_packet(
                 assessment,
                 source,
-                related_functions=related_functions,
-                function_summaries=function_summaries,
+                related_functions=related_evidence.function_names,
+                function_summaries=related_evidence.summary_texts,
                 knowledge_facts=knowledge_facts,
-                related_function_contexts=related_function_contexts,
+                related_function_contexts=related_evidence.context_texts,
             )
             adjudication = adjudication_backend.adjudicate(
                 packet,
@@ -489,33 +494,23 @@ def export_adjudication_tasks(
     for file_path in snapshot.lua_files:
         source = file_path.read_text(encoding="utf-8")
         for assessment in review_source(file_path, source, snapshot.sink_rules):
-            direct_related_functions = _related_functions_from_assessment(assessment)
-            related_functions = _expand_related_functions(
-                direct_related_functions,
-                function_context_by_name,
-            )
-            function_summaries = tuple(
-                summary
-                for function_name in related_functions
-                for summary in summary_text_by_name.get(function_name, ())
-            )
-            related_function_contexts = tuple(
-                context.rendered
-                for function_name in related_functions
-                for context in function_context_by_name.get(function_name, ())
+            related_evidence = _build_related_evidence(
+                assessment,
+                summary_text_by_name=summary_text_by_name,
+                function_context_by_name=function_context_by_name,
             )
             knowledge_facts = tuple(
                 fact
-                for subject in related_functions + (assessment.candidate.function_scope,)
+                for subject in related_evidence.function_names + (assessment.candidate.function_scope,)
                 for fact in facts_for_subject(facts, subject)
             )
             packet = prepare_evidence_packet(
                 assessment,
                 source,
-                related_functions=related_functions,
-                function_summaries=function_summaries,
+                related_functions=related_evidence.function_names,
+                function_summaries=related_evidence.summary_texts,
                 knowledge_facts=knowledge_facts,
-                related_function_contexts=related_function_contexts,
+                related_function_contexts=related_evidence.context_texts,
             )
             sink_rule = sink_rule_by_id[assessment.candidate.sink_rule_id]
             tasks.append(
@@ -790,6 +785,10 @@ def _build_function_context_index(
         )
         index.setdefault(summary.function_name, []).append(
             _FunctionContextBlock(
+                function_name=summary.function_name,
+                file=str(summary.file),
+                line=summary.line,
+                evidence_score=_summary_evidence_score(summary),
                 rendered=rendered,
                 callees=callees,
             )
@@ -825,6 +824,147 @@ def _extract_function_context_snippet(
     while snippet_lines and not snippet_lines[-1].strip():
         snippet_lines.pop()
     return "\n".join(snippet_lines), tuple(dict.fromkeys(callee_names))
+
+
+def _summary_evidence_score(summary: object) -> int:
+    score = 0
+    guards = getattr(summary, "guards", ())
+    returns = getattr(summary, "returns", ())
+    if isinstance(guards, tuple) and guards:
+        score += 2
+    if isinstance(returns, tuple) and returns:
+        score += 1
+    return score
+
+
+def _build_related_evidence(
+    assessment: CandidateAssessment,
+    *,
+    summary_text_by_name: dict[str, tuple[str, ...]],
+    function_context_by_name: dict[str, tuple[_FunctionContextBlock, ...]],
+    max_depth: int = 1,
+    max_contexts: int = _MAX_RELATED_FUNCTION_CONTEXTS,
+    max_context_lines: int = _MAX_RELATED_FUNCTION_CONTEXT_LINES,
+    max_summary_items: int = _MAX_RELATED_FUNCTION_SUMMARIES,
+) -> _RelatedEvidenceSelection:
+    direct_related_functions = _related_functions_from_assessment(assessment)
+    ordered_functions, depth_by_function = _expand_related_functions(
+        direct_related_functions,
+        function_context_by_name,
+        max_depth=max_depth,
+    )
+    selected_contexts = _select_related_function_contexts(
+        ordered_functions,
+        depth_by_function=depth_by_function,
+        function_context_by_name=function_context_by_name,
+        current_file=assessment.candidate.file,
+        max_contexts=max_contexts,
+        max_context_lines=max_context_lines,
+    )
+
+    function_names: list[str] = list(direct_related_functions)
+    for function_name, _ in selected_contexts:
+        if function_name not in function_names:
+            function_names.append(function_name)
+    for function_name in ordered_functions:
+        if function_name in function_names:
+            continue
+        if summary_text_by_name.get(function_name):
+            function_names.append(function_name)
+
+    summary_texts = _select_function_summaries(
+        tuple(function_names),
+        summary_text_by_name=summary_text_by_name,
+        max_items=max_summary_items,
+    )
+    context_texts = tuple(rendered for _, rendered in selected_contexts)
+
+    return _RelatedEvidenceSelection(
+        function_names=tuple(function_names),
+        summary_texts=summary_texts,
+        context_texts=context_texts,
+    )
+
+
+def _select_function_summaries(
+    function_names: tuple[str, ...],
+    *,
+    summary_text_by_name: dict[str, tuple[str, ...]],
+    max_items: int,
+) -> tuple[str, ...]:
+    selected: list[str] = []
+    for function_name in function_names:
+        for summary_text in summary_text_by_name.get(function_name, ()):
+            if len(selected) >= max_items:
+                return tuple(selected)
+            selected.append(summary_text)
+    return tuple(selected)
+
+
+def _select_related_function_contexts(
+    ordered_functions: tuple[str, ...],
+    *,
+    depth_by_function: dict[str, int],
+    function_context_by_name: dict[str, tuple[_FunctionContextBlock, ...]],
+    current_file: str,
+    max_contexts: int,
+    max_context_lines: int,
+) -> tuple[tuple[str, str], ...]:
+    candidates: list[_FunctionContextBlock] = []
+    current_file_key = _normalize_path_key(current_file)
+    function_order = {name: index for index, name in enumerate(ordered_functions)}
+
+    for function_name in ordered_functions:
+        candidates.extend(function_context_by_name.get(function_name, ()))
+
+    candidates.sort(
+        key=lambda block: (
+            depth_by_function.get(block.function_name, max(function_order.values(), default=0) + 1),
+            0 if _normalize_path_key(block.file) == current_file_key else 1,
+            -block.evidence_score,
+            function_order.get(block.function_name, len(function_order)),
+            block.line,
+            block.file,
+        )
+    )
+
+    selected: list[tuple[str, str]] = []
+    seen_contexts: set[str] = set()
+    used_lines = 0
+
+    for block in candidates:
+        if len(selected) >= max_contexts:
+            break
+        if block.rendered in seen_contexts:
+            continue
+
+        remaining_lines = max_context_lines - used_lines
+        if remaining_lines <= 0:
+            break
+
+        rendered = block.rendered
+        block_line_count = len(rendered.splitlines())
+        if block_line_count > remaining_lines:
+            if remaining_lines < 3:
+                break
+            rendered = _truncate_context_text(rendered, remaining_lines)
+
+        selected.append((block.function_name, rendered))
+        seen_contexts.add(block.rendered)
+        used_lines += len(rendered.splitlines())
+
+    return tuple(selected)
+
+
+def _truncate_context_text(rendered: str, max_lines: int) -> str:
+    lines = rendered.splitlines()
+    if len(lines) <= max_lines:
+        return rendered
+    if max_lines <= 1:
+        return lines[0]
+    truncated = lines[: max_lines - 1]
+    truncated.append(_TRUNCATED_CONTEXT_MARKER)
+    return "\n".join(truncated)
 
 
 def _call_names_from_line(line: str) -> tuple[str, ...]:
@@ -1064,20 +1204,28 @@ def _apply_autofix_patch_to_lines(lines: list[str], patch: AutofixPatch) -> None
 def _expand_related_functions(
     related_functions: tuple[str, ...],
     function_context_by_name: dict[str, tuple[_FunctionContextBlock, ...]],
-) -> tuple[str, ...]:
-    direct_functions = tuple(dict.fromkeys(related_functions))
-    expanded = list(direct_functions)
-    seen = set(direct_functions)
+    *,
+    max_depth: int,
+) -> tuple[tuple[str, ...], dict[str, int]]:
+    ordered: list[str] = []
+    depth_by_function: dict[str, int] = {}
+    queue = [(function_name, 0) for function_name in tuple(dict.fromkeys(related_functions))]
 
-    for function_name in direct_functions:
+    while queue:
+        function_name, depth = queue.pop(0)
+        if function_name in depth_by_function:
+            continue
+        depth_by_function[function_name] = depth
+        ordered.append(function_name)
+        if depth >= max_depth:
+            continue
         for context in function_context_by_name.get(function_name, ()):
             for callee in context.callees:
-                if callee in seen or callee not in function_context_by_name:
+                if callee in depth_by_function or callee not in function_context_by_name:
                     continue
-                seen.add(callee)
-                expanded.append(callee)
+                queue.append((callee, depth + 1))
 
-    return tuple(expanded)
+    return tuple(ordered), depth_by_function
 
 
 def _related_functions_from_assessment(assessment: CandidateAssessment) -> tuple[str, ...]:

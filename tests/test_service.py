@@ -331,6 +331,133 @@ def test_run_file_review_uses_repository_context_for_cross_file_function_chains(
     assert any("value = value or ''" in context for context in seen["related_function_contexts"])
 
 
+def test_run_file_review_budgets_and_prioritizes_related_function_contexts(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    target_file = tmp_path / "src" / "demo.lua"
+    target_file.write_text(
+        "\n".join(
+            [
+                "local function parse_user()",
+                "  local username = normalize_name(req.params.username)",
+                "  return string.match(username, '^a')",
+                "end",
+                "",
+                "local function normalize_name(value)",
+                "  local normalized = helper_a(value)",
+                "  normalized = helper_local(normalized)",
+                "  normalized = helper_b(normalized)",
+                "  normalized = helper_c(normalized)",
+                "  normalized = helper_d(normalized)",
+                "  return normalized",
+                "end",
+                "",
+                "local function helper_local(value)",
+                "  return value or ''",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    for helper_name in ("helper_a", "helper_b", "helper_c", "helper_d"):
+        (tmp_path / "lib" / f"{helper_name}.lua").write_text(
+            "\n".join(
+                [
+                    f"function {helper_name}(value)",
+                    "  return value",
+                    "end",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+    snapshot = bootstrap_repository(tmp_path)
+    seen: dict[str, tuple[str, ...]] = {}
+
+    class BudgetAwareBackend:
+        def adjudicate(self, packet, sink_rule):  # noqa: ANN001
+            del sink_rule
+            seen["related_functions"] = packet.related_functions
+            seen["related_function_contexts"] = packet.related_function_contexts
+            return AdjudicationRecord(
+                prosecutor=RoleOpinion(
+                    role="prosecutor",
+                    status="uncertain",
+                    confidence="low",
+                    risk_path=(),
+                    safety_evidence=(),
+                    missing_evidence=("test backend",),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                defender=RoleOpinion(
+                    role="defender",
+                    status="safe",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=("context budget kept top-ranked evidence",),
+                    missing_evidence=(),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                judge=Verdict(
+                    case_id=packet.case_id,
+                    status="safe",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=("context budget kept top-ranked evidence",),
+                    counterarguments_considered=(),
+                    suggested_fix=None,
+                    needs_human=False,
+                ),
+            )
+
+    verdicts = run_file_review(snapshot, target_file, backend=BudgetAwareBackend())
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status == "safe"
+    assert len(seen["related_function_contexts"]) == 4
+    assert seen["related_functions"][:4] == (
+        "normalize_name",
+        "helper_local",
+        "helper_a",
+        "helper_b",
+    )
+    assert "normalize_name @ " in seen["related_function_contexts"][0]
+    assert any("helper_local @ " in context for context in seen["related_function_contexts"])
+    assert not any("helper_d @ " in context for context in seen["related_function_contexts"])
+
+
 def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -> None:
     project_root = Path(__file__).resolve().parents[1] / "examples" / "mvp_cases" / "agent_semantic_suite"
     runtime_root = tmp_path / "agent_semantic_suite"
