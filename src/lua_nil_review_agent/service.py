@@ -10,7 +10,7 @@ from typing import Callable
 from .adjudication import attach_autofix_patch
 from .agent_driver_models import AgentProviderSpec
 from .agent_backend import AdjudicationBackend, CliAgentBackend, HeuristicAdjudicationBackend
-from .collector import collect_candidates
+from .collector import collect_candidates, top_level_phase_for_prefix
 from .config_loader import load_confidence_policy, load_function_contracts, load_sink_rules
 from .knowledge import (
     KnowledgeBase,
@@ -18,6 +18,7 @@ from .knowledge import (
     contract_applies_in_module,
     contract_applies_to_call,
     contract_applies_to_scope_kind,
+    contract_applies_to_top_level_phase,
     contract_applies_to_sink,
     derive_facts_from_contracts,
     derive_facts_from_summaries,
@@ -483,6 +484,7 @@ def _run_review_from_assessments(
                 facts,
                 function_contracts=snapshot.function_contracts,
                 current_module=file_module_by_path.get(_normalize_path_key(assessment.candidate.file)),
+                source=source,
             )
             packet = prepare_evidence_packet(
                 assessment,
@@ -531,6 +533,7 @@ def _run_review_from_assessments(
                             current_module=file_module_by_path.get(
                                 _normalize_path_key(assessment.candidate.file)
                             ),
+                            source=source,
                         ),
                         related_function_contexts=expanded_related_evidence.context_texts,
                     )
@@ -617,6 +620,7 @@ def export_adjudication_tasks(
                     facts,
                     function_contracts=snapshot.function_contracts,
                     current_module=file_module_by_path.get(_normalize_path_key(assessment.candidate.file)),
+                    source=source,
                 )
             )
             packet = prepare_evidence_packet(
@@ -1035,7 +1039,10 @@ def _knowledge_facts_for_assessment(
     *,
     function_contracts: tuple[object, ...] = (),
     current_module: str | None = None,
+    source: str | None = None,
 ) -> tuple[object, ...]:
+    current_top_level_phase = _top_level_phase_for_assessment(assessment, source)
+    current_scope_kind = _scope_kind_for_function_scope(assessment.candidate.function_scope)
     applicable_contracts = tuple(
         contract
         for contract in function_contracts
@@ -1044,9 +1051,10 @@ def _knowledge_facts_for_assessment(
             contract,
             assessment.candidate.function_scope,
         )
+        and contract_applies_to_top_level_phase(contract, current_top_level_phase)
         and contract_applies_to_scope_kind(
             contract,
-            _scope_kind_for_function_scope(assessment.candidate.function_scope),
+            current_scope_kind,
         )
         and contract_applies_to_sink(
             contract,
@@ -1070,7 +1078,8 @@ def _knowledge_facts_for_assessment(
             applicable_contracts,
             current_module=current_module,
             current_function_scope=assessment.candidate.function_scope,
-            current_scope_kind=_scope_kind_for_function_scope(assessment.candidate.function_scope),
+            current_top_level_phase=current_top_level_phase,
+            current_scope_kind=current_scope_kind,
             current_sink_rule_id=assessment.candidate.sink_rule_id,
             current_sink_name=assessment.candidate.sink_name,
         )
@@ -1662,6 +1671,16 @@ def _scope_kind_for_function_scope(function_scope: str | None) -> str | None:
     if function_scope is None:
         return None
     return "top_level" if function_scope == "main" else "function_body"
+
+
+def _top_level_phase_for_assessment(
+    assessment: CandidateAssessment,
+    source: str | None,
+) -> str | None:
+    if source is None or assessment.candidate.function_scope != "main":
+        return None
+    prefix = "\n".join(source.splitlines()[: max(0, assessment.candidate.line - 1)])
+    return top_level_phase_for_prefix(prefix)
 
 
 def _build_file_module_index(snapshot: RepositorySnapshot) -> dict[str, str | None]:

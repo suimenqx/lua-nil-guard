@@ -155,6 +155,7 @@ class FunctionContract:
     returns_non_nil_from_args: tuple[int, ...] = ()
     applies_in_modules: tuple[str, ...] = ()
     applies_in_function_scopes: tuple[str, ...] = ()
+    applies_to_top_level_phases: tuple[str, ...] = ()
     applies_to_scope_kinds: tuple[str, ...] = ()
     applies_to_sinks: tuple[str, ...] = ()
     applies_to_call_roles: tuple[str, ...] = ()

@@ -1018,3 +1018,73 @@ def test_run_repository_review_limits_contracts_to_scope_kinds(
 
     assert verdict_by_line[6].status == "uncertain"
     assert verdict_by_line[10].status == "safe"
+
+
+def test_run_repository_review_limits_contracts_to_top_level_phases(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "function_contracts.json").write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "normalize_name",
+                    "returns_non_nil": True,
+                    "applies_to_scope_kinds": ["top_level"],
+                    "applies_to_top_level_phases": ["post_definitions"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local early_name = normalize_name(req.params.username)",
+                "local early_match = string.match(early_name, '^a')",
+                "",
+                "function helper()",
+                "  return true",
+                "end",
+                "",
+                "local late_name = normalize_name(req.params.username)",
+                "local late_match = string.match(late_name, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+    verdict_by_line = {int(verdict.case_id.split(":")[1]): verdict for verdict in verdicts}
+
+    assert verdict_by_line[2].status == "uncertain"
+    assert verdict_by_line[9].status == "safe"

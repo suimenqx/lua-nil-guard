@@ -39,7 +39,7 @@ def collect_candidates(
 
                 expression = call_site.args[sink_rule.arg_index - 1].strip()
                 line, column = call_site.line, call_site.column
-                function_scope = _find_enclosing_function(source[: call_site.offset])
+                function_scope, _ = _scan_enclosing_context(source[: call_site.offset])
                 symbol = expression if _IDENTIFIER_RE.match(expression) else expression
                 case_id = f"{path_text}:{line}:{column}:{sink_rule.id}"
 
@@ -67,7 +67,7 @@ def collect_candidates(
             for operand in collect_length_operands(source):
                 expression = operand.operand
                 line, column = operand.line, operand.column
-                function_scope = _find_enclosing_function(source[: operand.offset])
+                function_scope, _ = _scan_enclosing_context(source[: operand.offset])
                 symbol = expression if _IDENTIFIER_RE.match(expression) else expression
                 case_id = f"{path_text}:{line}:{column}:{sink_rule.id}"
 
@@ -91,7 +91,7 @@ def collect_candidates(
         for access in collect_receiver_accesses(source):
             expression = access.receiver
             line, column = access.line, access.column
-            function_scope = _find_enclosing_function(source[: access.offset])
+            function_scope, _ = _scan_enclosing_context(source[: access.offset])
             symbol = expression if _IDENTIFIER_RE.match(expression) else expression
             case_id = f"{path_text}:{line}:{column}:{sink_rule.id}"
 
@@ -115,10 +115,23 @@ def collect_candidates(
     return tuple(candidates)
 
 
+def top_level_phase_for_prefix(prefix: str) -> str | None:
+    """Return the current top-level phase before a given source prefix."""
+
+    _, top_level_phase = _scan_enclosing_context(prefix)
+    return top_level_phase
+
+
 def _find_enclosing_function(prefix: str) -> str:
+    function_scope, _ = _scan_enclosing_context(prefix)
+    return function_scope
+
+
+def _scan_enclosing_context(prefix: str) -> tuple[str, str | None]:
     scope_stack: list[str] = []
     block_stack: list[str] = []
     module_name: str | None = None
+    saw_top_level_named_function = False
     for line in prefix.splitlines():
         code = _strip_lua_comment(line)
         stripped = code.strip()
@@ -131,6 +144,8 @@ def _find_enclosing_function(prefix: str) -> str:
 
         match = _FUNCTION_NAME_RE.match(code)
         if match:
+            if not scope_stack:
+                saw_top_level_named_function = True
             scope_stack.append(_qualify_function_name(match.group(1), module_name))
             block_stack.append("function")
             continue
@@ -156,8 +171,10 @@ def _find_enclosing_function(prefix: str) -> str:
                 block_stack.pop()
 
     if scope_stack:
-        return scope_stack[-1]
-    return "main"
+        return scope_stack[-1], None
+    if saw_top_level_named_function:
+        return "main", "post_definitions"
+    return "main", "init"
 
 
 def _qualify_function_name(defined_name: str, module_name: str | None) -> str:

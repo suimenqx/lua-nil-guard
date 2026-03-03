@@ -716,6 +716,46 @@ def test_analyze_candidate_limits_return_contracts_to_scope_kinds() -> None:
     assert result.origin_usage_modes == ("single_assignment",)
 
 
+def test_analyze_candidate_limits_return_contracts_to_top_level_phases() -> None:
+    source = "\n".join(
+        [
+            "local username = normalize_name(req.params.username)",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_top_level_phase_return_contract",
+        file="demo.lua",
+        line=2,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        function_contracts=(
+            FunctionContract(
+                qualified_name="normalize_name",
+                returns_non_nil=False,
+                returns_non_nil_from_args=(1,),
+                applies_to_top_level_phases=("post_definitions",),
+            ),
+        ),
+    )
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
+    assert result.origin_candidates == ("normalize_name(req.params.username)",)
+    assert result.origin_usage_modes == ("single_assignment",)
+
+
 def test_analyze_candidate_limits_return_contracts_to_single_assignment_usage() -> None:
     source = "\n".join(
         [

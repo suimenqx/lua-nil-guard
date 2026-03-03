@@ -71,6 +71,7 @@ def derive_facts_from_contracts(
     *,
     current_module: str | None = None,
     current_function_scope: str | None = None,
+    current_top_level_phase: str | None = None,
     current_scope_kind: str | None = None,
     current_sink_rule_id: str | None = None,
     current_sink_name: str | None = None,
@@ -82,6 +83,8 @@ def derive_facts_from_contracts(
         if not contract_applies_in_module(contract, current_module):
             continue
         if not contract_applies_in_function_scope(contract, current_function_scope):
+            continue
+        if not contract_applies_to_top_level_phase(contract, current_top_level_phase):
             continue
         if not contract_applies_to_scope_kind(contract, current_scope_kind):
             continue
@@ -130,6 +133,19 @@ def contract_applies_in_function_scope(
     if current_function_scope is None:
         return False
     return current_function_scope in contract.applies_in_function_scopes
+
+
+def contract_applies_to_top_level_phase(
+    contract: FunctionContract,
+    current_top_level_phase: str | None,
+) -> bool:
+    """Return whether a contract is active for the current top-level phase."""
+
+    if not contract.applies_to_top_level_phases:
+        return True
+    if current_top_level_phase is None:
+        return False
+    return current_top_level_phase in contract.applies_to_top_level_phases
 
 
 def contract_applies_to_scope_kind(

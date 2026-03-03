@@ -162,6 +162,25 @@ def test_derive_facts_from_contracts_filters_scoped_contracts_by_scope_kind() ->
     assert scoped[0].subject == "normalize_name"
 
 
+def test_derive_facts_from_contracts_filters_scoped_contracts_by_top_level_phase() -> None:
+    contracts = (
+        FunctionContract(
+            qualified_name="normalize_name",
+            returns_non_nil=True,
+            applies_to_top_level_phases=("post_definitions",),
+        ),
+    )
+
+    assert derive_facts_from_contracts(contracts) == ()
+    scoped = derive_facts_from_contracts(
+        contracts,
+        current_top_level_phase="post_definitions",
+    )
+
+    assert len(scoped) == 1
+    assert scoped[0].subject == "normalize_name"
+
+
 def test_derive_facts_from_contracts_filters_scoped_contracts_by_sink() -> None:
     contracts = (
         FunctionContract(

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import re
 
+from .collector import top_level_phase_for_prefix
 from .knowledge import (
     contract_applies_in_function_scope,
     contract_applies_in_module,
     contract_applies_to_call,
     contract_applies_to_scope_kind,
+    contract_applies_to_top_level_phase,
     contract_applies_to_sink,
 )
 from .models import CandidateCase, FunctionContract, StaticAnalysisResult
@@ -40,6 +42,7 @@ def analyze_candidate(
     observed_guards: list[str] = []
     current_module = detect_module_name(source)
     current_scope_kind = _scope_kind_for_function_scope(candidate.function_scope)
+    current_top_level_phase = _top_level_phase_for_candidate(source, candidate)
 
     if _has_active_positive_guard(prior_lines, candidate.symbol):
         observed_guards.append(f"if {candidate.symbol} then")
@@ -53,6 +56,7 @@ def analyze_candidate(
         function_contracts=function_contracts,
         current_module=current_module,
         current_function_scope=candidate.function_scope,
+        current_top_level_phase=current_top_level_phase,
         current_scope_kind=current_scope_kind,
         sink_rule_id=candidate.sink_rule_id,
         sink_name=candidate.sink_name,
@@ -64,6 +68,7 @@ def analyze_candidate(
         function_contracts=function_contracts,
         current_module=current_module,
         current_function_scope=candidate.function_scope,
+        current_top_level_phase=current_top_level_phase,
         current_scope_kind=current_scope_kind,
         sink_rule_id=candidate.sink_rule_id,
         sink_name=candidate.sink_name,
@@ -261,6 +266,7 @@ def _active_contract_guard(
     function_contracts: tuple[FunctionContract, ...],
     current_module: str | None,
     current_function_scope: str,
+    current_top_level_phase: str | None,
     current_scope_kind: str | None,
     sink_rule_id: str,
     sink_name: str,
@@ -271,6 +277,7 @@ def _active_contract_guard(
         if contract.ensures_non_nil_args
         and contract_applies_in_module(contract, current_module)
         and contract_applies_in_function_scope(contract, current_function_scope)
+        and contract_applies_to_top_level_phase(contract, current_top_level_phase)
         and contract_applies_to_scope_kind(contract, current_scope_kind)
         and contract_applies_to_sink(
             contract,
@@ -329,6 +336,7 @@ def _origin_return_contract_guard(
     function_contracts: tuple[FunctionContract, ...],
     current_module: str | None,
     current_function_scope: str,
+    current_top_level_phase: str | None,
     current_scope_kind: str | None,
     sink_rule_id: str,
     sink_name: str,
@@ -343,6 +351,7 @@ def _origin_return_contract_guard(
         if contract.returns_non_nil_from_args
         and contract_applies_in_module(contract, current_module)
         and contract_applies_in_function_scope(contract, current_function_scope)
+        and contract_applies_to_top_level_phase(contract, current_top_level_phase)
         and contract_applies_to_scope_kind(contract, current_scope_kind)
         and contract_applies_to_sink(
             contract,
@@ -461,6 +470,13 @@ def _scope_kind_for_function_scope(function_scope: str | None) -> str | None:
     if function_scope is None:
         return None
     return "top_level" if function_scope == "main" else "function_body"
+
+
+def _top_level_phase_for_candidate(source: str, candidate: CandidateCase) -> str | None:
+    if candidate.function_scope != "main":
+        return None
+    prefix = "\n".join(source.splitlines()[: max(0, candidate.line - 1)])
+    return top_level_phase_for_prefix(prefix)
 
 
 def _is_if_open_for_symbol(stripped_line: str, symbol: str) -> bool:
