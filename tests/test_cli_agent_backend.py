@@ -704,6 +704,8 @@ def test_claude_cli_backend_runs_optional_warmup_before_first_request(tmp_path: 
     assert 'Return exactly this JSON object and nothing else: {"ok": true}' in commands[0][-1]
     assert "Adjudication policy: lua-nil-adjudicator" in commands[1][-1]
     assert backend.backend_call_count == 2
+    assert backend.backend_warmup_call_count == 1
+    assert backend.backend_warmup_total_seconds >= 0.0
 
 
 def test_codeagent_cli_backend_uses_codeagent_executable_by_default(tmp_path: Path) -> None:

@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import shutil
 
+import pytest
+
 from lua_nil_review_agent.agent_backend import BackendError, CodexCliBackend
 from lua_nil_review_agent.models import AdjudicationRecord, AutofixPatch, RoleOpinion, Verdict
 from lua_nil_review_agent.service import (
@@ -194,8 +196,13 @@ def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -
     assert summary.backend_cache_hits == 0
     assert summary.backend_cache_misses == 0
     assert summary.backend_calls == 0
+    assert summary.backend_warmup_calls == 0
+    assert summary.backend_review_calls == 0
     assert summary.backend_total_seconds == 0.0
+    assert summary.backend_warmup_total_seconds == 0.0
+    assert summary.backend_review_total_seconds == 0.0
     assert summary.backend_average_seconds == 0.0
+    assert summary.backend_review_average_seconds == 0.0
     assert summary.backend_name == "StrictEvidenceBackend"
     assert summary.backend_model is None
     assert summary.backend_executable is None
@@ -259,8 +266,13 @@ def test_benchmark_repository_review_counts_backend_fallbacks(tmp_path: Path) ->
     assert summary.backend_cache_hits == 0
     assert summary.backend_cache_misses == 1
     assert summary.backend_calls == 1
+    assert summary.backend_warmup_calls == 0
+    assert summary.backend_review_calls == 1
     assert summary.backend_total_seconds >= 0.0
+    assert summary.backend_warmup_total_seconds == 0.0
+    assert summary.backend_review_total_seconds >= 0.0
     assert summary.backend_average_seconds >= 0.0
+    assert summary.backend_review_average_seconds >= 0.0
     assert summary.backend_name == "codex"
     assert summary.backend_executable == "codex"
     assert summary.cases[0].backend_failure_reason == "CLI backend command timed out after 5s"
@@ -277,13 +289,20 @@ def test_benchmark_repository_review_reports_backend_cache_metrics(tmp_path: Pat
     backend.cache_misses = 11
     backend.backend_call_count = 4
     backend.backend_total_seconds = 1.25
+    backend.backend_warmup_call_count = 1
+    backend.backend_warmup_total_seconds = 0.25
     summary = benchmark_repository_review(snapshot, backend=backend)
 
     assert summary.backend_cache_hits == 7
     assert summary.backend_cache_misses == 11
     assert summary.backend_calls == 4
+    assert summary.backend_warmup_calls == 1
+    assert summary.backend_review_calls == 3
     assert summary.backend_total_seconds == 1.25
+    assert summary.backend_warmup_total_seconds == 0.25
+    assert summary.backend_review_total_seconds == 1.0
     assert summary.backend_average_seconds == 0.3125
+    assert summary.backend_review_average_seconds == pytest.approx(1.0 / 3.0)
     assert summary.backend_name == "StrictEvidenceBackend"
 
 
@@ -322,9 +341,13 @@ def test_benchmark_cache_compare_runs_cold_and_warm_passes(tmp_path: Path) -> No
     assert comparison.cold.backend_cache_hits == 0
     assert comparison.cold.backend_cache_misses == 18
     assert comparison.cold.backend_calls == 18
+    assert comparison.cold.backend_warmup_calls == 0
+    assert comparison.cold.backend_review_calls == 18
     assert comparison.warm.backend_cache_hits == 18
     assert comparison.warm.backend_cache_misses == 0
     assert comparison.warm.backend_calls == 0
+    assert comparison.warm.backend_warmup_calls == 0
+    assert comparison.warm.backend_review_calls == 0
 
 
 def test_clear_backend_cache_removes_cache_file_and_counts_entries(tmp_path: Path) -> None:

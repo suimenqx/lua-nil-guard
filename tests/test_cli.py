@@ -356,8 +356,13 @@ def test_cli_benchmark_reports_labeled_accuracy(tmp_path: Path, monkeypatch: pyt
     assert "Backend cache hits: 0" in output
     assert "Backend cache misses: 0" in output
     assert "Backend calls: 0" in output
+    assert "Backend warm-up calls: 0" in output
+    assert "Backend review calls: 0" in output
     assert "Backend total latency: 0.000s" in output
+    assert "Backend warm-up latency: 0.000s" in output
+    assert "Backend review latency: 0.000s" in output
     assert "Backend average latency: 0.000s" in output
+    assert "Backend review average latency: 0.000s" in output
 
 
 def test_cli_benchmark_json_outputs_machine_readable_summary(
@@ -416,7 +421,11 @@ def test_cli_benchmark_json_outputs_machine_readable_summary(
     assert payload["total_cases"] == 2
     assert payload["exact_matches"] == 1
     assert payload["backend_calls"] == 1
+    assert payload["backend_warmup_calls"] == 0
+    assert payload["backend_review_calls"] == 1
     assert payload["backend_total_seconds"] == 0.75
+    assert payload["backend_warmup_total_seconds"] == 0.0
+    assert payload["backend_review_total_seconds"] == 0.75
 
 
 def test_cli_benchmark_json_writes_output_file(
@@ -570,6 +579,8 @@ def test_cli_benchmark_cache_compare_reports_cold_and_warm_runs(
     assert "Delta (warm - cold):" in output
     assert "Cache hits: +18" in output
     assert "Backend calls: -18" in output
+    assert "Backend warm-up calls: +0" in output
+    assert "Backend review calls: -18" in output
 
 
 def test_cli_benchmark_cache_compare_json_outputs_machine_readable_comparison(
@@ -663,8 +674,14 @@ def test_cli_benchmark_cache_compare_json_outputs_machine_readable_comparison(
     assert payload["repository"] == str(tmp_path)
     assert payload["cache_cleared_entries"] == 3
     assert payload["cold"]["backend_calls"] == 18
+    assert payload["cold"]["backend_warmup_calls"] == 0
+    assert payload["cold"]["backend_review_calls"] == 18
     assert payload["warm"]["backend_calls"] == 0
+    assert payload["warm"]["backend_warmup_calls"] == 0
+    assert payload["warm"]["backend_review_calls"] == 0
     assert payload["delta"]["backend_calls"] == -18
+    assert payload["delta"]["backend_warmup_calls"] == 0
+    assert payload["delta"]["backend_review_calls"] == -18
 
 
 def test_cli_benchmark_cache_compare_json_writes_output_file(
@@ -801,6 +818,8 @@ def test_cli_compare_benchmark_json_reports_key_deltas(tmp_path: Path) -> None:
     assert "Exact matches: 14 -> 17 (+3)" in output
     assert "False positive risks: 2 -> 0 (-2)" in output
     assert "Backend calls: 18 -> 6 (-12)" in output
+    assert "Backend warm-up calls: 0 -> 0 (+0)" in output
+    assert "Backend review calls: 18 -> 6 (-12)" in output
     assert "Backend total latency: 9.000s -> 2.400s (-6.600s)" in output
 
 
@@ -859,6 +878,7 @@ def test_cli_compare_benchmark_json_writes_output_file(tmp_path: Path) -> None:
     assert "Benchmark comparison export complete." in output
     text = output_path.read_text(encoding="utf-8")
     assert "Backend cache hits: 0 -> 1 (+1)" in text
+    assert "Backend review calls: 1 -> 0 (-1)" in text
 
 
 def test_cli_compare_benchmark_json_accepts_cache_compare_payloads(tmp_path: Path) -> None:

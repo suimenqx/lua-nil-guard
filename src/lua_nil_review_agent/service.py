@@ -193,9 +193,19 @@ def benchmark_repository_review(
     backend_cache_misses = _backend_metric(adjudication_backend, "cache_misses")
     backend_calls = _backend_metric(adjudication_backend, "backend_call_count")
     backend_total_seconds = _backend_float_metric(adjudication_backend, "backend_total_seconds")
+    backend_warmup_calls = _backend_metric(adjudication_backend, "backend_warmup_call_count")
+    backend_warmup_total_seconds = _backend_float_metric(
+        adjudication_backend,
+        "backend_warmup_total_seconds",
+    )
     backend_average_seconds = 0.0
     if backend_calls:
         backend_average_seconds = backend_total_seconds / backend_calls
+    backend_review_calls = max(0, backend_calls - backend_warmup_calls)
+    backend_review_total_seconds = max(0.0, backend_total_seconds - backend_warmup_total_seconds)
+    backend_review_average_seconds = 0.0
+    if backend_review_calls:
+        backend_review_average_seconds = backend_review_total_seconds / backend_review_calls
     backend_name = _backend_name(adjudication_backend)
     backend_model = _backend_optional_string(adjudication_backend, "model")
     backend_executable = _backend_optional_string(adjudication_backend, "executable")
@@ -236,6 +246,11 @@ def benchmark_repository_review(
         backend_model=backend_model,
         backend_executable=backend_executable,
         cases=tuple(cases),
+        backend_warmup_calls=backend_warmup_calls,
+        backend_warmup_total_seconds=backend_warmup_total_seconds,
+        backend_review_calls=backend_review_calls,
+        backend_review_total_seconds=backend_review_total_seconds,
+        backend_review_average_seconds=backend_review_average_seconds,
     )
 
 

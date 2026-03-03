@@ -212,6 +212,11 @@ class BenchmarkSummary:
     backend_model: str | None
     backend_executable: str | None
     cases: tuple[BenchmarkCaseResult, ...]
+    backend_warmup_calls: int = 0
+    backend_warmup_total_seconds: float = 0.0
+    backend_review_calls: int = 0
+    backend_review_total_seconds: float = 0.0
+    backend_review_average_seconds: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

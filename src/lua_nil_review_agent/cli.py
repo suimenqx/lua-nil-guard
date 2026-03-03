@@ -980,8 +980,13 @@ def _render_benchmark_summary(root: Path, summary) -> str:  # noqa: ANN001
         f"Backend cache hits: {payload['backend_cache_hits']}",
         f"Backend cache misses: {payload['backend_cache_misses']}",
         f"Backend calls: {payload['backend_calls']}",
+        f"Backend warm-up calls: {payload['backend_warmup_calls']}",
+        f"Backend review calls: {payload['backend_review_calls']}",
         f"Backend total latency: {payload['backend_total_seconds']:.3f}s",
+        f"Backend warm-up latency: {payload['backend_warmup_total_seconds']:.3f}s",
+        f"Backend review latency: {payload['backend_review_total_seconds']:.3f}s",
         f"Backend average latency: {payload['backend_average_seconds']:.3f}s",
+        f"Backend review average latency: {payload['backend_review_average_seconds']:.3f}s",
     ]
     if payload["backend_model"] is not None:
         lines.insert(4, f"Backend model: {payload['backend_model']}")
@@ -1019,19 +1024,31 @@ def _render_benchmark_cache_comparison(root: Path, comparison) -> str:  # noqa: 
         f"- Backend cache hits: {cold['backend_cache_hits']}",
         f"- Backend cache misses: {cold['backend_cache_misses']}",
         f"- Backend calls: {cold['backend_calls']}",
+        f"- Backend warm-up calls: {cold['backend_warmup_calls']}",
+        f"- Backend review calls: {cold['backend_review_calls']}",
         f"- Backend total latency: {cold['backend_total_seconds']:.3f}s",
+        f"- Backend warm-up latency: {cold['backend_warmup_total_seconds']:.3f}s",
+        f"- Backend review latency: {cold['backend_review_total_seconds']:.3f}s",
         "",
         "Warm run:",
         f"- Exact matches: {warm['exact_matches']}/{warm['total_cases']}",
         f"- Backend cache hits: {warm['backend_cache_hits']}",
         f"- Backend cache misses: {warm['backend_cache_misses']}",
         f"- Backend calls: {warm['backend_calls']}",
+        f"- Backend warm-up calls: {warm['backend_warmup_calls']}",
+        f"- Backend review calls: {warm['backend_review_calls']}",
         f"- Backend total latency: {warm['backend_total_seconds']:.3f}s",
+        f"- Backend warm-up latency: {warm['backend_warmup_total_seconds']:.3f}s",
+        f"- Backend review latency: {warm['backend_review_total_seconds']:.3f}s",
         "",
         "Delta (warm - cold):",
         f"- Cache hits: {delta['backend_cache_hits']:+d}",
         f"- Backend calls: {delta['backend_calls']:+d}",
+        f"- Backend warm-up calls: {delta['backend_warmup_calls']:+d}",
+        f"- Backend review calls: {delta['backend_review_calls']:+d}",
         f"- Total latency: {delta['backend_total_seconds']:+.3f}s",
+        f"- Warm-up latency: {delta['backend_warmup_total_seconds']:+.3f}s",
+        f"- Review latency: {delta['backend_review_total_seconds']:+.3f}s",
     ]
     return "\n".join(lines)
 
@@ -1104,6 +1121,16 @@ def _render_benchmark_json_comparison(*, before_path: Path, after_path: Path) ->
                 before["backend_calls"],
                 after["backend_calls"],
             ),
+            _format_int_change(
+                "Backend warm-up calls",
+                before["backend_warmup_calls"],
+                after["backend_warmup_calls"],
+            ),
+            _format_int_change(
+                "Backend review calls",
+                before["backend_review_calls"],
+                after["backend_review_calls"],
+            ),
             _format_float_change(
                 "Backend total latency",
                 before["backend_total_seconds"],
@@ -1111,9 +1138,27 @@ def _render_benchmark_json_comparison(*, before_path: Path, after_path: Path) ->
                 suffix="s",
             ),
             _format_float_change(
+                "Backend warm-up latency",
+                before["backend_warmup_total_seconds"],
+                after["backend_warmup_total_seconds"],
+                suffix="s",
+            ),
+            _format_float_change(
+                "Backend review latency",
+                before["backend_review_total_seconds"],
+                after["backend_review_total_seconds"],
+                suffix="s",
+            ),
+            _format_float_change(
                 "Backend average latency",
                 before["backend_average_seconds"],
                 after["backend_average_seconds"],
+                suffix="s",
+            ),
+            _format_float_change(
+                "Backend review average latency",
+                before["backend_review_average_seconds"],
+                after["backend_review_average_seconds"],
                 suffix="s",
             ),
         ]
@@ -1141,6 +1186,21 @@ def _serialize_benchmark_summary(root: Path, summary) -> dict[str, object]:  # n
     accuracy = 0.0
     if summary.total_cases:
         accuracy = (summary.exact_matches / summary.total_cases) * 100
+    total_calls = summary.backend_calls
+    warmup_calls = summary.backend_warmup_calls
+    review_calls = summary.backend_review_calls
+    total_seconds = summary.backend_total_seconds
+    warmup_total_seconds = summary.backend_warmup_total_seconds
+    review_total_seconds = summary.backend_review_total_seconds
+    review_average_seconds = summary.backend_review_average_seconds
+
+    if review_calls == 0 and total_calls > 0 and warmup_calls == 0:
+        review_calls = total_calls
+    if review_total_seconds == 0.0 and total_seconds > 0.0 and warmup_total_seconds == 0.0:
+        review_total_seconds = total_seconds
+    if review_average_seconds == 0.0 and review_calls > 0 and review_total_seconds > 0.0:
+        review_average_seconds = review_total_seconds / review_calls
+
     return {
         "repository": str(root),
         "backend_name": summary.backend_name,
@@ -1162,9 +1222,14 @@ def _serialize_benchmark_summary(root: Path, summary) -> dict[str, object]:  # n
         "backend_timeouts": summary.backend_timeouts,
         "backend_cache_hits": summary.backend_cache_hits,
         "backend_cache_misses": summary.backend_cache_misses,
-        "backend_calls": summary.backend_calls,
-        "backend_total_seconds": summary.backend_total_seconds,
+        "backend_calls": total_calls,
+        "backend_warmup_calls": warmup_calls,
+        "backend_review_calls": review_calls,
+        "backend_total_seconds": total_seconds,
+        "backend_warmup_total_seconds": warmup_total_seconds,
+        "backend_review_total_seconds": review_total_seconds,
         "backend_average_seconds": summary.backend_average_seconds,
+        "backend_review_average_seconds": review_average_seconds,
         "cases": [
             {
                 "case_id": case.case_id,
@@ -1192,7 +1257,15 @@ def _serialize_benchmark_cache_comparison(root: Path, comparison) -> dict[str, o
             "backend_cache_hits": warm["backend_cache_hits"] - cold["backend_cache_hits"],
             "backend_cache_misses": warm["backend_cache_misses"] - cold["backend_cache_misses"],
             "backend_calls": warm["backend_calls"] - cold["backend_calls"],
+            "backend_warmup_calls": warm["backend_warmup_calls"] - cold["backend_warmup_calls"],
+            "backend_review_calls": warm["backend_review_calls"] - cold["backend_review_calls"],
             "backend_total_seconds": warm["backend_total_seconds"] - cold["backend_total_seconds"],
+            "backend_warmup_total_seconds": (
+                warm["backend_warmup_total_seconds"] - cold["backend_warmup_total_seconds"]
+            ),
+            "backend_review_total_seconds": (
+                warm["backend_review_total_seconds"] - cold["backend_review_total_seconds"]
+            ),
             "exact_matches": warm["exact_matches"] - cold["exact_matches"],
         },
     }
@@ -1247,11 +1320,41 @@ def _coerce_benchmark_summary_payload(
         "backend_cache_hits": _require_payload_int(payload, "backend_cache_hits", path=path),
         "backend_cache_misses": _require_payload_int(payload, "backend_cache_misses", path=path),
         "backend_calls": _require_payload_int(payload, "backend_calls", path=path),
+        "backend_warmup_calls": _optional_payload_int(
+            payload,
+            "backend_warmup_calls",
+            path=path,
+            default=0,
+        ),
+        "backend_review_calls": _optional_payload_int(
+            payload,
+            "backend_review_calls",
+            path=path,
+            default=_require_payload_int(payload, "backend_calls", path=path),
+        ),
         "backend_total_seconds": _require_payload_float(payload, "backend_total_seconds", path=path),
+        "backend_warmup_total_seconds": _optional_payload_float(
+            payload,
+            "backend_warmup_total_seconds",
+            path=path,
+            default=0.0,
+        ),
+        "backend_review_total_seconds": _optional_payload_float(
+            payload,
+            "backend_review_total_seconds",
+            path=path,
+            default=_require_payload_float(payload, "backend_total_seconds", path=path),
+        ),
         "backend_average_seconds": _require_payload_float(
             payload,
             "backend_average_seconds",
             path=path,
+        ),
+        "backend_review_average_seconds": _optional_payload_float(
+            payload,
+            "backend_review_average_seconds",
+            path=path,
+            default=_require_payload_float(payload, "backend_average_seconds", path=path),
         ),
     }
 
@@ -1279,10 +1382,40 @@ def _require_payload_int(payload: dict[str, object], key: str, *, path: Path) ->
     return value
 
 
+def _optional_payload_int(
+    payload: dict[str, object],
+    key: str,
+    *,
+    path: Path,
+    default: int,
+) -> int:
+    value = payload.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"Benchmark JSON field {key!r} must be an integer when present: {path}")
+    return value
+
+
 def _require_payload_float(payload: dict[str, object], key: str, *, path: Path) -> float:
     value = payload.get(key)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"Benchmark JSON field {key!r} must be a number: {path}")
+    return float(value)
+
+
+def _optional_payload_float(
+    payload: dict[str, object],
+    key: str,
+    *,
+    path: Path,
+    default: float,
+) -> float:
+    value = payload.get(key)
+    if value is None:
+        return float(default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"Benchmark JSON field {key!r} must be a number when present: {path}")
     return float(value)
 
 

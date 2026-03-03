@@ -114,6 +114,8 @@ class CliAgentBackend:
         self.cache_misses = 0
         self.backend_call_count = 0
         self.backend_total_seconds = 0.0
+        self.backend_warmup_call_count = 0
+        self.backend_warmup_total_seconds = 0.0
 
     def adjudicate(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
         prompt = self.build_prompt(packet=packet, sink_rule=sink_rule)
@@ -662,6 +664,7 @@ class ClaudeCliBackend(CliAgentBackend):
         self._warmup_attempted = True
         command = self.build_warmup_command()
         self.backend_call_count += 1
+        self.backend_warmup_call_count += 1
         started = time.perf_counter()
         try:
             if self._uses_default_runner:
@@ -682,7 +685,9 @@ class ClaudeCliBackend(CliAgentBackend):
             # Warm-up is a best-effort latency stabilizer and must not block the real review path.
             return
         finally:
-            self.backend_total_seconds += max(0.0, time.perf_counter() - started)
+            elapsed = max(0.0, time.perf_counter() - started)
+            self.backend_total_seconds += elapsed
+            self.backend_warmup_total_seconds += elapsed
 
     def parse_wrapped_response(self, raw: str, *, case_id: str) -> AdjudicationRecord:
         try:
