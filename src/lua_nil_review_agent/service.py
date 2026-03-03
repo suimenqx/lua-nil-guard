@@ -1048,7 +1048,7 @@ def _knowledge_facts_for_assessment(
         for subject in related_functions + (assessment.candidate.function_scope,)
         for fact in facts_for_subject(facts, subject)
     )
-    call_args_by_function = _contract_call_args_from_assessment(
+    call_contexts_by_function = _contract_calls_from_assessment(
         assessment,
         current_module=current_module,
         known_function_names=frozenset(contract.qualified_name for contract in applicable_contracts),
@@ -1070,14 +1070,15 @@ def _knowledge_facts_for_assessment(
             continue
         if not (contract.applies_with_arg_count or contract.required_literal_args):
             continue
-        call_arg_sets = call_args_by_function.get(contract.qualified_name, ())
+        call_contexts = call_contexts_by_function.get(contract.qualified_name, ())
         if not any(
             contract_applies_to_call(
                 contract,
                 arg_count=len(args),
                 arg_values=args,
+                call_role=call_role,
             )
-            for args in call_arg_sets
+            for args, call_role in call_contexts
         ):
             continue
         scoped_contract_statements.append(
@@ -1522,13 +1523,13 @@ def _call_name_from_expression(
     )
 
 
-def _contract_call_args_from_assessment(
+def _contract_calls_from_assessment(
     assessment: CandidateAssessment,
     *,
     current_module: str | None = None,
     known_function_names: frozenset[str] | set[str] = frozenset(),
-) -> dict[str, tuple[tuple[str, ...], ...]]:
-    call_args: dict[str, list[tuple[str, ...]]] = {}
+) -> dict[str, tuple[tuple[tuple[str, ...], str], ...]]:
+    call_args: dict[str, list[tuple[tuple[str, ...], str]]] = {}
     for origin in assessment.static_analysis.origin_candidates:
         parsed = _parse_call_expression(
             origin,
@@ -1538,7 +1539,9 @@ def _contract_call_args_from_assessment(
         if parsed is None:
             continue
         function_name, args = parsed
-        call_args.setdefault(function_name, []).append(args)
+        call_args.setdefault(function_name, []).append(
+            (args, _call_role_for_origin(assessment, origin))
+        )
     return {key: tuple(value) for key, value in call_args.items()}
 
 
@@ -1617,6 +1620,12 @@ def _split_top_level_values(values_text: str) -> list[str]:
 
 def _strip_lua_comment(line: str) -> str:
     return line.partition("--")[0]
+
+
+def _call_role_for_origin(assessment: CandidateAssessment, origin: str) -> str:
+    if origin == assessment.candidate.expression:
+        return "sink_expression"
+    return "assignment_origin"
 
 
 def _build_file_module_index(snapshot: RepositorySnapshot) -> dict[str, str | None]:

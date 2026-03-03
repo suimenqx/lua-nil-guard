@@ -132,8 +132,15 @@ def contract_applies_to_call(
     *,
     arg_count: int | None,
     arg_values: tuple[str, ...] | None = None,
+    call_role: str | None = None,
 ) -> bool:
     """Return whether a contract is active for the current call shape."""
+
+    if contract.applies_to_call_roles:
+        if call_role is None:
+            return False
+        if call_role not in contract.applies_to_call_roles:
+            return False
 
     if contract.applies_with_arg_count is None:
         arg_count_matches = True
