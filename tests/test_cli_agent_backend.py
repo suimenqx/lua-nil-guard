@@ -1129,6 +1129,7 @@ def test_register_manifest_backed_adjudication_backend_loads_custom_provider(
                 "default_timeout_seconds": 30.0,
                 "default_max_attempts": 2,
                 "default_fallback_to_uncertain_on_error": True,
+                "default_expanded_evidence_retry_mode": "on",
                 "capabilities": {
                     "supports_model_override": True,
                     "supports_config_overrides": True,
@@ -1146,6 +1147,7 @@ def test_register_manifest_backed_adjudication_backend_loads_custom_provider(
         assert backend.provider_spec == provider_spec
         assert backend.executable == "claude-code"
         assert backend.timeout_seconds == 30.0
+        assert backend.expanded_evidence_retry is True
     finally:
         unregister_adjudication_backend("claude-code")
 
@@ -1163,6 +1165,7 @@ def test_register_manifest_backed_adjudication_backend_loads_structured_stdout_p
                 "default_timeout_seconds": 25.0,
                 "default_max_attempts": 1,
                 "default_fallback_to_uncertain_on_error": True,
+                "default_expanded_evidence_retry_mode": "off",
                 "capabilities": {
                     "supports_model_override": True,
                     "supports_config_overrides": False,
@@ -1181,6 +1184,7 @@ def test_register_manifest_backed_adjudication_backend_loads_structured_stdout_p
         assert backend.provider_spec == provider_spec
         assert backend.executable == "claude"
         assert backend.timeout_seconds == 25.0
+        assert backend.expanded_evidence_retry is False
     finally:
         unregister_adjudication_backend("claude-live")
 
@@ -1290,6 +1294,7 @@ def test_create_adjudication_backend_uses_builtin_defaults_for_gemini() -> None:
     assert isinstance(backend, CodeAgentCliBackend)
     assert backend.provider_spec == GEMINI_PROVIDER_SPEC
     assert backend.model == DEFAULT_GEMINI_BACKEND_MODEL
+    assert backend.expanded_evidence_retry is None
     assert backend.timeout_seconds == 45.0
     assert backend.max_attempts == 2
     assert backend.fallback_to_uncertain_on_error is True

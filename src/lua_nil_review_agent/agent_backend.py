@@ -87,6 +87,14 @@ class HeuristicAdjudicationBackend:
         )
 
 
+def _resolve_expanded_evidence_retry_mode(mode: str) -> bool | None:
+    if mode == "on":
+        return True
+    if mode == "off":
+        return False
+    return None
+
+
 class CliAgentBackend:
     """Base class for CLI-backed adjudication providers."""
 
@@ -423,6 +431,13 @@ class CodexCliBackend(CliAgentBackend):
         resolved_attempts = (
             self.provider_spec.default_max_attempts if max_attempts is None else max_attempts
         )
+        resolved_expanded_evidence_retry = (
+            _resolve_expanded_evidence_retry_mode(
+                self.provider_spec.default_expanded_evidence_retry_mode
+            )
+            if expanded_evidence_retry is None
+            else expanded_evidence_retry
+        )
         resolved_fallback = (
             self.provider_spec.default_fallback_to_uncertain_on_error
             if fallback_to_uncertain_on_error is None
@@ -435,7 +450,7 @@ class CodexCliBackend(CliAgentBackend):
             strict_skill=strict_skill,
             timeout_seconds=resolved_timeout,
             max_attempts=resolved_attempts,
-            expanded_evidence_retry=expanded_evidence_retry,
+            expanded_evidence_retry=resolved_expanded_evidence_retry,
             fallback_to_uncertain_on_error=resolved_fallback,
             cache_path=cache_path,
         )
@@ -520,6 +535,13 @@ class ClaudeCliBackend(CliAgentBackend):
         resolved_attempts = (
             self.provider_spec.default_max_attempts if max_attempts is None else max_attempts
         )
+        resolved_expanded_evidence_retry = (
+            _resolve_expanded_evidence_retry_mode(
+                self.provider_spec.default_expanded_evidence_retry_mode
+            )
+            if expanded_evidence_retry is None
+            else expanded_evidence_retry
+        )
         resolved_fallback = (
             self.provider_spec.default_fallback_to_uncertain_on_error
             if fallback_to_uncertain_on_error is None
@@ -532,7 +554,7 @@ class ClaudeCliBackend(CliAgentBackend):
             strict_skill=strict_skill,
             timeout_seconds=resolved_timeout,
             max_attempts=resolved_attempts,
-            expanded_evidence_retry=expanded_evidence_retry,
+            expanded_evidence_retry=resolved_expanded_evidence_retry,
             fallback_to_uncertain_on_error=resolved_fallback,
             cache_path=cache_path,
         )
@@ -750,6 +772,13 @@ class CodeAgentCliBackend(CliAgentBackend):
         resolved_attempts = (
             self.provider_spec.default_max_attempts if max_attempts is None else max_attempts
         )
+        resolved_expanded_evidence_retry = (
+            _resolve_expanded_evidence_retry_mode(
+                self.provider_spec.default_expanded_evidence_retry_mode
+            )
+            if expanded_evidence_retry is None
+            else expanded_evidence_retry
+        )
         resolved_fallback = (
             self.provider_spec.default_fallback_to_uncertain_on_error
             if fallback_to_uncertain_on_error is None
@@ -762,7 +791,7 @@ class CodeAgentCliBackend(CliAgentBackend):
             strict_skill=strict_skill,
             timeout_seconds=resolved_timeout,
             max_attempts=resolved_attempts,
-            expanded_evidence_retry=expanded_evidence_retry,
+            expanded_evidence_retry=resolved_expanded_evidence_retry,
             fallback_to_uncertain_on_error=resolved_fallback,
             cache_path=cache_path,
         )

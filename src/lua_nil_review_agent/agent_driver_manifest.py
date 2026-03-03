@@ -14,6 +14,7 @@ BUILTIN_AGENT_PROVIDER_MANIFESTS: dict[str, dict[str, object]] = {
         "default_timeout_seconds": 45.0,
         "default_max_attempts": 2,
         "default_fallback_to_uncertain_on_error": True,
+        "default_expanded_evidence_retry_mode": "auto",
         "capabilities": {
             "supports_model_override": True,
             "supports_config_overrides": True,
@@ -31,6 +32,7 @@ BUILTIN_AGENT_PROVIDER_MANIFESTS: dict[str, dict[str, object]] = {
         "default_timeout_seconds": 75.0,
         "default_max_attempts": 2,
         "default_fallback_to_uncertain_on_error": True,
+        "default_expanded_evidence_retry_mode": "auto",
         "capabilities": {
             "supports_model_override": True,
             "supports_config_overrides": False,
@@ -48,6 +50,7 @@ BUILTIN_AGENT_PROVIDER_MANIFESTS: dict[str, dict[str, object]] = {
         "default_timeout_seconds": 45.0,
         "default_max_attempts": 2,
         "default_fallback_to_uncertain_on_error": True,
+        "default_expanded_evidence_retry_mode": "auto",
         "capabilities": {
             "supports_model_override": True,
             "supports_config_overrides": False,
@@ -65,6 +68,7 @@ BUILTIN_AGENT_PROVIDER_MANIFESTS: dict[str, dict[str, object]] = {
         "default_timeout_seconds": 45.0,
         "default_max_attempts": 2,
         "default_fallback_to_uncertain_on_error": True,
+        "default_expanded_evidence_retry_mode": "auto",
         "capabilities": {
             "supports_model_override": True,
             "supports_config_overrides": False,
@@ -127,6 +131,12 @@ def load_agent_provider_spec_manifest(payload: dict[str, object]) -> AgentProvid
     max_attempts = payload.get("default_max_attempts")
     if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
         raise ValueError("Provider manifest field 'default_max_attempts' must be a positive integer")
+    expanded_evidence_retry_mode = _optional_manifest_choice(
+        payload,
+        "default_expanded_evidence_retry_mode",
+        choices={"auto", "on", "off"},
+        default="auto",
+    )
 
     return AgentProviderSpec(
         name=_require_manifest_string(payload, "name"),
@@ -138,6 +148,7 @@ def load_agent_provider_spec_manifest(payload: dict[str, object]) -> AgentProvid
             payload,
             "default_fallback_to_uncertain_on_error",
         ),
+        default_expanded_evidence_retry_mode=expanded_evidence_retry_mode,
         capabilities=capabilities,
     )
 
@@ -190,6 +201,22 @@ def _optional_manifest_bool(payload: dict[str, object], key: str, *, default: bo
         return default
     if not isinstance(value, bool):
         raise ValueError(f"Provider manifest field {key!r} must be a boolean when present")
+    return value
+
+
+def _optional_manifest_choice(
+    payload: dict[str, object],
+    key: str,
+    *,
+    choices: set[str],
+    default: str,
+) -> str:
+    value = payload.get(key)
+    if value is None:
+        return default
+    if not isinstance(value, str) or value not in choices:
+        allowed = ", ".join(sorted(choices))
+        raise ValueError(f"Provider manifest field {key!r} must be one of: {allowed}")
     return value
 
 

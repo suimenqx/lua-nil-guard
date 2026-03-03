@@ -183,6 +183,7 @@ def test_cli_validate_backend_manifest_reports_summary(tmp_path: Path) -> None:
                 "default_timeout_seconds": 30.0,
                 "default_max_attempts": 2,
                 "default_fallback_to_uncertain_on_error": True,
+                "default_expanded_evidence_retry_mode": "off",
                 "capabilities": {
                     "supports_model_override": True,
                     "supports_config_overrides": True,
@@ -202,6 +203,7 @@ def test_cli_validate_backend_manifest_reports_summary(tmp_path: Path) -> None:
     assert "Protocol: stdout_envelope_cli" in output
     assert "Protocol backend: CodeAgentCliBackend" in output
     assert "Runtime compatibility: supported" in output
+    assert "Default expanded evidence retry: off" in output
 
 
 def test_cli_validate_backend_manifest_rejects_unsupported_protocol(tmp_path: Path) -> None:
@@ -237,6 +239,7 @@ def test_cli_validate_backend_manifest_json_returns_machine_readable_output(tmp_
                 "default_timeout_seconds": 30.0,
                 "default_max_attempts": 2,
                 "default_fallback_to_uncertain_on_error": True,
+                "default_expanded_evidence_retry_mode": "off",
                 "capabilities": {
                     "supports_model_override": True,
                     "supports_config_overrides": True,
@@ -253,6 +256,7 @@ def test_cli_validate_backend_manifest_json_returns_machine_readable_output(tmp_
     assert exit_code == 0
     assert payload["status"] == "valid"
     assert payload["manifest"] == str(manifest_path)
+    assert payload["default_expanded_evidence_retry_mode"] == "off"
     assert payload["protocol_backend"] == "CodeAgentCliBackend"
     assert payload["runtime_compatibility"] == "supported"
     assert payload["registration_scope"] is None
@@ -280,6 +284,7 @@ def test_cli_register_backend_manifest_calls_registry(
         default_executable = "claude-code"
         default_timeout_seconds = 30.0
         default_max_attempts = 2
+        default_expanded_evidence_retry_mode = "auto"
         capabilities = StubCapabilities()
 
     def fake_register(path, *, replace=False):
@@ -325,6 +330,7 @@ def test_cli_register_backend_manifest_json_writes_output_file(
         default_executable = "claude-code"
         default_timeout_seconds = 30.0
         default_max_attempts = 2
+        default_expanded_evidence_retry_mode = "auto"
         capabilities = StubCapabilities()
 
     monkeypatch.setattr(

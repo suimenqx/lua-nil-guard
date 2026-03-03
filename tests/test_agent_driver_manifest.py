@@ -46,6 +46,10 @@ def test_builtin_manifests_load_into_builtin_specs() -> None:
     assert get_builtin_agent_provider_spec("claude") == CLAUDE_PROVIDER_SPEC
     assert get_builtin_agent_provider_spec("gemini") == GEMINI_PROVIDER_SPEC
     assert get_builtin_agent_provider_spec("codeagent") == CODEAGENT_PROVIDER_SPEC
+    assert CODEX_PROVIDER_SPEC.default_expanded_evidence_retry_mode == "auto"
+    assert CLAUDE_PROVIDER_SPEC.default_expanded_evidence_retry_mode == "auto"
+    assert GEMINI_PROVIDER_SPEC.default_expanded_evidence_retry_mode == "auto"
+    assert CODEAGENT_PROVIDER_SPEC.default_expanded_evidence_retry_mode == "auto"
     assert GEMINI_PROVIDER_SPEC.default_executable == "gemini"
     assert CODEAGENT_PROVIDER_SPEC.default_executable == "gemini"
 
@@ -63,6 +67,19 @@ def test_load_agent_provider_spec_manifest_validates_required_fields() -> None:
             }
         )
 
+    with pytest.raises(ValueError, match="default_expanded_evidence_retry_mode"):
+        load_agent_provider_spec_manifest(
+            {
+                "name": "bad",
+                "protocol": "stdout_envelope_cli",
+                "default_executable": "bad-agent",
+                "default_timeout_seconds": 10.0,
+                "default_max_attempts": 1,
+                "default_fallback_to_uncertain_on_error": True,
+                "default_expanded_evidence_retry_mode": "sometimes",
+            }
+        )
+
 
 def test_load_agent_provider_spec_manifest_file_reads_json(tmp_path: Path) -> None:
     path = tmp_path / "provider.json"
@@ -71,6 +88,21 @@ def test_load_agent_provider_spec_manifest_file_reads_json(tmp_path: Path) -> No
     spec = load_agent_provider_spec_manifest_file(path)
 
     assert spec == CODEX_PROVIDER_SPEC
+
+
+def test_load_agent_provider_spec_manifest_defaults_expanded_evidence_retry_mode_to_auto() -> None:
+    spec = load_agent_provider_spec_manifest(
+        {
+            "name": "sample",
+            "protocol": "stdout_envelope_cli",
+            "default_executable": "sample-agent",
+            "default_timeout_seconds": 10.0,
+            "default_max_attempts": 1,
+            "default_fallback_to_uncertain_on_error": True,
+        }
+    )
+
+    assert spec.default_expanded_evidence_retry_mode == "auto"
 
 
 def test_load_agent_provider_spec_manifest_file_rejects_invalid_json(tmp_path: Path) -> None:

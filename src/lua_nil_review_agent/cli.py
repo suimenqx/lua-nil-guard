@@ -1010,6 +1010,7 @@ def _serialize_backend_manifest_summary(
         "default_executable": provider_spec.default_executable,
         "default_timeout_seconds": provider_spec.default_timeout_seconds,
         "default_max_attempts": provider_spec.default_max_attempts,
+        "default_expanded_evidence_retry_mode": provider_spec.default_expanded_evidence_retry_mode,
         "capabilities": {
             "supports_model_override": getattr(capabilities, "supports_model_override", False),
             "supports_config_overrides": getattr(capabilities, "supports_config_overrides", False),
@@ -1039,6 +1040,7 @@ def _render_backend_manifest_summary(payload: dict[str, object]) -> str:
         f"Default executable: {payload['default_executable']}",
         f"Default timeout: {payload['default_timeout_seconds']}",
         f"Default attempts: {payload['default_max_attempts']}",
+        f"Default expanded evidence retry: {payload['default_expanded_evidence_retry_mode']}",
         "Runtime-consumed capabilities:",
         f"  model override: {capabilities['supports_model_override']}",
         f"  config overrides: {capabilities['supports_config_overrides']}",

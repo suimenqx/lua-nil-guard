@@ -26,4 +26,5 @@ class AgentProviderSpec:
     default_timeout_seconds: float | None
     default_max_attempts: int
     default_fallback_to_uncertain_on_error: bool
+    default_expanded_evidence_retry_mode: str = "auto"
     capabilities: AgentCapabilities = field(default_factory=AgentCapabilities)
