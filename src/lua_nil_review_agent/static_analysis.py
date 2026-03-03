@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from .knowledge import contract_applies_in_module
+from .knowledge import contract_applies_in_module, contract_applies_to_sink
 from .models import CandidateCase, FunctionContract, StaticAnalysisResult
 from .summaries import detect_module_name
 
@@ -43,6 +43,8 @@ def analyze_candidate(
         candidate.symbol,
         function_contracts=function_contracts,
         current_module=current_module,
+        sink_rule_id=candidate.sink_rule_id,
+        sink_name=candidate.sink_name,
     )
     if contract_guard is not None:
         observed_guards.append(contract_guard)
@@ -50,6 +52,8 @@ def analyze_candidate(
         origin,
         function_contracts=function_contracts,
         current_module=current_module,
+        sink_rule_id=candidate.sink_rule_id,
+        sink_name=candidate.sink_name,
     )
     if return_contract_guard is not None:
         observed_guards.append(return_contract_guard)
@@ -237,12 +241,19 @@ def _active_contract_guard(
     *,
     function_contracts: tuple[FunctionContract, ...],
     current_module: str | None,
+    sink_rule_id: str,
+    sink_name: str,
 ) -> str | None:
     contract_by_name = {
         contract.qualified_name: contract
         for contract in function_contracts
         if contract.ensures_non_nil_args
         and contract_applies_in_module(contract, current_module)
+        and contract_applies_to_sink(
+            contract,
+            current_sink_rule_id=sink_rule_id,
+            current_sink_name=sink_name,
+        )
     }
     if not contract_by_name:
         return None
@@ -287,6 +298,8 @@ def _origin_return_contract_guard(
     *,
     function_contracts: tuple[FunctionContract, ...],
     current_module: str | None,
+    sink_rule_id: str,
+    sink_name: str,
 ) -> str | None:
     if origin is None:
         return None
@@ -296,6 +309,11 @@ def _origin_return_contract_guard(
         for contract in function_contracts
         if contract.returns_non_nil_from_args
         and contract_applies_in_module(contract, current_module)
+        and contract_applies_to_sink(
+            contract,
+            current_sink_rule_id=sink_rule_id,
+            current_sink_name=sink_name,
+        )
     }
     if not contract_by_name:
         return None

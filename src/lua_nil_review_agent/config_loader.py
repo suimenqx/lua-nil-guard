@@ -150,6 +150,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
     ensures_non_nil_args = _optional_positive_int_list(data, "ensures_non_nil_args")
     returns_non_nil_from_args = _optional_positive_int_list(data, "returns_non_nil_from_args")
     applies_in_modules = _optional_str_list(data, "applies_in_modules")
+    applies_to_sinks = _optional_str_list(data, "applies_to_sinks")
 
     notes = data.get("notes")
     if notes is not None and not isinstance(notes, str):
@@ -166,6 +167,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         ensures_non_nil_args=tuple(ensures_non_nil_args),
         returns_non_nil_from_args=tuple(returns_non_nil_from_args),
         applies_in_modules=tuple(applies_in_modules),
+        applies_to_sinks=tuple(applies_to_sinks),
         notes=notes,
     )
 

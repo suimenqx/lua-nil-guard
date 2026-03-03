@@ -77,7 +77,7 @@ Target repositories are expected to contain:
 - `config/confidence_policy.json`
 - `config/function_contracts.json`
 
-`init-config` writes the default versions of all three files into the target repository. `function_contracts.json` lets you declare high-confidence wrapper functions such as `normalize_name` that always return a non-nil value, helper guards such as `assert_profile(profile)` via `ensures_non_nil_args`, and normalizers that return a defaulted non-nil value from specific arguments via `returns_non_nil_from_args`. You can also restrict a contract to specific caller modules with `applies_in_modules` when a helper is only trustworthy in part of the codebase. This helps suppress false positives without relying on prompt-only inference.
+`init-config` writes the default versions of all three files into the target repository. `function_contracts.json` lets you declare high-confidence wrapper functions such as `normalize_name` that always return a non-nil value, helper guards such as `assert_profile(profile)` via `ensures_non_nil_args`, and normalizers that return a defaulted non-nil value from specific arguments via `returns_non_nil_from_args`. You can also restrict a contract to specific caller modules with `applies_in_modules` and to specific sink rules or sink names with `applies_to_sinks` when a helper is only trustworthy in part of the codebase. This helps suppress false positives without relying on prompt-only inference.
 
 ## Notes
 

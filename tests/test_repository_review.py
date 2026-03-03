@@ -333,3 +333,87 @@ def test_run_repository_review_limits_contracts_to_configured_modules(
 
     assert verdict_by_file["user.lua"].status.startswith("safe")
     assert verdict_by_file["admin.lua"].status == "uncertain"
+
+
+def test_run_repository_review_limits_contracts_to_configured_sinks(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                },
+                {
+                    "id": "string.find.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.find",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "function_contracts.json").write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "normalize_name",
+                    "returns_non_nil": True,
+                    "applies_to_sinks": ["string.match.arg1"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "function normalize_name(value)",
+                "  return value",
+                "end",
+                "",
+                "local username = normalize_name(req.params.username)",
+                "local matched = string.match(username, '^a')",
+                "local found = string.find(username, 'a')",
+                "return matched, found",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+    verdict_by_sink = {
+        verdict.case_id.rsplit(":", 1)[-1]: verdict
+        for verdict in verdicts
+    }
+
+    assert verdict_by_sink["string.match.arg1"].status.startswith("safe")
+    assert any(
+        "returns non-nil" in fact for fact in verdict_by_sink["string.match.arg1"].safety_evidence
+    )
+    assert verdict_by_sink["string.find.arg1"].status == "uncertain"

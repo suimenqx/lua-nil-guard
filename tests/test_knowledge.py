@@ -122,3 +122,32 @@ def test_derive_facts_from_contracts_filters_scoped_contracts_by_module() -> Non
 
     assert len(scoped) == 1
     assert scoped[0].subject == "normalize_name"
+
+
+def test_derive_facts_from_contracts_filters_scoped_contracts_by_sink() -> None:
+    contracts = (
+        FunctionContract(
+            qualified_name="normalize_name",
+            returns_non_nil=True,
+            applies_to_sinks=("string.match.arg1",),
+        ),
+    )
+
+    assert derive_facts_from_contracts(contracts) == ()
+    assert (
+        derive_facts_from_contracts(
+            contracts,
+            current_sink_rule_id="string.find.arg1",
+            current_sink_name="string.find",
+        )
+        == ()
+    )
+
+    scoped = derive_facts_from_contracts(
+        contracts,
+        current_sink_rule_id="string.match.arg1",
+        current_sink_name="string.match",
+    )
+
+    assert len(scoped) == 1
+    assert scoped[0].subject == "normalize_name"

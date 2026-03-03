@@ -1040,6 +1040,8 @@ def _knowledge_facts_for_assessment(
             if contract_applies_in_module(contract, current_module)
         ),
         current_module=current_module,
+        current_sink_rule_id=assessment.candidate.sink_rule_id,
+        current_sink_name=assessment.candidate.sink_name,
     )
     for fact in scoped_contract_facts:
         if fact.subject in related_functions:

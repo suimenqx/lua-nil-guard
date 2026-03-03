@@ -70,12 +70,20 @@ def derive_facts_from_contracts(
     contracts: tuple[FunctionContract, ...],
     *,
     current_module: str | None = None,
+    current_sink_rule_id: str | None = None,
+    current_sink_name: str | None = None,
 ) -> tuple[KnowledgeFact, ...]:
     """Convert configured contracts into high-confidence reusable safety facts."""
 
     facts: list[KnowledgeFact] = []
     for contract in contracts:
         if not contract_applies_in_module(contract, current_module):
+            continue
+        if not contract_applies_to_sink(
+            contract,
+            current_sink_rule_id=current_sink_rule_id,
+            current_sink_name=current_sink_name,
+        ):
             continue
         if contract.returns_non_nil:
             facts.append(
@@ -101,6 +109,20 @@ def contract_applies_in_module(
     if current_module is None:
         return False
     return current_module in contract.applies_in_modules
+
+
+def contract_applies_to_sink(
+    contract: FunctionContract,
+    *,
+    current_sink_rule_id: str | None,
+    current_sink_name: str | None,
+) -> bool:
+    """Return whether a contract is active for the current sink target."""
+
+    if not contract.applies_to_sinks:
+        return True
+    candidates = {current_sink_rule_id, current_sink_name}
+    return any(item in candidates for item in contract.applies_to_sinks)
 
 
 def _returns_non_nil_value(summary: FunctionSummary) -> bool:

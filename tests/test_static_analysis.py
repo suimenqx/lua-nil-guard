@@ -280,6 +280,46 @@ def test_analyze_candidate_treats_contract_guard_call_as_safe() -> None:
     assert result.origin_candidates == ("req.params.username",)
 
 
+def test_analyze_candidate_limits_guard_contracts_to_configured_sinks() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "assert_present(username)",
+            "return string.find(username, 'a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_scoped_sink_guard_contract",
+        file="demo.lua",
+        line=3,
+        column=8,
+        sink_rule_id="string.find.arg1",
+        sink_name="string.find",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        function_contracts=(
+            FunctionContract(
+                qualified_name="assert_present",
+                returns_non_nil=False,
+                ensures_non_nil_args=(1,),
+                applies_to_sinks=("string.match.arg1",),
+            ),
+        ),
+    )
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
+    assert result.origin_candidates == ("req.params.username",)
+
+
 def test_analyze_candidate_treats_normalizer_return_contract_as_safe() -> None:
     source = "\n".join(
         [
@@ -316,6 +356,45 @@ def test_analyze_candidate_treats_normalizer_return_contract_as_safe() -> None:
 
     assert result.state == "safe_static"
     assert result.observed_guards == ("normalize_name(...) returns non-nil",)
+    assert result.origin_candidates == ("normalize_name(req.params.username)",)
+
+
+def test_analyze_candidate_limits_normalizer_contracts_to_configured_sinks() -> None:
+    source = "\n".join(
+        [
+            "local username = normalize_name(req.params.username)",
+            "return string.find(username, 'a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_scoped_sink_return_contract",
+        file="demo.lua",
+        line=2,
+        column=8,
+        sink_rule_id="string.find.arg1",
+        sink_name="string.find",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        function_contracts=(
+            FunctionContract(
+                qualified_name="normalize_name",
+                returns_non_nil=False,
+                returns_non_nil_from_args=(1,),
+                applies_to_sinks=("string.match.arg1",),
+            ),
+        ),
+    )
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
     assert result.origin_candidates == ("normalize_name(req.params.username)",)
 
 
