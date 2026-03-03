@@ -25,9 +25,12 @@ from .service import (
     export_adjudication_tasks,
     export_autofix_patches,
     export_autofix_unified_diff,
+    find_repository_root_for_file,
     refresh_knowledge_base,
     refresh_summary_cache,
+    review_repository_file,
     review_repository,
+    run_file_review,
     run_repository_review,
 )
 
@@ -47,6 +50,18 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         snapshot = bootstrap_repository(root)
         assessments = review_repository(snapshot)
         return 0, _render_scan_summary(snapshot.root, assessments)
+
+    if command == "scan-file":
+        if len(args) != 2:
+            return 2, "scan-file requires exactly one Lua file path"
+        file_path = Path(args[1])
+        try:
+            root = find_repository_root_for_file(file_path)
+            snapshot = bootstrap_repository(root)
+            assessments = review_repository_file(snapshot, file_path)
+        except (OSError, ValueError) as exc:
+            return 2, str(exc)
+        return 0, _render_scan_summary(snapshot.root, assessments, target_file=file_path)
 
     if command == "clear-backend-cache":
         if len(args) != 2:
@@ -225,7 +240,51 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     config_overrides=backend_config_overrides,
                 ),
             )
-        except (SkillRuntimeError, BackendError) as exc:
+        except (SkillRuntimeError, BackendError, ValueError) as exc:
+            return 2, str(exc)
+        return 0, render_markdown_report(verdicts, snapshot.confidence_policy)
+
+    if command == "report-file":
+        try:
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_manifest_path,
+                backend_timeout,
+                backend_attempts,
+                backend_cache_path,
+                backend_config_overrides,
+                positional,
+            ) = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 1:
+            return 2, "report-file requires exactly one Lua file path"
+        file_path = Path(positional[0])
+        try:
+            root = find_repository_root_for_file(file_path)
+            snapshot = bootstrap_repository(root)
+            verdicts = run_file_review(
+                snapshot,
+                file_path,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                    executable=executable,
+                    backend_manifest_path=backend_manifest_path,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
+                    cache_path=backend_cache_path,
+                    config_overrides=backend_config_overrides,
+                ),
+            )
+        except (OSError, SkillRuntimeError, BackendError, ValueError) as exc:
             return 2, str(exc)
         return 0, render_markdown_report(verdicts, snapshot.confidence_policy)
 
@@ -267,7 +326,51 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     config_overrides=backend_config_overrides,
                 ),
             )
-        except (SkillRuntimeError, BackendError) as exc:
+        except (SkillRuntimeError, BackendError, ValueError) as exc:
+            return 2, str(exc)
+        return 0, render_json_report(verdicts, snapshot.confidence_policy)
+
+    if command == "report-file-json":
+        try:
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_manifest_path,
+                backend_timeout,
+                backend_attempts,
+                backend_cache_path,
+                backend_config_overrides,
+                positional,
+            ) = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 1:
+            return 2, "report-file-json requires exactly one Lua file path"
+        file_path = Path(positional[0])
+        try:
+            root = find_repository_root_for_file(file_path)
+            snapshot = bootstrap_repository(root)
+            verdicts = run_file_review(
+                snapshot,
+                file_path,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                    executable=executable,
+                    backend_manifest_path=backend_manifest_path,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
+                    cache_path=backend_cache_path,
+                    config_overrides=backend_config_overrides,
+                ),
+            )
+        except (OSError, SkillRuntimeError, BackendError, ValueError) as exc:
             return 2, str(exc)
         return 0, render_json_report(verdicts, snapshot.confidence_policy)
 
@@ -510,7 +613,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     config_overrides=backend_config_overrides,
                 ),
             )
-        except (SkillRuntimeError, BackendError) as exc:
+        except (SkillRuntimeError, BackendError, ValueError) as exc:
             return 2, str(exc)
         baseline = build_baseline(verdicts, snapshot.confidence_policy)
         BaselineStore(baseline_path).save(baseline)
@@ -561,7 +664,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     config_overrides=backend_config_overrides,
                 ),
             )
-        except (SkillRuntimeError, BackendError) as exc:
+        except (SkillRuntimeError, BackendError, ValueError) as exc:
             return 2, str(exc)
         filtered = filter_new_findings(
             verdicts,
@@ -641,7 +744,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     config_overrides=backend_config_overrides,
                 ),
             )
-        except (SkillRuntimeError, BackendError) as exc:
+        except (SkillRuntimeError, BackendError, ValueError) as exc:
             return 2, str(exc)
         filtered = filter_new_findings(
             verdicts,
@@ -673,7 +776,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 skill_path=skill_path,
                 strict_skill=strict_skill,
             )
-        except (SkillRuntimeError, BackendError) as exc:
+        except (SkillRuntimeError, BackendError, ValueError) as exc:
             return 2, str(exc)
         if output_path is None:
             return 0, json.dumps(tasks, indent=2, sort_keys=True)
@@ -725,7 +828,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 ),
                 output_path=output_path,
             )
-        except (SkillRuntimeError, BackendError) as exc:
+        except (SkillRuntimeError, BackendError, ValueError) as exc:
             return 2, str(exc)
         if output_path is None:
             payload = [
@@ -934,7 +1037,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     return exit_code
 
 
-def _render_scan_summary(root: Path, assessments: tuple[object, ...]) -> str:
+def _render_scan_summary(
+    root: Path,
+    assessments: tuple[object, ...],
+    *,
+    target_file: Path | None = None,
+) -> str:
     backend_info = get_parser_backend_info()
     counts = Counter(
         assessment.candidate.static_state
@@ -948,6 +1056,8 @@ def _render_scan_summary(root: Path, assessments: tuple[object, ...]) -> str:
         f"Parser backend: {backend_info.name}",
         f"Total candidates: {len(assessments)}",
     ]
+    if target_file is not None:
+        lines.insert(3, f"Target file: {target_file}")
 
     for state in ("safe_static", "unknown_static", "risky_static"):
         lines.append(f"{state}: {counts.get(state, 0)}")
@@ -1458,8 +1568,11 @@ def _usage() -> str:
             "  lua-nil-review-agent export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
             "  lua-nil-review-agent apply-autofix [--dry-run] [--case-id CASE_ID] [--file PATH] <autofix-manifest>",
             "  lua-nil-review-agent export-unified-diff [--case-id CASE_ID] [--file PATH] <autofix-manifest> [output]",
+            "  lua-nil-review-agent scan-file <file.lua>",
+            "  lua-nil-review-agent report-file [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <file.lua>",
+            "  lua-nil-review-agent report-file-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--backend-cache PATH] [--backend-config KEY=VALUE] <file.lua>",
             "",
-            "Backend values: heuristic | codex | claude | codeagent",
+            "Backend values: heuristic | codex | claude | gemini | codeagent",
         ]
     )
 

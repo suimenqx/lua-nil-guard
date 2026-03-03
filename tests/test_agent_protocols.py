@@ -82,7 +82,7 @@ def test_stdout_envelope_cli_protocol_builds_expected_command() -> None:
         model="fast-model",
         model_flag="-m",
         prompt="judge this case",
-        prompt_flag="-p",
+        prompt_flag=None,
     )
 
     assert command == (
@@ -93,6 +93,28 @@ def test_stdout_envelope_cli_protocol_builds_expected_command() -> None:
         "features.fast=true",
         "-m",
         "fast-model",
+        "judge this case",
+    )
+
+
+def test_stdout_envelope_cli_protocol_supports_prompt_flags() -> None:
+    builder = get_cli_protocol_builder("stdout_envelope_cli")
+    assert isinstance(builder, StdoutEnvelopeCliProtocol)
+
+    command = builder.build_command(
+        executable="custom-agent",
+        base_args=("--output-format", "json"),
+        config_overrides=(),
+        model=None,
+        model_flag="-m",
+        prompt="judge this case",
+        prompt_flag="-p",
+    )
+
+    assert command == (
+        "custom-agent",
+        "--output-format",
+        "json",
         "-p",
         "judge this case",
     )

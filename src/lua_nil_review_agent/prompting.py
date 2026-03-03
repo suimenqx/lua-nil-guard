@@ -49,6 +49,9 @@ def build_adjudication_prompt(
             "Function summaries:",
             "\n".join(packet.function_summaries) if packet.function_summaries else "(none)",
             "",
+            "Related function contexts:",
+            "\n\n".join(packet.related_function_contexts) if packet.related_function_contexts else "(none)",
+            "",
             "Knowledge facts:",
             "\n".join(packet.knowledge_facts) if packet.knowledge_facts else "(none)",
         ]

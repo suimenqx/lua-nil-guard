@@ -10,6 +10,7 @@ from lua_nil_review_agent.agent_driver_manifest import (
     CODEAGENT_PROVIDER_SPEC,
     CLAUDE_PROVIDER_SPEC,
     CODEX_PROVIDER_SPEC,
+    GEMINI_PROVIDER_SPEC,
     get_builtin_agent_provider_manifest,
     get_builtin_agent_provider_spec,
     load_agent_provider_spec_manifest,
@@ -20,11 +21,33 @@ from lua_nil_review_agent.agent_driver_manifest import (
 def test_builtin_manifests_load_into_builtin_specs() -> None:
     assert get_builtin_agent_provider_manifest("codex") == BUILTIN_AGENT_PROVIDER_MANIFESTS["codex"]
     assert get_builtin_agent_provider_manifest("claude") == BUILTIN_AGENT_PROVIDER_MANIFESTS["claude"]
+    assert get_builtin_agent_provider_manifest("gemini") == BUILTIN_AGENT_PROVIDER_MANIFESTS["gemini"]
     assert get_builtin_agent_provider_manifest("codeagent") == BUILTIN_AGENT_PROVIDER_MANIFESTS["codeagent"]
+    assert BUILTIN_AGENT_PROVIDER_MANIFESTS["gemini"]["capabilities"] == {
+        "supports_model_override": True,
+        "supports_config_overrides": False,
+        "supports_backend_cache": True,
+        "supports_output_schema": False,
+        "supports_output_file": False,
+        "supports_stdout_json": True,
+        "supports_tool_free_prompting": True,
+    }
+    assert BUILTIN_AGENT_PROVIDER_MANIFESTS["codeagent"]["capabilities"] == {
+        "supports_model_override": True,
+        "supports_config_overrides": False,
+        "supports_backend_cache": True,
+        "supports_output_schema": False,
+        "supports_output_file": False,
+        "supports_stdout_json": True,
+        "supports_tool_free_prompting": True,
+    }
 
     assert get_builtin_agent_provider_spec("codex") == CODEX_PROVIDER_SPEC
     assert get_builtin_agent_provider_spec("claude") == CLAUDE_PROVIDER_SPEC
+    assert get_builtin_agent_provider_spec("gemini") == GEMINI_PROVIDER_SPEC
     assert get_builtin_agent_provider_spec("codeagent") == CODEAGENT_PROVIDER_SPEC
+    assert GEMINI_PROVIDER_SPEC.default_executable == "gemini"
+    assert CODEAGENT_PROVIDER_SPEC.default_executable == "gemini"
 
 
 def test_load_agent_provider_spec_manifest_validates_required_fields() -> None:

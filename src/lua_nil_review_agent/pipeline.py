@@ -12,6 +12,7 @@ def build_evidence_packet(
     knowledge_facts: tuple[str, ...],
     origin_candidates: tuple[str, ...],
     observed_guards: tuple[str, ...],
+    related_function_contexts: tuple[str, ...] = (),
 ) -> EvidencePacket:
     """Assemble the normalized context bundle for agent adjudication."""
 
@@ -34,6 +35,7 @@ def build_evidence_packet(
             "origin_candidates": tuple(origin_candidates),
             "observed_guards": tuple(observed_guards),
         },
+        related_function_contexts=tuple(related_function_contexts),
     )
 
 

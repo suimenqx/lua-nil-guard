@@ -51,6 +51,30 @@ def bootstrap_repository(root: str | Path) -> RepositorySnapshot:
     )
 
 
+def find_repository_root_for_file(file_path: str | Path) -> Path:
+    """Resolve the nearest repository root for a Lua file by walking up to config/."""
+
+    target = Path(file_path).resolve(strict=False)
+    if target.suffix.lower() != ".lua":
+        raise ValueError(f"single-file review requires a .lua file: {file_path}")
+    if not target.is_file():
+        raise FileNotFoundError(f"Lua file not found: {file_path}")
+
+    for candidate_root in target.parents:
+        config_dir = candidate_root / "config"
+        if (
+            (config_dir / "sink_rules.json").is_file()
+            and (config_dir / "confidence_policy.json").is_file()
+        ):
+            return candidate_root
+
+    raise ValueError(
+        "Could not locate repository root for Lua file. "
+        "Expected config/sink_rules.json and config/confidence_policy.json in this "
+        f"directory or an ancestor: {file_path}"
+    )
+
+
 def review_source(
     file_path: str | Path,
     source: str,
@@ -80,6 +104,17 @@ def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment
     return tuple(assessments)
 
 
+def review_repository_file(
+    snapshot: RepositorySnapshot,
+    file_path: str | Path,
+) -> tuple[CandidateAssessment, ...]:
+    """Run the current static first-pass review for one Lua file in a repository snapshot."""
+
+    resolved_file = _resolve_snapshot_lua_file(snapshot, file_path)
+    source = resolved_file.read_text(encoding="utf-8")
+    return review_source(resolved_file, source, snapshot.sink_rules)
+
+
 def prepare_evidence_packet(
     assessment: CandidateAssessment,
     source: str,
@@ -87,6 +122,7 @@ def prepare_evidence_packet(
     related_functions: tuple[str, ...] = (),
     function_summaries: tuple[str, ...] = (),
     knowledge_facts: tuple[str, ...] = (),
+    related_function_contexts: tuple[str, ...] = (),
     context_radius: int = 2,
 ) -> EvidencePacket:
     """Convert a locally analyzed candidate into an agent-ready evidence packet."""
@@ -104,6 +140,7 @@ def prepare_evidence_packet(
         knowledge_facts=knowledge_facts,
         origin_candidates=assessment.static_analysis.origin_candidates,
         observed_guards=assessment.static_analysis.observed_guards,
+        related_function_contexts=related_function_contexts,
     )
 
 
@@ -118,6 +155,7 @@ def run_repository_review(
     assessments = review_repository(snapshot)
     summaries = _collect_repository_summaries(snapshot)
     summary_text_by_name = _build_summary_text_index(summaries)
+    function_context_by_name = _build_function_context_index(snapshot, summaries)
     facts = _load_knowledge_facts(snapshot, knowledge_path)
     adjudication_backend = backend or HeuristicAdjudicationBackend()
 
@@ -126,6 +164,33 @@ def run_repository_review(
         assessments,
         adjudication_backend=adjudication_backend,
         summary_text_by_name=summary_text_by_name,
+        function_context_by_name=function_context_by_name,
+        facts=facts,
+    )
+
+
+def run_file_review(
+    snapshot: RepositorySnapshot,
+    file_path: str | Path,
+    *,
+    backend: AdjudicationBackend | None = None,
+    knowledge_path: str | Path | None = None,
+) -> tuple[Verdict, ...]:
+    """Run the current end-to-end review pipeline for one Lua file with repository context."""
+
+    assessments = review_repository_file(snapshot, file_path)
+    summaries = _collect_repository_summaries(snapshot)
+    summary_text_by_name = _build_summary_text_index(summaries)
+    function_context_by_name = _build_function_context_index(snapshot, summaries)
+    facts = _load_knowledge_facts(snapshot, knowledge_path)
+    adjudication_backend = backend or HeuristicAdjudicationBackend()
+
+    return _run_review_from_assessments(
+        snapshot,
+        assessments,
+        adjudication_backend=adjudication_backend,
+        summary_text_by_name=summary_text_by_name,
+        function_context_by_name=function_context_by_name,
         facts=facts,
     )
 
@@ -152,6 +217,7 @@ def benchmark_repository_review(
 
     summaries = _collect_repository_summaries(snapshot)
     summary_text_by_name = _build_summary_text_index(summaries)
+    function_context_by_name = _build_function_context_index(snapshot, summaries)
     facts = (
         _load_knowledge_facts(snapshot, knowledge_path)
         if knowledge_path is not None
@@ -163,6 +229,7 @@ def benchmark_repository_review(
         tuple(assessment for assessment, _ in labeled_assessments),
         adjudication_backend=adjudication_backend,
         summary_text_by_name=summary_text_by_name,
+        function_context_by_name=function_context_by_name,
         facts=facts,
     )
     verdict_by_case_id = {verdict.case_id: verdict for verdict in verdicts}
@@ -290,6 +357,7 @@ def _run_review_from_assessments(
     *,
     adjudication_backend: AdjudicationBackend,
     summary_text_by_name: dict[str, tuple[str, ...]],
+    function_context_by_name: dict[str, tuple[str, ...]],
     facts: tuple[object, ...],
 ) -> tuple[Verdict, ...]:
     sink_rule_by_id = {rule.id: rule for rule in snapshot.sink_rules}
@@ -307,6 +375,11 @@ def _run_review_from_assessments(
                 for function_name in related_functions
                 for summary in summary_text_by_name.get(function_name, ())
             )
+            related_function_contexts = tuple(
+                context
+                for function_name in related_functions
+                for context in function_context_by_name.get(function_name, ())
+            )
             knowledge_facts = tuple(
                 fact
                 for subject in related_functions + (assessment.candidate.function_scope,)
@@ -318,6 +391,7 @@ def _run_review_from_assessments(
                 related_functions=related_functions,
                 function_summaries=function_summaries,
                 knowledge_facts=knowledge_facts,
+                related_function_contexts=related_function_contexts,
             )
             adjudication = adjudication_backend.adjudicate(
                 packet,
@@ -372,6 +446,7 @@ def export_adjudication_tasks(
     sink_rule_by_id = {rule.id: rule for rule in snapshot.sink_rules}
     summaries = _collect_repository_summaries(snapshot)
     summary_text_by_name = _build_summary_text_index(summaries)
+    function_context_by_name = _build_function_context_index(snapshot, summaries)
     facts = _load_knowledge_facts(snapshot, knowledge_path)
     tasks: list[dict[str, object]] = []
 
@@ -384,6 +459,11 @@ def export_adjudication_tasks(
                 for function_name in related_functions
                 for summary in summary_text_by_name.get(function_name, ())
             )
+            related_function_contexts = tuple(
+                context
+                for function_name in related_functions
+                for context in function_context_by_name.get(function_name, ())
+            )
             knowledge_facts = tuple(
                 fact
                 for subject in related_functions + (assessment.candidate.function_scope,)
@@ -395,6 +475,7 @@ def export_adjudication_tasks(
                 related_functions=related_functions,
                 function_summaries=function_summaries,
                 knowledge_facts=knowledge_facts,
+                related_function_contexts=related_function_contexts,
             )
             sink_rule = sink_rule_by_id[assessment.candidate.sink_rule_id]
             tasks.append(
@@ -642,6 +723,53 @@ def _build_summary_text_index(summaries: tuple[object, ...]) -> dict[str, tuple[
     return {key: tuple(value) for key, value in index.items()}
 
 
+def _build_function_context_index(
+    snapshot: RepositorySnapshot,
+    summaries: tuple[object, ...],
+) -> dict[str, tuple[str, ...]]:
+    path_lookup = {str(path): path for path in snapshot.lua_files}
+    source_lookup: dict[str, str] = {}
+    index: dict[str, list[str]] = {}
+
+    for summary in summaries:
+        path_key = str(summary.file)
+        file_path = path_lookup.get(path_key, Path(path_key))
+        if path_key not in source_lookup:
+            try:
+                source_lookup[path_key] = file_path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+        snippet = _extract_function_context_snippet(source_lookup[path_key], summary.line)
+        if not snippet:
+            continue
+        rendered = "\n".join(
+            [
+                f"{summary.function_name} @ {summary.file}:{summary.line}",
+                snippet,
+            ]
+        )
+        index.setdefault(summary.function_name, []).append(rendered)
+
+    return {key: tuple(value) for key, value in index.items()}
+
+
+def _extract_function_context_snippet(
+    source: str,
+    start_line: int,
+    *,
+    max_lines: int = 8,
+) -> str:
+    lines = source.splitlines()
+    start_index = max(0, start_line - 1)
+    if start_index >= len(lines):
+        return ""
+    end_index = min(len(lines), start_index + max_lines)
+    snippet_lines = lines[start_index:end_index]
+    while snippet_lines and not snippet_lines[-1].strip():
+        snippet_lines.pop()
+    return "\n".join(snippet_lines)
+
+
 def _load_knowledge_facts(
     snapshot: RepositorySnapshot,
     knowledge_path: str | Path | None,
@@ -772,6 +900,14 @@ def _build_unified_diff(file_path: Path, original_text: str, updated_text: str) 
 
 def _normalize_path_key(path: str | Path) -> str:
     return str(Path(path).resolve(strict=False))
+
+
+def _resolve_snapshot_lua_file(snapshot: RepositorySnapshot, file_path: str | Path) -> Path:
+    target_key = _normalize_path_key(file_path)
+    for candidate in snapshot.lua_files:
+        if _normalize_path_key(candidate) == target_key:
+            return candidate
+    raise ValueError(f"File is not a discovered Lua source in repository: {file_path}")
 
 
 def _render_text_from_lines(lines: list[str], *, trailing_newline: bool) -> str:

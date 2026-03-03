@@ -41,16 +41,33 @@ BUILTIN_AGENT_PROVIDER_MANIFESTS: dict[str, dict[str, object]] = {
             "supports_tool_free_prompting": True,
         },
     },
-    "codeagent": {
-        "name": "codeagent",
+    "gemini": {
+        "name": "gemini",
         "protocol": "stdout_envelope_cli",
-        "default_executable": "codeagent",
+        "default_executable": "gemini",
         "default_timeout_seconds": 45.0,
         "default_max_attempts": 2,
         "default_fallback_to_uncertain_on_error": True,
         "capabilities": {
             "supports_model_override": True,
-            "supports_config_overrides": True,
+            "supports_config_overrides": False,
+            "supports_backend_cache": True,
+            "supports_output_schema": False,
+            "supports_output_file": False,
+            "supports_stdout_json": True,
+            "supports_tool_free_prompting": True,
+        },
+    },
+    "codeagent": {
+        "name": "codeagent",
+        "protocol": "stdout_envelope_cli",
+        "default_executable": "gemini",
+        "default_timeout_seconds": 45.0,
+        "default_max_attempts": 2,
+        "default_fallback_to_uncertain_on_error": True,
+        "capabilities": {
+            "supports_model_override": True,
+            "supports_config_overrides": False,
             "supports_backend_cache": True,
             "supports_output_schema": False,
             "supports_output_file": False,
@@ -178,11 +195,13 @@ def _optional_manifest_bool(payload: dict[str, object], key: str, *, default: bo
 
 CODEX_PROVIDER_SPEC = get_builtin_agent_provider_spec("codex")
 CLAUDE_PROVIDER_SPEC = get_builtin_agent_provider_spec("claude")
+GEMINI_PROVIDER_SPEC = get_builtin_agent_provider_spec("gemini")
 CODEAGENT_PROVIDER_SPEC = get_builtin_agent_provider_spec("codeagent")
 
 
 BUILTIN_AGENT_PROVIDER_SPECS: dict[str, AgentProviderSpec] = {
     CODEX_PROVIDER_SPEC.name: CODEX_PROVIDER_SPEC,
     CLAUDE_PROVIDER_SPEC.name: CLAUDE_PROVIDER_SPEC,
+    GEMINI_PROVIDER_SPEC.name: GEMINI_PROVIDER_SPEC,
     CODEAGENT_PROVIDER_SPEC.name: CODEAGENT_PROVIDER_SPEC,
 }

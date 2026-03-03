@@ -40,6 +40,7 @@ class BackendError(RuntimeError):
 
 
 AdjudicationBackendFactory = Callable[..., AdjudicationBackend]
+DEFAULT_GEMINI_BACKEND_MODEL = "gemini-3.1-pro-preview"
 
 
 class HeuristicAdjudicationBackend:
@@ -714,7 +715,7 @@ class ClaudeCliBackend(CliAgentBackend):
 
 
 class CodeAgentCliBackend(CliAgentBackend):
-    """CLI backend for a codeagent binary that uses headless JSON output."""
+    """CLI backend for Gemini-compatible binaries that use headless JSON output."""
 
     def __init__(
         self,
@@ -779,7 +780,9 @@ class CodeAgentCliBackend(CliAgentBackend):
         command = self.build_prompt_command(prompt=prompt, cwd=self.workdir)
         raw = self._run_command(command, stdin_text="")
         if not isinstance(raw, str) or not raw.strip():
-            raise BackendError("CodeAgent backend did not return headless JSON on stdout")
+            raise BackendError(
+                f"{self.provider_spec.name} backend did not return headless JSON on stdout"
+            )
         record = self.parse_wrapped_response(raw, case_id=packet.case_id)
         self._store_cached_record(prompt=prompt, record=record)
         return record
@@ -800,11 +803,18 @@ class CodeAgentCliBackend(CliAgentBackend):
         cwd: Path | None,
     ) -> tuple[str, ...]:
         del cwd
+        if self.config_overrides and not self.provider_spec.capabilities.supports_config_overrides:
+            raise BackendError(
+                f"{self.provider_spec.name} backend does not support config overrides"
+            )
         protocol = self.cli_protocol
         if not isinstance(protocol, StdoutEnvelopeCliProtocol):
             raise BackendError(
                 f"Provider {self.provider_spec.name} requires stdout_envelope_cli, got {self.provider_spec.protocol}"
             )
+        prompt_flag = None
+        if Path(self.executable).name == "gemini":
+            prompt_flag = "--prompt"
         return protocol.build_command(
             executable=self.executable,
             base_args=("--output-format", "json"),
@@ -812,23 +822,29 @@ class CodeAgentCliBackend(CliAgentBackend):
             model=self.model,
             model_flag="-m",
             prompt=prompt,
-            prompt_flag="-p",
+            prompt_flag=prompt_flag,
         )
 
     def parse_wrapped_response(self, raw: str, *, case_id: str) -> AdjudicationRecord:
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise BackendError("Invalid CodeAgent headless JSON envelope") from exc
+            raise BackendError(
+                f"Invalid {self.provider_spec.name} headless JSON envelope"
+            ) from exc
         if not isinstance(payload, dict):
-            raise BackendError("CodeAgent headless JSON envelope must be an object")
+            raise BackendError(
+                f"{self.provider_spec.name} headless JSON envelope must be an object"
+            )
 
         if {"prosecutor", "defender", "judge"}.issubset(payload.keys()):
             return self.parse_response(raw, case_id=case_id)
 
         response = payload.get("response")
         if not isinstance(response, str):
-            raise BackendError("CodeAgent headless JSON envelope must contain a string response field")
+            raise BackendError(
+                f"{self.provider_spec.name} headless JSON envelope must contain a string response field"
+            )
 
         return self.parse_response(_strip_markdown_fences(response), case_id=case_id)
 
@@ -954,6 +970,9 @@ def _instantiate_manifest_backed_backend(
         raise ValueError(f"Provider {provider_spec.name} does not support model overrides")
     if config_overrides and not provider_spec.capabilities.supports_config_overrides:
         raise ValueError(f"Provider {provider_spec.name} does not support backend config overrides")
+    resolved_model = model
+    if resolved_model is None and provider_spec.name == "gemini":
+        resolved_model = DEFAULT_GEMINI_BACKEND_MODEL
     options: dict[str, object] = {}
     if timeout_seconds is not None:
         options["timeout_seconds"] = timeout_seconds
@@ -966,7 +985,7 @@ def _instantiate_manifest_backed_backend(
     return backend_type(
         runner=runner,
         workdir=workdir,
-        model=model,
+        model=resolved_model,
         skill_path=skill_path,
         strict_skill=strict_skill,
         executable=executable or provider_spec.default_executable,
@@ -1173,9 +1192,15 @@ def _require_bool(payload: dict[str, object], key: str) -> bool:
 
 def _require_string_tuple(payload: dict[str, object], key: str) -> tuple[str, ...]:
     value = payload[key]
-    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
-        raise TypeError(f"{key} must be a string array")
-    return tuple(value)
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        if not value:
+            return ()
+        return (value,)
+    if isinstance(value, (list, tuple)) and all(isinstance(item, str) for item in value):
+        return tuple(value)
+    raise TypeError(f"{key} must be a string array")
 
 
 def _strip_markdown_fences(text: str) -> str:
@@ -1236,4 +1261,5 @@ register_cli_protocol_backend(CLAUDE_PROVIDER_SPEC.protocol, ClaudeCliBackend)
 register_cli_protocol_backend(CODEAGENT_PROVIDER_SPEC.protocol, CodeAgentCliBackend)
 register_adjudication_backend("codex", build_manifest_backed_backend_factory("codex"))
 register_adjudication_backend("claude", build_manifest_backed_backend_factory("claude"))
+register_adjudication_backend("gemini", build_manifest_backed_backend_factory("gemini"))
 register_adjudication_backend("codeagent", build_manifest_backed_backend_factory("codeagent"))

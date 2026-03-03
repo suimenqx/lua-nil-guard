@@ -22,7 +22,10 @@ def test_cli_help_lists_supported_backends() -> None:
     exit_code, output = run(["--help"])
 
     assert exit_code == 0
-    assert "Backend values: heuristic | codex | claude | codeagent" in output
+    assert "Backend values: heuristic | codex | claude | gemini | codeagent" in output
+    assert "scan-file" in output
+    assert "report-file" in output
+    assert "report-file-json" in output
     assert "--allow-skill-fallback" in output
     assert "--backend-executable PATH" in output
     assert "--backend-manifest PATH" in output
@@ -92,6 +95,58 @@ def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
     assert exit_code == 0
     assert "Lua Nil Review Static Summary" in output
     assert "Parser backend: tree_sitter_local" in output
+    assert "Total candidates: 1" in output
+    assert "safe_static: 1" in output
+
+
+def test_cli_scan_file_reports_static_summary(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    file_path = tmp_path / "src" / "demo.lua"
+    file_path.write_text(
+        "\n".join(
+            [
+                "local username = req.params.username",
+                "if username then",
+                "  return string.match(username, '^a')",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["scan-file", str(file_path)])
+
+    assert exit_code == 0
+    assert "Lua Nil Review Static Summary" in output
+    assert f"Target file: {file_path}" in output
     assert "Total candidates: 1" in output
     assert "safe_static: 1" in output
 
@@ -1694,6 +1749,87 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
     assert "# Lua Nil Risk Report" in output
 
 
+def test_cli_report_file_accepts_lua_file_and_uses_repository_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    file_path = tmp_path / "src" / "demo.lua"
+    file_path.write_text(
+        "\n".join(
+            [
+                "local username = nil",
+                "return string.match(username, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_factory(
+        name: str,
+        *,
+        workdir=None,
+        model=None,
+        skill_path=None,
+        strict_skill=True,
+        executable=None,
+        timeout_seconds=None,
+        max_attempts=None,
+        cache_path=None,
+        config_overrides=(),
+    ):
+        captured["name"] = name
+        captured["workdir"] = workdir
+        captured["model"] = model
+        captured["skill_path"] = skill_path
+        captured["strict_skill"] = strict_skill
+        captured["executable"] = executable
+        captured["timeout_seconds"] = timeout_seconds
+        captured["max_attempts"] = max_attempts
+        captured["cache_path"] = cache_path
+        captured["config_overrides"] = config_overrides
+        return None
+
+    monkeypatch.setattr("lua_nil_review_agent.cli.create_adjudication_backend", fake_factory)
+
+    exit_code, output = run(["report-file", "--backend", "gemini", str(file_path)])
+
+    assert exit_code == 0
+    assert captured["name"] == "gemini"
+    assert captured["workdir"] == tmp_path
+    assert "# Lua Nil Risk Report" in output
+
+
 def test_cli_report_surfaces_backend_errors_without_traceback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1760,3 +1896,23 @@ def test_cli_report_rejects_invalid_backend_config() -> None:
 
     assert exit_code == 2
     assert output == "--backend-config must be in KEY=VALUE form"
+
+
+def test_cli_report_surfaces_unsupported_codeagent_backend_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("lua_nil_review_agent.cli.bootstrap_repository", lambda root: object())
+
+    exit_code, output = run(
+        [
+            "report",
+            "--backend",
+            "codeagent",
+            "--backend-config",
+            "features.fast=true",
+            "demo",
+        ]
+    )
+
+    assert exit_code == 2
+    assert output == "Provider codeagent does not support backend config overrides"

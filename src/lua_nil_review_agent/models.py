@@ -68,6 +68,7 @@ class EvidencePacket:
     function_summaries: tuple[str, ...]
     knowledge_facts: tuple[str, ...]
     static_reasoning: dict[str, tuple[str, ...] | str]
+    related_function_contexts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

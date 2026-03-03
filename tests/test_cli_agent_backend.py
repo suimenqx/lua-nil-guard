@@ -9,9 +9,11 @@ from lua_nil_review_agent.agent_driver_manifest import (
     CODEAGENT_PROVIDER_SPEC,
     CLAUDE_PROVIDER_SPEC,
     CODEX_PROVIDER_SPEC,
+    GEMINI_PROVIDER_SPEC,
     get_builtin_agent_provider_spec,
 )
 from lua_nil_review_agent.agent_backend import (
+    DEFAULT_GEMINI_BACKEND_MODEL,
     BackendError,
     build_manifest_backed_backend_factory,
     build_provider_spec_backed_backend_factory,
@@ -708,7 +710,7 @@ def test_claude_cli_backend_runs_optional_warmup_before_first_request(tmp_path: 
     assert backend.backend_warmup_total_seconds >= 0.0
 
 
-def test_codeagent_cli_backend_uses_codeagent_executable_by_default(tmp_path: Path) -> None:
+def test_codeagent_cli_backend_uses_gemini_executable_by_default(tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 
     def fake_runner(
@@ -762,13 +764,12 @@ def test_codeagent_cli_backend_uses_codeagent_executable_by_default(tmp_path: Pa
     record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
 
     command = captured["command"]
-    assert command[0] == "codeagent"
+    assert command[0] == "gemini"
     assert "exec" not in command
     assert "--output-format" in command
     assert command[command.index("--output-format") + 1] == "json"
-    assert "-p" in command
     assert "-m" in command
-    prompt_argument = command[command.index("-p") + 1]
+    prompt_argument = command[-1]
     assert "Adjudication policy: lua-nil-adjudicator" in prompt_argument
     assert "Use only the prompt payload as admissible evidence." in prompt_argument
     assert captured["stdin_text"] == ""
@@ -776,68 +777,45 @@ def test_codeagent_cli_backend_uses_codeagent_executable_by_default(tmp_path: Pa
     assert record.judge.status == "safe"
 
 
-def test_codeagent_cli_backend_passes_config_overrides_to_prompt_command(tmp_path: Path) -> None:
-    captured: dict[str, object] = {}
+def test_codeagent_cli_backend_direct_prompt_command_uses_gemini_prompt_flag() -> None:
+    backend = CodeAgentCliBackend(model="codeagent-test-model")
 
-    def fake_runner(
-        command: tuple[str, ...],
-        *,
-        stdin_text: str,
-        cwd: Path | None,
-    ) -> str:
-        captured["command"] = command
-        return json.dumps(
-            {
-                "response": json.dumps(
-                    {
-                        "prosecutor": {
-                            "role": "prosecutor",
-                            "status": "uncertain",
-                            "confidence": "low",
-                            "risk_path": [],
-                            "safety_evidence": [],
-                            "missing_evidence": ["stub"],
-                            "recommended_next_action": "expand_context",
-                            "suggested_fix": None,
-                        },
-                        "defender": {
-                            "role": "defender",
-                            "status": "safe",
-                            "confidence": "high",
-                            "risk_path": [],
-                            "safety_evidence": ["guard"],
-                            "missing_evidence": [],
-                            "recommended_next_action": "suppress",
-                            "suggested_fix": None,
-                        },
-                        "judge": {
-                            "status": "safe",
-                            "confidence": "high",
-                            "risk_path": [],
-                            "safety_evidence": ["guard"],
-                            "counterarguments_considered": [],
-                            "suggested_fix": None,
-                            "needs_human": False,
-                        },
-                    }
-                )
-            }
-        )
+    command = backend.build_prompt_command(prompt="judge this case", cwd=None)
 
-    backend = CodeAgentCliBackend(
-        runner=fake_runner,
-        workdir=tmp_path,
-        config_overrides=("features.fast=true", "reasoning.effort='low'"),
+    assert command == (
+        "gemini",
+        "--output-format",
+        "json",
+        "-m",
+        "codeagent-test-model",
+        "--prompt",
+        "judge this case",
     )
-    record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
 
-    command = captured["command"]
-    assert command.count("-c") == 2
-    first = command.index("-c")
-    second = command.index("-c", first + 1)
-    assert command[first + 1] == "features.fast=true"
-    assert command[second + 1] == "reasoning.effort='low'"
-    assert record.judge.status == "safe"
+
+def test_codeagent_cli_backend_uses_positional_prompt_for_non_gemini_executable() -> None:
+    backend = CodeAgentCliBackend(
+        model="codeagent-test-model",
+        executable="custom-agent",
+    )
+
+    command = backend.build_prompt_command(prompt="judge this case", cwd=None)
+
+    assert command == (
+        "custom-agent",
+        "--output-format",
+        "json",
+        "-m",
+        "codeagent-test-model",
+        "judge this case",
+    )
+
+
+def test_codeagent_cli_backend_rejects_unsupported_config_overrides() -> None:
+    backend = CodeAgentCliBackend(config_overrides=("features.fast=true",))
+
+    with pytest.raises(BackendError, match="does not support config overrides"):
+        backend.build_prompt_command(prompt="judge this case", cwd=None)
 
 
 def test_codeagent_cli_backend_accepts_markdown_wrapped_json_response() -> None:
@@ -897,6 +875,62 @@ def test_codeagent_cli_backend_accepts_markdown_wrapped_json_response() -> None:
     assert record.judge.status == "risky"
 
 
+def test_codeagent_cli_backend_coerces_string_fields_into_singleton_arrays() -> None:
+    def fake_runner(
+        command: tuple[str, ...],
+        *,
+        stdin_text: str,
+        cwd: Path | None,
+    ) -> str:
+        del command, stdin_text, cwd
+        return json.dumps(
+            {
+                "response": json.dumps(
+                    {
+                        "prosecutor": {
+                            "role": "Prosecutor",
+                            "status": "risky",
+                            "confidence": "high",
+                            "risk_path": "local username = nil",
+                            "safety_evidence": [],
+                            "missing_evidence": "",
+                            "recommended_next_action": "report",
+                            "suggested_fix": None,
+                        },
+                        "defender": {
+                            "role": "Defender",
+                            "status": "uncertain",
+                            "confidence": "low",
+                            "risk_path": [],
+                            "safety_evidence": [],
+                            "missing_evidence": "no explicit guard",
+                            "recommended_next_action": "expand_context",
+                            "suggested_fix": None,
+                        },
+                        "judge": {
+                            "status": "risky",
+                            "confidence": "high",
+                            "risk_path": "local username = nil",
+                            "safety_evidence": [],
+                            "counterarguments_considered": "direct nil assignment observed",
+                            "suggested_fix": "username = username or ''",
+                            "needs_human": False,
+                        },
+                    }
+                )
+            }
+        )
+
+    backend = CodeAgentCliBackend(runner=fake_runner)
+    record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    assert record.prosecutor.risk_path == ("local username = nil",)
+    assert record.prosecutor.missing_evidence == ()
+    assert record.defender.missing_evidence == ("no explicit guard",)
+    assert record.judge.risk_path == ("local username = nil",)
+    assert record.judge.counterarguments_considered == ("direct nil assignment observed",)
+
+
 def test_codeagent_cli_backend_falls_back_to_uncertain_after_exhausted_retries() -> None:
     attempts = {"count": 0}
 
@@ -929,8 +963,8 @@ def test_codeagent_cli_backend_simulates_headless_json_subprocess(tmp_path: Path
                 "args = sys.argv[1:]",
                 "assert '--output-format' in args",
                 "assert args[args.index('--output-format') + 1] == 'json'",
-                "assert '-p' in args",
-                "assert args[args.index('-p') + 1]",
+                "assert '-p' not in args",
+                "assert args[-1]",
                 "payload = {",
                 "    'prosecutor': {",
                 "        'role': 'prosecutor',",
@@ -983,11 +1017,13 @@ def test_create_adjudication_backend_builds_selected_backend() -> None:
     heuristic = create_adjudication_backend("heuristic")
     codex = create_adjudication_backend("codex", model="o3")
     claude = create_adjudication_backend("claude", model="sonnet")
+    gemini = create_adjudication_backend("gemini")
     codeagent = create_adjudication_backend("codeagent")
 
     assert heuristic.__class__.__name__ == "HeuristicAdjudicationBackend"
     assert isinstance(codex, CodexCliBackend)
     assert isinstance(claude, ClaudeCliBackend)
+    assert isinstance(gemini, CodeAgentCliBackend)
     assert isinstance(codeagent, CodeAgentCliBackend)
 
 
@@ -995,11 +1031,13 @@ def test_backend_factory_registry_exposes_builtin_factories() -> None:
     heuristic_factory = get_adjudication_backend_factory("heuristic")
     codex_factory = get_adjudication_backend_factory("codex")
     claude_factory = get_adjudication_backend_factory("claude")
+    gemini_factory = get_adjudication_backend_factory("gemini")
     codeagent_factory = get_adjudication_backend_factory("codeagent")
 
     assert callable(heuristic_factory)
     assert callable(codex_factory)
     assert callable(claude_factory)
+    assert callable(gemini_factory)
     assert callable(codeagent_factory)
     assert heuristic_factory().__class__.__name__ == "HeuristicAdjudicationBackend"
 
@@ -1013,16 +1051,20 @@ def test_cli_protocol_backend_registry_exposes_builtin_backend_types() -> None:
 def test_build_manifest_backed_backend_factory_uses_provider_protocol_mapping() -> None:
     codex_factory = build_manifest_backed_backend_factory("codex")
     claude_factory = build_manifest_backed_backend_factory("claude")
+    gemini_factory = build_manifest_backed_backend_factory("gemini")
     codeagent_factory = build_manifest_backed_backend_factory("codeagent")
 
     codex = codex_factory(model="o3")
     claude = claude_factory(model="sonnet")
+    gemini = gemini_factory()
     codeagent = codeagent_factory()
 
     assert isinstance(codex, CodexCliBackend)
     assert codex.provider_spec == CODEX_PROVIDER_SPEC
     assert isinstance(claude, ClaudeCliBackend)
     assert claude.provider_spec == CLAUDE_PROVIDER_SPEC
+    assert isinstance(gemini, CodeAgentCliBackend)
+    assert gemini.provider_spec == GEMINI_PROVIDER_SPEC
     assert isinstance(codeagent, CodeAgentCliBackend)
     assert codeagent.provider_spec == CODEAGENT_PROVIDER_SPEC
 
@@ -1154,10 +1196,19 @@ def test_builtin_provider_specs_describe_supported_cli_protocols() -> None:
     assert CLAUDE_PROVIDER_SPEC.capabilities.supports_stdout_json is True
     assert CLAUDE_PROVIDER_SPEC.capabilities.supports_config_overrides is False
 
+    assert get_builtin_agent_provider_spec("gemini") == GEMINI_PROVIDER_SPEC
+    assert GEMINI_PROVIDER_SPEC.protocol == "stdout_envelope_cli"
+    assert GEMINI_PROVIDER_SPEC.capabilities.supports_stdout_json is True
+    assert GEMINI_PROVIDER_SPEC.capabilities.supports_config_overrides is False
+    assert GEMINI_PROVIDER_SPEC.capabilities.supports_output_file is False
+    assert GEMINI_PROVIDER_SPEC.default_executable == "gemini"
+
     assert get_builtin_agent_provider_spec("codeagent") == CODEAGENT_PROVIDER_SPEC
     assert CODEAGENT_PROVIDER_SPEC.protocol == "stdout_envelope_cli"
     assert CODEAGENT_PROVIDER_SPEC.capabilities.supports_stdout_json is True
+    assert CODEAGENT_PROVIDER_SPEC.capabilities.supports_config_overrides is False
     assert CODEAGENT_PROVIDER_SPEC.capabilities.supports_output_file is False
+    assert CODEAGENT_PROVIDER_SPEC.default_executable == "gemini"
 
 
 def test_create_adjudication_backend_passes_skill_path_to_cli_backend(tmp_path: Path) -> None:
@@ -1198,13 +1249,11 @@ def test_create_adjudication_backend_passes_config_overrides() -> None:
 
 
 def test_create_adjudication_backend_passes_config_overrides_to_codeagent() -> None:
-    backend = create_adjudication_backend(
-        "codeagent",
-        config_overrides=("features.fast=true",),
-    )
-
-    assert isinstance(backend, CodeAgentCliBackend)
-    assert backend.config_overrides == ("features.fast=true",)
+    with pytest.raises(ValueError, match="does not support backend config overrides"):
+        create_adjudication_backend(
+            "codeagent",
+            config_overrides=("features.fast=true",),
+        )
 
 
 def test_create_adjudication_backend_rejects_unsupported_config_overrides() -> None:
@@ -1225,6 +1274,17 @@ def test_create_adjudication_backend_uses_codex_like_defaults_for_codeagent() ->
     assert backend.fallback_to_uncertain_on_error is True
 
 
+def test_create_adjudication_backend_uses_builtin_defaults_for_gemini() -> None:
+    backend = create_adjudication_backend("gemini")
+
+    assert isinstance(backend, CodeAgentCliBackend)
+    assert backend.provider_spec == GEMINI_PROVIDER_SPEC
+    assert backend.model == DEFAULT_GEMINI_BACKEND_MODEL
+    assert backend.timeout_seconds == 45.0
+    assert backend.max_attempts == 2
+    assert backend.fallback_to_uncertain_on_error is True
+
+
 def test_create_adjudication_backend_uses_builtin_defaults_for_claude() -> None:
     backend = create_adjudication_backend("claude")
 
@@ -1238,6 +1298,7 @@ def test_create_adjudication_backend_uses_builtin_defaults_for_claude() -> None:
 def test_create_adjudication_backend_attaches_builtin_provider_specs() -> None:
     codex = create_adjudication_backend("codex")
     claude = create_adjudication_backend("claude")
+    gemini = create_adjudication_backend("gemini")
     codeagent = create_adjudication_backend("codeagent")
 
     assert isinstance(codex, CodexCliBackend)
@@ -1247,6 +1308,10 @@ def test_create_adjudication_backend_attaches_builtin_provider_specs() -> None:
     assert isinstance(claude, ClaudeCliBackend)
     assert claude.provider_spec == CLAUDE_PROVIDER_SPEC
     assert claude.executable == CLAUDE_PROVIDER_SPEC.default_executable
+
+    assert isinstance(gemini, CodeAgentCliBackend)
+    assert gemini.provider_spec == GEMINI_PROVIDER_SPEC
+    assert gemini.executable == GEMINI_PROVIDER_SPEC.default_executable
 
     assert isinstance(codeagent, CodeAgentCliBackend)
     assert codeagent.provider_spec == CODEAGENT_PROVIDER_SPEC

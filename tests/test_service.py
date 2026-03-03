@@ -16,6 +16,8 @@ from lua_nil_review_agent.service import (
     clear_backend_cache,
     export_autofix_patches,
     export_autofix_unified_diff,
+    find_repository_root_for_file,
+    run_file_review,
 )
 
 
@@ -170,6 +172,136 @@ def test_bootstrap_repository_loads_config_and_discovers_sources(tmp_path: Path)
     assert len(snapshot.sink_rules) == 1
     assert snapshot.confidence_policy.default_report_min_confidence == "high"
     assert snapshot.lua_files == (src_dir / "demo.lua",)
+
+
+def test_find_repository_root_for_file_walks_up_to_config_directory(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    nested_dir = tmp_path / "src" / "handlers"
+    config_dir.mkdir(parents=True)
+    nested_dir.mkdir(parents=True)
+
+    (config_dir / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (config_dir / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    file_path = nested_dir / "demo.lua"
+    file_path.write_text("return nil\n", encoding="utf-8")
+
+    root = find_repository_root_for_file(file_path)
+
+    assert root == tmp_path
+
+
+def test_run_file_review_uses_repository_context_for_cross_file_summaries(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    target_file = tmp_path / "src" / "demo.lua"
+    target_file.write_text(
+        "\n".join(
+            [
+                "local function parse_user()",
+                "  local username = normalize_name(req.params.username)",
+                "  return string.match(username, '^a')",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "normalizer.lua").write_text(
+        "\n".join(
+            [
+                "function normalize_name(value)",
+                "  value = value or ''",
+                "  return value",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    seen: dict[str, tuple[str, ...]] = {}
+
+    class SummaryAwareBackend:
+        def adjudicate(self, packet, sink_rule):  # noqa: ANN001
+            del sink_rule
+            seen["function_summaries"] = packet.function_summaries
+            seen["related_function_contexts"] = packet.related_function_contexts
+            return AdjudicationRecord(
+                prosecutor=RoleOpinion(
+                    role="prosecutor",
+                    status="uncertain",
+                    confidence="low",
+                    risk_path=(),
+                    safety_evidence=(),
+                    missing_evidence=("summary evidence blocks a clean risk proof",),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                defender=RoleOpinion(
+                    role="defender",
+                    status="safe",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=("normalize_name summary says it normalizes nil",),
+                    missing_evidence=(),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                judge=Verdict(
+                    case_id=packet.case_id,
+                    status="safe",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=("normalize_name summary says it normalizes nil",),
+                    counterarguments_considered=(),
+                    suggested_fix=None,
+                    needs_human=False,
+                ),
+            )
+
+    verdicts = run_file_review(snapshot, target_file, backend=SummaryAwareBackend())
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status == "safe"
+    assert any("normalize_name" in summary for summary in seen["function_summaries"])
+    assert any("normalize_name @ " in context for context in seen["related_function_contexts"])
+    assert any("value = value or ''" in context for context in seen["related_function_contexts"])
 
 
 def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -> None:

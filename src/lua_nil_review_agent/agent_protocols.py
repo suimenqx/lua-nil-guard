@@ -58,14 +58,17 @@ class StdoutEnvelopeCliProtocol:
         model: str | None,
         model_flag: str | None,
         prompt: str,
-        prompt_flag: str,
+        prompt_flag: str | None,
     ) -> tuple[str, ...]:
         command: list[str] = [executable, *base_args]
         for override in config_overrides:
             command.extend(["-c", override])
         if model is not None and model_flag is not None:
             command.extend([model_flag, model])
-        command.extend([prompt_flag, prompt])
+        if prompt_flag is None:
+            command.append(prompt)
+        else:
+            command.extend([prompt_flag, prompt])
         return tuple(command)
 
 
