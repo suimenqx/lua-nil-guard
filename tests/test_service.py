@@ -6,7 +6,7 @@ import shutil
 
 import pytest
 
-from lua_nil_review_agent.agent_backend import BackendError, CodexCliBackend
+from lua_nil_review_agent.agent_backend import BackendError, CliAgentBackend, CodexCliBackend
 from lua_nil_review_agent.models import AdjudicationRecord, AutofixPatch, RoleOpinion, Verdict
 from lua_nil_review_agent.service import (
     apply_autofix_manifest,
@@ -880,6 +880,138 @@ def test_run_file_review_skips_second_hop_for_backends_without_retry_support(
             )
 
     backend = LocalExpansionBackend()
+    verdicts = run_file_review(snapshot, target_file, backend=backend)
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status == "uncertain"
+    assert backend.calls == 1
+    assert any("coerce_name @ " in context for context in backend.seen_contexts[0])
+    assert not any("ensure_name @ " in context for context in backend.seen_contexts[0])
+
+
+def test_run_file_review_skips_second_hop_for_cli_backends_with_internal_retries(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    target_file = tmp_path / "src" / "demo.lua"
+    target_file.write_text(
+        "\n".join(
+            [
+                "local function parse_user()",
+                "  local username = normalize_name(req.params.username)",
+                "  return string.match(username, '^a')",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "normalizer.lua").write_text(
+        "\n".join(
+            [
+                "function normalize_name(value)",
+                "  return coerce_name(value)",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "coerce.lua").write_text(
+        "\n".join(
+            [
+                "function coerce_name(value)",
+                "  return ensure_name(value)",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "ensure.lua").write_text(
+        "\n".join(
+            [
+                "function ensure_name(value)",
+                "  value = value or ''",
+                "  return value",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+
+    class RetryingCliBackend(CliAgentBackend):
+        def __init__(self) -> None:
+            super().__init__(max_attempts=2)
+            self.calls = 0
+            self.seen_contexts: list[tuple[str, ...]] = []
+
+        def adjudicate(self, packet, sink_rule):  # noqa: ANN001
+            del sink_rule
+            self.calls += 1
+            self.seen_contexts.append(packet.related_function_contexts)
+            return AdjudicationRecord(
+                prosecutor=RoleOpinion(
+                    role="prosecutor",
+                    status="uncertain",
+                    confidence="low",
+                    risk_path=(),
+                    safety_evidence=(),
+                    missing_evidence=("CLI backend already has internal retries",),
+                    recommended_next_action="expand_context",
+                    suggested_fix=None,
+                ),
+                defender=RoleOpinion(
+                    role="defender",
+                    status="uncertain",
+                    confidence="low",
+                    risk_path=(),
+                    safety_evidence=(),
+                    missing_evidence=("do not stack a second review retry",),
+                    recommended_next_action="expand_context",
+                    suggested_fix=None,
+                ),
+                judge=Verdict(
+                    case_id=packet.case_id,
+                    status="uncertain",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=(),
+                    counterarguments_considered=("internal retries already configured",),
+                    suggested_fix=None,
+                    needs_human=True,
+                ),
+            )
+
+    backend = RetryingCliBackend()
     verdicts = run_file_review(snapshot, target_file, backend=backend)
 
     assert len(verdicts) == 1
