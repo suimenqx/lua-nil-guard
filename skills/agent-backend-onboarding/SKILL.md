@@ -1,6 +1,6 @@
 ---
 name: agent-backend-onboarding
-description: Onboard new CLI-based agent backends into this lua-nil-review-agent repository with minimal manual branching. Use when adding a new provider, probing a new agent CLI, deciding whether it fits schema_file_cli, stdout_envelope_cli, or stdout_structured_cli, generating a provider manifest, validating runtime compatibility, smoke-testing report or benchmark flows, or scaffolding the exact code touchpoints for a new protocol.
+description: Onboard new CLI-based agent backends into this lua-nil-review-agent repository with minimal manual branching. Use when adding a new provider, probing a new agent CLI, deciding whether it fits schema_file_cli, stdout_envelope_cli, or stdout_structured_cli, classifying whether a provider can directly integrate in restricted or offline environments, generating a provider manifest, validating runtime compatibility, smoke-testing report or benchmark flows, or scaffolding the exact code touchpoints for a new protocol.
 ---
 
 # Agent Backend Onboarding
@@ -18,7 +18,9 @@ Prefer the smallest possible change set. Reuse an existing protocol unless the n
 ## Workflow
 
 1. Gather concrete CLI facts before editing code.
-Run the provider's `--help` and a smallest non-interactive probe first.
+Run the provider's `--help` and a smallest non-interactive probe first when the environment allows it.
+
+If the environment cannot execute the provider, collect documented transport facts instead and use the offline classification path before writing any runtime code.
 
 Confirm these facts:
 
@@ -28,6 +30,28 @@ Confirm these facts:
 - whether the CLI can emit JSON
 - where the structured payload actually appears: file, top-level stdout JSON, or a field inside an envelope
 - whether a cold-start warm-up is needed for stability
+
+## Offline Classification Path
+
+Use this path when the provider cannot be invoked yet, such as an internal-network-only agent or a CLI unavailable in the current environment.
+
+Classify transport fit from observed or documented behavior first:
+
+```bash
+python3 skills/agent-backend-onboarding/scripts/classify_provider_fit.py \
+  my-agent \
+  --prompt-mode flag_arg \
+  --output-mode stdout_envelope \
+  --envelope-field response
+```
+
+Read [references/offline-classification.md](references/offline-classification.md) if you only have docs, screenshots, or copied `--help` output.
+
+Use the classification result like this:
+
+- `status = direct-fit`: generate a manifest and defer only the live smoke test
+- `status = insufficient-evidence`: stop and gather the missing transport facts
+- `status = needs-runtime-changes`: do not claim direct support; plan a protocol/backend extension first
 
 2. Reuse an existing protocol when possible.
 Read [references/protocol-selection.md](references/protocol-selection.md) if the fit is not obvious.
@@ -108,5 +132,7 @@ Treat the onboarding as complete only when all of these are true:
 ## Resources
 
 - `scripts/generate_provider_manifest.py`: create a valid provider manifest with protocol-aligned defaults
+- `scripts/classify_provider_fit.py`: classify whether a provider can directly reuse an existing runtime protocol without invoking it
 - [references/protocol-selection.md](references/protocol-selection.md): decide whether an existing protocol fits
+- [references/offline-classification.md](references/offline-classification.md): classify direct-fit viability when the provider cannot be executed yet
 - [references/runtime-touchpoints.md](references/runtime-touchpoints.md): exact files and tests to touch when manifest-only onboarding is not enough
