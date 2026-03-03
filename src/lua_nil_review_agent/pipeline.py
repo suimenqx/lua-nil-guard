@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .models import CandidateCase, ConfidencePolicy, EvidencePacket, EvidenceTarget, Verdict
+from .models import CandidateCase, ConfidencePolicy, EvidencePacket, EvidenceTarget, StaticProof, Verdict
 
 
 def build_evidence_packet(
@@ -15,6 +15,7 @@ def build_evidence_packet(
     origin_usage_modes: tuple[str, ...] = (),
     origin_return_slots: tuple[int, ...] = (),
     related_function_contexts: tuple[str, ...] = (),
+    static_proofs: tuple[StaticProof, ...] = (),
 ) -> EvidencePacket:
     """Assemble the normalized context bundle for agent adjudication."""
 
@@ -38,8 +39,11 @@ def build_evidence_packet(
             "origin_usage_modes": tuple(origin_usage_modes),
             "origin_return_slots": tuple(str(slot) for slot in origin_return_slots),
             "observed_guards": tuple(observed_guards),
+            "proof_kinds": tuple(proof.kind for proof in static_proofs),
+            "proof_summaries": tuple(proof.summary for proof in static_proofs),
         },
         related_function_contexts=tuple(related_function_contexts),
+        static_proofs=tuple(static_proofs),
     )
 
 

@@ -11,7 +11,7 @@ from .knowledge import (
     contract_applies_to_top_level_phase,
     contract_applies_to_sink,
 )
-from .models import CandidateCase, FunctionContract, StaticAnalysisResult
+from .models import CandidateCase, FunctionContract, StaticAnalysisResult, StaticProof
 from .summaries import detect_module_name
 
 
@@ -38,13 +38,14 @@ def analyze_candidate(
             origin_candidates=(candidate.expression,),
             origin_usage_modes=("direct_sink",),
             origin_return_slots=(1,),
+            proofs=(),
         )
 
     lines = source.splitlines()
     prior_lines = lines[: max(0, candidate.line - 1)]
     origin_context = _find_last_assignment(prior_lines, candidate.symbol)
     origin = origin_context[0] if origin_context is not None else None
-    observed_guards: list[str] = []
+    proofs: list[StaticProof] = []
     current_module = detect_module_name(source)
     effective_transparent_return_wrappers = (
         dict(transparent_return_wrappers)
@@ -55,11 +56,11 @@ def analyze_candidate(
     current_top_level_phase = _top_level_phase_for_candidate(source, candidate)
 
     if _has_active_positive_guard(prior_lines, candidate.symbol):
-        observed_guards.append(f"if {candidate.symbol} then")
+        proofs.append(_build_positive_guard_proof(candidate.symbol))
     if _has_early_exit_guard(prior_lines, candidate.symbol):
-        observed_guards.append(f"if not {candidate.symbol} then return")
+        proofs.append(_build_early_exit_guard_proof(candidate.symbol))
     if _has_active_assert(prior_lines, candidate.symbol):
-        observed_guards.append(f"assert({candidate.symbol})")
+        proofs.append(_build_assert_guard_proof(candidate.symbol))
     contract_guard = _active_contract_guard(
         prior_lines,
         candidate.symbol,
@@ -72,10 +73,11 @@ def analyze_candidate(
         sink_name=candidate.sink_name,
     )
     if contract_guard is not None:
-        observed_guards.append(contract_guard)
+        proofs.append(contract_guard)
     return_contract_guard = _origin_return_contract_guard(
         prior_lines,
         origin_context,
+        subject=candidate.symbol,
         function_contracts=function_contracts,
         current_module=current_module,
         current_function_scope=candidate.function_scope,
@@ -86,11 +88,13 @@ def analyze_candidate(
         transparent_return_wrappers=effective_transparent_return_wrappers,
     )
     if return_contract_guard is not None:
-        observed_guards.append(return_contract_guard)
+        proofs.append(return_contract_guard)
     if _has_defaulting_origin(origin):
-        observed_guards.append(f"{candidate.symbol} = {candidate.symbol} or ...")
+        proofs.append(_build_defaulting_origin_proof(candidate.symbol, origin))
 
-    state = "safe_static" if observed_guards else "unknown_static"
+    deduped_proofs = _dedupe_proofs(tuple(proofs))
+    observed_guards = tuple(proof.summary for proof in deduped_proofs)
+    state = "safe_static" if deduped_proofs else "unknown_static"
     origins = (origin,) if origin is not None else (candidate.expression,)
     origin_usage_modes = (
         (origin_context[1],)
@@ -108,6 +112,7 @@ def analyze_candidate(
         origin_candidates=origins,
         origin_usage_modes=origin_usage_modes,
         origin_return_slots=origin_return_slots,
+        proofs=deduped_proofs,
     )
 
 
@@ -277,6 +282,420 @@ def _has_defaulting_origin(origin: str | None) -> bool:
     return True
 
 
+def _build_positive_guard_proof(symbol: str) -> StaticProof:
+    return StaticProof(
+        kind="direct_guard",
+        summary=f"if {symbol} then",
+        subject=symbol,
+        source_symbol=symbol,
+        provenance=(f"an active positive branch requires `{symbol}` to be truthy",),
+        depth=0,
+    )
+
+
+def _build_early_exit_guard_proof(symbol: str) -> StaticProof:
+    return StaticProof(
+        kind="early_exit_guard",
+        summary=f"if not {symbol} then return",
+        subject=symbol,
+        source_symbol=symbol,
+        provenance=(f"the nil branch for `{symbol}` exits before the sink",),
+        depth=0,
+    )
+
+
+def _build_assert_guard_proof(symbol: str) -> StaticProof:
+    return StaticProof(
+        kind="assert_guard",
+        summary=f"assert({symbol})",
+        subject=symbol,
+        source_symbol=symbol,
+        provenance=(f"`assert` aborts execution if `{symbol}` is nil",),
+        depth=0,
+    )
+
+
+def _build_defaulting_origin_proof(symbol: str, origin: str | None) -> StaticProof:
+    return StaticProof(
+        kind="local_defaulting",
+        summary=f"{symbol} = {symbol} or ...",
+        subject=symbol,
+        source_symbol=symbol,
+        source_call=origin,
+        provenance=(
+            f"assignment `{origin or ''}` uses Lua's non-nil defaulting idiom",
+        ),
+        depth=0,
+    )
+
+
+def _dedupe_proofs(proofs: tuple[StaticProof, ...]) -> tuple[StaticProof, ...]:
+    unique: list[StaticProof] = []
+    seen: set[tuple[object, ...]] = set()
+    for proof in proofs:
+        key = (
+            proof.kind,
+            proof.summary,
+            proof.subject,
+            proof.source_symbol,
+            proof.source_call,
+            proof.source_function,
+            proof.supporting_summaries,
+            proof.provenance,
+            proof.depth,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(proof)
+    return tuple(unique)
+
+
+def _contract_matching_symbol_index(
+    contract: FunctionContract,
+    args: tuple[str, ...],
+    symbol: str,
+) -> int | None:
+    for index in contract.ensures_non_nil_args:
+        if 1 <= index <= len(args) and args[index - 1].strip() == symbol:
+            return index
+    return None
+
+
+def _build_guarded_arg_supporting_proofs(
+    required_positions: tuple[int, ...],
+    args: tuple[str, ...],
+    *,
+    lines: list[str],
+    return_contracts: dict[str, FunctionContract],
+    function_contracts: tuple[FunctionContract, ...],
+    current_module: str | None,
+    current_function_scope: str,
+    current_top_level_phase: str | None,
+    current_scope_kind: str | None,
+    sink_rule_id: str,
+    sink_name: str,
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]],
+    remaining_chain_depth: int,
+) -> tuple[StaticProof, ...] | None:
+    proofs: list[StaticProof] = []
+    for index in required_positions:
+        if index < 1 or index > len(args):
+            return None
+        symbol = args[index - 1].strip()
+        if not _IDENTIFIER_RE.match(symbol):
+            return None
+        proof = _find_symbol_proof(
+            lines,
+            symbol,
+            return_contracts=return_contracts,
+            function_contracts=function_contracts,
+            current_module=current_module,
+            current_function_scope=current_function_scope,
+            current_top_level_phase=current_top_level_phase,
+            current_scope_kind=current_scope_kind,
+            sink_rule_id=sink_rule_id,
+            sink_name=sink_name,
+            transparent_return_wrappers=transparent_return_wrappers,
+            remaining_chain_depth=remaining_chain_depth,
+        )
+        if proof is None:
+            return None
+        proofs.append(proof)
+    return tuple(proofs)
+
+
+def _find_symbol_proof(
+    lines: list[str],
+    symbol: str,
+    *,
+    return_contracts: dict[str, FunctionContract],
+    function_contracts: tuple[FunctionContract, ...],
+    current_module: str | None,
+    current_function_scope: str,
+    current_top_level_phase: str | None,
+    current_scope_kind: str | None,
+    sink_rule_id: str,
+    sink_name: str,
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]],
+    remaining_chain_depth: int,
+    allow_terminal_origin: bool = False,
+) -> StaticProof | None:
+    if not _IDENTIFIER_RE.match(symbol):
+        return None
+    if _has_active_positive_guard(lines, symbol):
+        return _build_positive_guard_proof(symbol)
+    if _has_early_exit_guard(lines, symbol):
+        return _build_early_exit_guard_proof(symbol)
+    if _has_active_assert(lines, symbol):
+        return _build_assert_guard_proof(symbol)
+    contract_proof = _active_contract_guard(
+        lines,
+        symbol,
+        function_contracts=function_contracts,
+        current_module=current_module,
+        current_function_scope=current_function_scope,
+        current_top_level_phase=current_top_level_phase,
+        current_scope_kind=current_scope_kind,
+        sink_rule_id=sink_rule_id,
+        sink_name=sink_name,
+    )
+    if contract_proof is not None:
+        return contract_proof
+
+    if remaining_chain_depth <= 0 and not allow_terminal_origin:
+        return None
+
+    origin_context = _find_last_assignment(lines, symbol)
+    if origin_context is None:
+        return None
+    return _build_origin_return_proof(
+        lines,
+        symbol,
+        origin_context,
+        return_contracts=return_contracts,
+        function_contracts=function_contracts,
+        current_module=current_module,
+        current_function_scope=current_function_scope,
+        current_top_level_phase=current_top_level_phase,
+        current_scope_kind=current_scope_kind,
+        sink_rule_id=sink_rule_id,
+        sink_name=sink_name,
+        transparent_return_wrappers=transparent_return_wrappers,
+        remaining_chain_depth=max(0, remaining_chain_depth),
+    )
+
+
+def _build_origin_return_proof(
+    lines: list[str],
+    subject: str,
+    origin_context: tuple[str, str, int],
+    *,
+    return_contracts: dict[str, FunctionContract],
+    function_contracts: tuple[FunctionContract, ...],
+    current_module: str | None,
+    current_function_scope: str,
+    current_top_level_phase: str | None,
+    current_scope_kind: str | None,
+    sink_rule_id: str,
+    sink_name: str,
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]],
+    remaining_chain_depth: int,
+    consume_chain_depth: bool = True,
+) -> StaticProof | None:
+    origin, usage_mode, return_slot = origin_context
+    if origin.strip() == subject:
+        return None
+
+    parsed_call = _parse_simple_call(_strip_lua_comment(origin).strip())
+    if parsed_call is None:
+        if _has_defaulting_origin(origin):
+            return _build_defaulting_origin_proof(subject, origin)
+        return None
+
+    raw_name, args = parsed_call
+    resolved_name = _resolve_contract_name(
+        raw_name,
+        current_module=current_module,
+        known_contract_names=frozenset(return_contracts),
+    )
+    contract = return_contracts.get(resolved_name)
+    if contract is not None and contract_applies_to_call(
+        contract,
+        arg_count=len(args),
+        arg_values=args,
+        call_role="assignment_origin",
+        usage_mode=usage_mode,
+        return_slot=return_slot,
+    ):
+        required_args = _required_return_args_for_slot(contract, return_slot)
+        if required_args is not None and _contract_has_all_required_args(required_args, args):
+            guarded_args = _required_guarded_args_for_slot(contract, return_slot)
+            supporting_proofs = _build_guarded_arg_supporting_proofs(
+                guarded_args,
+                args,
+                lines=lines,
+                return_contracts=return_contracts,
+                function_contracts=function_contracts,
+                current_module=current_module,
+                current_function_scope=current_function_scope,
+                current_top_level_phase=current_top_level_phase,
+                current_scope_kind=current_scope_kind,
+                sink_rule_id=sink_rule_id,
+                sink_name=sink_name,
+                transparent_return_wrappers=transparent_return_wrappers,
+                remaining_chain_depth=max(
+                    0,
+                    remaining_chain_depth - (1 if consume_chain_depth else 0),
+                ),
+            )
+            if supporting_proofs is not None:
+                supporting_summaries = tuple(proof.summary for proof in supporting_proofs)
+                provenance = (
+                    f"`{origin}` feeds the sink through `{resolved_name}` return slot {return_slot}",
+                ) + tuple(
+                    line
+                    for proof in supporting_proofs
+                    for line in _proof_provenance_lines(proof)
+                )
+                return StaticProof(
+                    kind=(
+                        "chained_return_contract"
+                        if any(proof.depth > 0 for proof in supporting_proofs)
+                        else "return_contract"
+                    ),
+                    summary=f"{resolved_name}(...) returns non-nil",
+                    subject=subject,
+                    source_symbol=(
+                        args[required_args[0] - 1].strip()
+                        if required_args and 1 <= required_args[0] <= len(args)
+                        else None
+                    ),
+                    source_call=origin,
+                    source_function=resolved_name,
+                    supporting_summaries=supporting_summaries,
+                    provenance=provenance,
+                    depth=0 if not supporting_proofs else 1 + max(proof.depth for proof in supporting_proofs),
+                )
+
+    wrapper_name = _resolve_contract_name(
+        raw_name,
+        current_module=current_module,
+        known_contract_names=frozenset(transparent_return_wrappers),
+    )
+    return _build_wrapper_return_proof(
+        wrapper_name,
+        args,
+        subject=subject,
+        return_slot=return_slot,
+        source_call=origin,
+        lines=lines,
+        return_contracts=return_contracts,
+        function_contracts=function_contracts,
+        current_module=current_module,
+        current_function_scope=current_function_scope,
+        current_top_level_phase=current_top_level_phase,
+        current_scope_kind=current_scope_kind,
+        sink_rule_id=sink_rule_id,
+        sink_name=sink_name,
+        transparent_return_wrappers=transparent_return_wrappers,
+        remaining_chain_depth=remaining_chain_depth,
+    )
+
+
+def _build_wrapper_return_proof(
+    resolved_name: str,
+    args: tuple[str, ...],
+    *,
+    subject: str,
+    return_slot: int,
+    source_call: str,
+    lines: list[str],
+    return_contracts: dict[str, FunctionContract],
+    function_contracts: tuple[FunctionContract, ...],
+    current_module: str | None,
+    current_function_scope: str,
+    current_top_level_phase: str | None,
+    current_scope_kind: str | None,
+    sink_rule_id: str,
+    sink_name: str,
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]],
+    remaining_chain_depth: int,
+) -> StaticProof | None:
+    passthrough_index = _transparent_wrapper_arg_for_slot(
+        transparent_return_wrappers.get(resolved_name),
+        return_slot,
+    )
+    if passthrough_index is None:
+        return None
+    if passthrough_index == 0:
+        return StaticProof(
+            kind="wrapper_defaulting",
+            summary=f"{resolved_name}(...) preserves or defaults to non-nil",
+            subject=subject,
+            source_call=source_call,
+            source_function=resolved_name,
+            provenance=(
+                f"`{resolved_name}` return slot {return_slot} falls back to a built-in non-nil value",
+            ),
+            depth=0,
+        )
+    if passthrough_index < 1 or passthrough_index > len(args):
+        return None
+
+    passthrough_value = args[passthrough_index - 1].strip()
+    if not passthrough_value or passthrough_value == resolved_name:
+        return None
+    if _is_non_nil_literal(passthrough_value):
+        return StaticProof(
+            kind="wrapper_defaulting",
+            summary=f"{resolved_name}(...) preserves or defaults to non-nil",
+            subject=subject,
+            source_call=source_call,
+            source_function=resolved_name,
+            provenance=(
+                f"`{resolved_name}` receives non-nil literal `{passthrough_value}` as fallback input",
+            ),
+            depth=0,
+        )
+    if not _IDENTIFIER_RE.match(passthrough_value):
+        if _has_defaulting_origin(passthrough_value):
+            return StaticProof(
+                kind="wrapper_defaulting",
+                summary=f"{resolved_name}(...) preserves or defaults to non-nil",
+                subject=subject,
+                source_call=source_call,
+                source_function=resolved_name,
+                source_symbol=passthrough_value,
+                provenance=(
+                    f"`{resolved_name}` forwards `{passthrough_value}`, which already uses defaulting",
+                ),
+                depth=0,
+            )
+        return None
+
+    next_depth = remaining_chain_depth - 1
+    if next_depth < 0:
+        return None
+    nested_proof = _find_symbol_proof(
+        lines,
+        passthrough_value,
+        return_contracts=return_contracts,
+        function_contracts=function_contracts,
+        current_module=current_module,
+        current_function_scope=current_function_scope,
+        current_top_level_phase=current_top_level_phase,
+        current_scope_kind=current_scope_kind,
+        sink_rule_id=sink_rule_id,
+        sink_name=sink_name,
+        transparent_return_wrappers=transparent_return_wrappers,
+        remaining_chain_depth=next_depth,
+        allow_terminal_origin=next_depth == 0,
+    )
+    if nested_proof is None:
+        return None
+
+    return StaticProof(
+        kind="wrapper_passthrough",
+        summary=f"{resolved_name}(...) preserves or defaults to non-nil",
+        subject=subject,
+        source_symbol=passthrough_value,
+        source_call=source_call,
+        source_function=resolved_name,
+        supporting_summaries=(nested_proof.summary,),
+        provenance=(
+            f"`{resolved_name}` return slot {return_slot} forwards argument {passthrough_index} `{passthrough_value}`",
+        ) + tuple(_proof_provenance_lines(nested_proof)),
+        depth=1 + nested_proof.depth,
+    )
+
+
+def _proof_provenance_lines(proof: StaticProof) -> tuple[str, ...]:
+    if proof.provenance:
+        return proof.provenance
+    return (proof.summary,)
+
+
 def _active_contract_guard(
     lines: list[str],
     symbol: str,
@@ -288,7 +707,7 @@ def _active_contract_guard(
     current_scope_kind: str | None,
     sink_rule_id: str,
     sink_name: str,
-) -> str | None:
+) -> StaticProof | None:
     contract_by_name = {
         contract.qualified_name: contract
         for contract in function_contracts
@@ -307,7 +726,7 @@ def _active_contract_guard(
         return None
 
     line_paths, final_path = _scan_branch_paths(lines)
-    active_guard: str | None = None
+    active_guard: StaticProof | None = None
     known_contract_names = frozenset(contract_by_name)
 
     for line, path in zip(lines, line_paths):
@@ -342,8 +761,20 @@ def _active_contract_guard(
             call_role="guard_call",
         ):
             continue
-        if _contract_matches_symbol(contract, args, symbol):
-            active_guard = f"{resolved_name}({symbol})"
+        matching_index = _contract_matching_symbol_index(contract, args, symbol)
+        if matching_index is not None:
+            active_guard = StaticProof(
+                kind="contract_guard",
+                summary=f"{resolved_name}({symbol})",
+                subject=symbol,
+                source_symbol=symbol,
+                source_call=stripped,
+                source_function=resolved_name,
+                provenance=(
+                    f"`{resolved_name}` guarantees argument {matching_index} is non-nil",
+                ),
+                depth=0,
+            )
 
     return active_guard
 
@@ -352,6 +783,7 @@ def _origin_return_contract_guard(
     lines: list[str],
     origin_context: tuple[str, str, int] | None,
     *,
+    subject: str,
     function_contracts: tuple[FunctionContract, ...],
     current_module: str | None,
     current_function_scope: str,
@@ -360,11 +792,9 @@ def _origin_return_contract_guard(
     sink_rule_id: str,
     sink_name: str,
     transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]],
-) -> str | None:
+) -> StaticProof | None:
     if origin_context is None:
         return None
-    origin, usage_mode, return_slot = origin_context
-
     contract_by_name = {
         contract.qualified_name: contract
         for contract in function_contracts
@@ -382,55 +812,10 @@ def _origin_return_contract_guard(
             current_sink_name=sink_name,
         )
     }
-    parsed_call = _parse_simple_call(_strip_lua_comment(origin).strip())
-    if parsed_call is None:
-        return None
-
-    raw_name, args = parsed_call
-    resolved_name = _resolve_contract_name(
-        raw_name,
-        current_module=current_module,
-        known_contract_names=frozenset(contract_by_name),
-    )
-    contract = contract_by_name.get(resolved_name)
-    if contract is not None and contract_applies_to_call(
-        contract,
-        arg_count=len(args),
-        arg_values=args,
-        call_role="assignment_origin",
-        usage_mode=usage_mode,
-        return_slot=return_slot,
-    ):
-        required_args = _required_return_args_for_slot(contract, return_slot)
-        if required_args is not None and _contract_has_all_required_args(required_args, args):
-            guarded_args = _required_guarded_args_for_slot(contract, return_slot)
-            if _contract_has_guarded_args(
-                guarded_args,
-                args,
-                lines=lines,
-                return_contracts=contract_by_name,
-                function_contracts=function_contracts,
-                current_module=current_module,
-                current_function_scope=current_function_scope,
-                current_top_level_phase=current_top_level_phase,
-                current_scope_kind=current_scope_kind,
-                sink_rule_id=sink_rule_id,
-                sink_name=sink_name,
-                transparent_return_wrappers=transparent_return_wrappers,
-                remaining_chain_depth=_MAX_CHAINED_RETURN_PROOF_DEPTH,
-            ):
-                return f"{resolved_name}(...) returns non-nil"
-
-    wrapper_name = _resolve_contract_name(
-        raw_name,
-        current_module=current_module,
-        known_contract_names=frozenset(transparent_return_wrappers),
-    )
-    if _transparent_wrapper_returns_safe_value(
-        wrapper_name,
-        args,
-        return_slot=return_slot,
-        lines=lines,
+    return _build_origin_return_proof(
+        lines,
+        subject,
+        origin_context,
         return_contracts=contract_by_name,
         function_contracts=function_contracts,
         current_module=current_module,
@@ -441,9 +826,8 @@ def _origin_return_contract_guard(
         sink_name=sink_name,
         transparent_return_wrappers=transparent_return_wrappers,
         remaining_chain_depth=_MAX_CHAINED_RETURN_PROOF_DEPTH,
-    ):
-        return f"{wrapper_name}(...) preserves or defaults to non-nil"
-    return None
+        consume_chain_depth=False,
+    )
 
 
 def _split_top_level_values(values_text: str) -> list[str]:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lua_nil_review_agent.models import CandidateCase, ConfidencePolicy, Verdict
+from lua_nil_review_agent.models import CandidateCase, ConfidencePolicy, StaticProof, Verdict
 from lua_nil_review_agent.pipeline import build_evidence_packet, should_report
 
 
@@ -28,6 +28,15 @@ def test_build_evidence_packet_preserves_core_case_data() -> None:
         origin_candidates=("req.params.username",),
         observed_guards=(),
         origin_return_slots=(1,),
+        static_proofs=(
+            StaticProof(
+                kind="direct_guard",
+                summary="if username then",
+                subject="username",
+                source_symbol="username",
+                provenance=("an active positive branch requires `username` to be truthy",),
+            ),
+        ),
     )
 
     assert packet.case_id == "case_001"
@@ -36,6 +45,9 @@ def test_build_evidence_packet_preserves_core_case_data() -> None:
     assert packet.target.arg_index == 1
     assert packet.static_reasoning["origin_candidates"] == ("req.params.username",)
     assert packet.static_reasoning["origin_return_slots"] == ("1",)
+    assert packet.static_reasoning["proof_kinds"] == ("direct_guard",)
+    assert packet.static_reasoning["proof_summaries"] == ("if username then",)
+    assert packet.static_proofs[0].subject == "username"
     assert packet.knowledge_facts == (
         "normalize_name always returns string",
         "req.params may be nil",

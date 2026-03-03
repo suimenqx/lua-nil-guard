@@ -246,6 +246,7 @@ def prepare_evidence_packet(
         origin_return_slots=assessment.static_analysis.origin_return_slots,
         observed_guards=assessment.static_analysis.observed_guards,
         related_function_contexts=related_function_contexts,
+        static_proofs=assessment.static_analysis.proofs,
     )
 
 

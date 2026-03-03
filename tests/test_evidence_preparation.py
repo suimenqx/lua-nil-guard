@@ -41,4 +41,8 @@ def test_prepare_evidence_packet_uses_static_assessment_context() -> None:
     assert "string.match" in packet.local_context
     assert packet.static_reasoning["state"] == "safe_static"
     assert packet.static_reasoning["observed_guards"] == ("if username then",)
+    assert packet.static_reasoning["proof_kinds"] == ("direct_guard",)
     assert packet.static_reasoning["origin_candidates"] == ("req.params.username",)
+    assert len(packet.static_proofs) == 1
+    assert packet.static_proofs[0].summary == "if username then"
+    assert packet.static_proofs[0].subject == "username"

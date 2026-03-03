@@ -69,6 +69,7 @@ class EvidencePacket:
     knowledge_facts: tuple[str, ...]
     static_reasoning: dict[str, tuple[str, ...] | str]
     related_function_contexts: tuple[str, ...] = ()
+    static_proofs: tuple["StaticProof", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +120,22 @@ class StaticAnalysisResult:
     origin_candidates: tuple[str, ...]
     origin_usage_modes: tuple[str, ...] = ()
     origin_return_slots: tuple[int, ...] = ()
+    proofs: tuple["StaticProof", ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class StaticProof:
+    """A structured explanation for one local non-nil proof."""
+
+    kind: str
+    summary: str
+    subject: str
+    source_symbol: str | None = None
+    source_call: str | None = None
+    source_function: str | None = None
+    supporting_summaries: tuple[str, ...] = ()
+    provenance: tuple[str, ...] = ()
+    depth: int = 0
 
 
 @dataclass(frozen=True, slots=True)

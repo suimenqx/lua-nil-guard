@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .models import EvidencePacket, SinkRule
+from .models import EvidencePacket, SinkRule, StaticProof
 from .skill_runtime import compile_adjudicator_skill_header
 
 
@@ -41,6 +41,10 @@ def build_adjudication_prompt(
             f"- origin_usage_modes: {', '.join(packet.static_reasoning.get('origin_usage_modes', ())) or '(none)'}",
             f"- origin_return_slots: {', '.join(packet.static_reasoning.get('origin_return_slots', ())) or '(none)'}",
             f"- observed_guards: {', '.join(packet.static_reasoning['observed_guards']) or '(none)'}",
+            f"- proof_kinds: {', '.join(packet.static_reasoning.get('proof_kinds', ())) or '(none)'}",
+            "",
+            "Structured static proofs:",
+            _render_static_proofs(packet.static_proofs),
             "",
             "Local context:",
             packet.local_context or "(none)",
@@ -58,3 +62,28 @@ def build_adjudication_prompt(
             "\n".join(packet.knowledge_facts) if packet.knowledge_facts else "(none)",
         ]
     )
+
+
+def _render_static_proofs(proofs: tuple[StaticProof, ...]) -> str:
+    if not proofs:
+        return "(none)"
+
+    chunks: list[str] = []
+    for proof in proofs:
+        lines = [
+            f"- [{proof.kind}] {proof.summary}",
+            f"  subject: {proof.subject}",
+        ]
+        if proof.source_function:
+            lines.append(f"  source_function: {proof.source_function}")
+        if proof.source_call:
+            lines.append(f"  source_call: {proof.source_call}")
+        if proof.source_symbol:
+            lines.append(f"  source_symbol: {proof.source_symbol}")
+        if proof.supporting_summaries:
+            lines.append(f"  supporting: {', '.join(proof.supporting_summaries)}")
+        if proof.provenance:
+            lines.append(f"  provenance: {' | '.join(proof.provenance)}")
+        lines.append(f"  depth: {proof.depth}")
+        chunks.append("\n".join(lines))
+    return "\n\n".join(chunks)

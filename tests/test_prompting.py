@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from lua_nil_review_agent.models import CandidateCase, SinkRule
+from lua_nil_review_agent.models import CandidateCase, SinkRule, StaticProof
 from lua_nil_review_agent.pipeline import build_evidence_packet
 from lua_nil_review_agent.prompting import build_adjudication_prompt
 
@@ -38,6 +38,15 @@ def test_build_adjudication_prompt_includes_evidence_and_hard_rules() -> None:
         related_function_contexts=(
             "normalize_name @ lib/normalizer.lua:1\nfunction normalize_name(value)\n  value = value or ''",
         ),
+        static_proofs=(
+            StaticProof(
+                kind="direct_guard",
+                summary="if username then",
+                subject="username",
+                source_symbol="username",
+                provenance=("an active positive branch requires `username` to be truthy",),
+            ),
+        ),
     )
     rule = SinkRule(
         id="string.match.arg1",
@@ -57,6 +66,9 @@ def test_build_adjudication_prompt_includes_evidence_and_hard_rules() -> None:
     assert "string.match" in prompt
     assert "req.params may be nil" in prompt
     assert "origin_return_slots: 1" in prompt
+    assert "proof_kinds: direct_guard" in prompt
+    assert "Structured static proofs:" in prompt
+    assert "[direct_guard] if username then" in prompt
     assert "Related function contexts:" in prompt
     assert "normalize_name @ lib/normalizer.lua:1" in prompt
     assert "Adjudication policy: lua-nil-adjudicator" in prompt

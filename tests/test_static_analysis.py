@@ -31,6 +31,10 @@ def test_analyze_candidate_marks_guarded_symbol_safe() -> None:
 
     assert result.state == "safe_static"
     assert result.observed_guards == ("if username then",)
+    assert len(result.proofs) == 1
+    assert result.proofs[0].kind == "direct_guard"
+    assert result.proofs[0].subject == "username"
+    assert result.proofs[0].provenance == ("an active positive branch requires `username` to be truthy",)
     assert result.origin_candidates == ("req.params.username",)
 
 
@@ -1406,6 +1410,12 @@ def test_analyze_candidate_proves_two_hop_return_normalizer_chain() -> None:
 
     assert result.state == "safe_static"
     assert result.observed_guards == ("finalize_name(...) returns non-nil",)
+    assert len(result.proofs) == 1
+    assert result.proofs[0].kind == "chained_return_contract"
+    assert result.proofs[0].source_function == "finalize_name"
+    assert result.proofs[0].supporting_summaries == ("wrap_name(...) returns non-nil",)
+    assert result.proofs[0].depth >= 2
+    assert result.proofs[0].provenance
     assert result.origin_candidates == ("finalize_name(wrapped)",)
     assert result.origin_return_slots == (1,)
 
@@ -1530,6 +1540,11 @@ def test_analyze_candidate_proves_transparent_wrapper_chain() -> None:
 
     assert result.state == "safe_static"
     assert result.observed_guards == ("finalize_name(...) preserves or defaults to non-nil",)
+    assert len(result.proofs) == 1
+    assert result.proofs[0].kind == "wrapper_passthrough"
+    assert result.proofs[0].source_function == "finalize_name"
+    assert result.proofs[0].supporting_summaries == ("wrap_name(...) preserves or defaults to non-nil",)
+    assert result.proofs[0].provenance
     assert result.origin_candidates == ("finalize_name(wrapped)",)
     assert result.origin_return_slots == (1,)
 
