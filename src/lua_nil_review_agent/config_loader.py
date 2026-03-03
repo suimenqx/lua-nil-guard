@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .models import ConfidencePolicy, SinkRule
+from .models import ConfidencePolicy, FunctionContract, SinkRule
 
 
 class ConfigError(ValueError):
@@ -15,23 +15,25 @@ def initialize_repository_config(
     root: str | Path,
     *,
     force: bool = False,
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path, Path]:
     """Write the default review config into a target repository root."""
 
     root_path = Path(root)
     template_root = _default_config_template_root()
     sink_source = template_root / "sink_rules.json"
     policy_source = template_root / "confidence_policy.json"
+    contracts_source = template_root / "function_contracts.json"
 
-    for source_path in (sink_source, policy_source):
+    for source_path in (sink_source, policy_source, contracts_source):
         if not source_path.is_file():
             raise ConfigError(f"Default config template not found: {source_path}")
 
     config_dir = root_path / "config"
     sink_target = config_dir / "sink_rules.json"
     policy_target = config_dir / "confidence_policy.json"
+    contracts_target = config_dir / "function_contracts.json"
 
-    for target_path in (sink_target, policy_target):
+    for target_path in (sink_target, policy_target, contracts_target):
         if target_path.exists() and not force:
             raise ConfigError(
                 f"Config file already exists: {target_path} (use --force to overwrite)"
@@ -40,7 +42,8 @@ def initialize_repository_config(
     config_dir.mkdir(parents=True, exist_ok=True)
     sink_target.write_text(sink_source.read_text(encoding="utf-8"), encoding="utf-8")
     policy_target.write_text(policy_source.read_text(encoding="utf-8"), encoding="utf-8")
-    return sink_target, policy_target
+    contracts_target.write_text(contracts_source.read_text(encoding="utf-8"), encoding="utf-8")
+    return sink_target, policy_target, contracts_target
 
 
 def load_sink_rules(path: str | Path) -> list[SinkRule]:
@@ -86,6 +89,24 @@ def load_confidence_policy(path: str | Path) -> ConfidencePolicy:
     )
 
 
+def load_function_contracts(path: str | Path) -> list[FunctionContract]:
+    """Load and validate user-defined function contracts."""
+
+    data = _read_json(path)
+    if not isinstance(data, list):
+        raise ConfigError("Function contracts config must be a JSON array")
+
+    contracts: list[FunctionContract] = []
+    seen_names: set[str] = set()
+    for item in data:
+        contract = _parse_function_contract(item)
+        if contract.qualified_name in seen_names:
+            raise ConfigError(f"Duplicate function contract: {contract.qualified_name}")
+        seen_names.add(contract.qualified_name)
+        contracts.append(contract)
+    return contracts
+
+
 def _parse_sink_rule(data: Any) -> SinkRule:
     if not isinstance(data, dict):
         raise ConfigError("Each sink rule must be a JSON object")
@@ -111,6 +132,35 @@ def _parse_sink_rule(data: Any) -> SinkRule:
         failure_mode=failure_mode,
         default_severity=default_severity,
         safe_patterns=tuple(safe_patterns),
+    )
+
+
+def _parse_function_contract(data: Any) -> FunctionContract:
+    if not isinstance(data, dict):
+        raise ConfigError("Each function contract must be a JSON object")
+
+    try:
+        qualified_name = _require_str(data, "qualified_name")
+    except KeyError as exc:
+        raise ConfigError(f"Missing required function contract field: {exc.args[0]}") from exc
+
+    returns_non_nil = data.get("returns_non_nil")
+    if not isinstance(returns_non_nil, bool):
+        raise ConfigError("Function contract field 'returns_non_nil' must be a boolean")
+
+    notes = data.get("notes")
+    if notes is not None and not isinstance(notes, str):
+        raise ConfigError("Function contract field 'notes' must be a string when provided")
+
+    if not returns_non_nil:
+        raise ConfigError(
+            f"Function contract for {qualified_name} must enable at least one supported contract flag"
+        )
+
+    return FunctionContract(
+        qualified_name=qualified_name,
+        returns_non_nil=returns_non_nil,
+        notes=notes,
     )
 
 

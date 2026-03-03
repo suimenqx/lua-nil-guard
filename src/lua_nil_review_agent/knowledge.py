@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .models import FunctionSummary, KnowledgeFact
+from .models import FunctionContract, FunctionSummary, KnowledgeFact
 
 
 class KnowledgeBase:
@@ -61,6 +61,26 @@ def derive_facts_from_summaries(summaries: tuple[FunctionSummary, ...]) -> tuple
                     statement=f"{summary.qualified_name} returns non-nil value",
                     confidence="medium",
                     source="summary",
+                )
+            )
+    return tuple(facts)
+
+
+def derive_facts_from_contracts(
+    contracts: tuple[FunctionContract, ...],
+) -> tuple[KnowledgeFact, ...]:
+    """Convert configured contracts into high-confidence reusable safety facts."""
+
+    facts: list[KnowledgeFact] = []
+    for contract in contracts:
+        if contract.returns_non_nil:
+            facts.append(
+                KnowledgeFact(
+                    key=f"{contract.qualified_name}.contract_returns_non_nil",
+                    subject=contract.qualified_name,
+                    statement=f"{contract.qualified_name} returns non-nil value",
+                    confidence="high",
+                    source="config",
                 )
             )
     return tuple(facts)

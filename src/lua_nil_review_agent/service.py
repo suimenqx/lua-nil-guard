@@ -11,8 +11,13 @@ from .adjudication import attach_autofix_patch
 from .agent_driver_models import AgentProviderSpec
 from .agent_backend import AdjudicationBackend, CliAgentBackend, HeuristicAdjudicationBackend
 from .collector import collect_candidates
-from .config_loader import load_confidence_policy, load_sink_rules
-from .knowledge import KnowledgeBase, derive_facts_from_summaries, facts_for_subject
+from .config_loader import load_confidence_policy, load_function_contracts, load_sink_rules
+from .knowledge import (
+    KnowledgeBase,
+    derive_facts_from_contracts,
+    derive_facts_from_summaries,
+    facts_for_subject,
+)
 from .models import (
     AdjudicationRecord,
     AutofixPatch,
@@ -95,12 +100,19 @@ def bootstrap_repository(root: str | Path) -> RepositorySnapshot:
     sink_rules = tuple(load_sink_rules(root_path / "config" / "sink_rules.json"))
     confidence_policy = load_confidence_policy(root_path / "config" / "confidence_policy.json")
     lua_files = tuple(discover_lua_files(root_path))
+    contracts_path = root_path / "config" / "function_contracts.json"
+    function_contracts = (
+        tuple(load_function_contracts(contracts_path))
+        if contracts_path.is_file()
+        else ()
+    )
 
     return RepositorySnapshot(
         root=root_path,
         sink_rules=sink_rules,
         confidence_policy=confidence_policy,
         lua_files=lua_files,
+        function_contracts=function_contracts,
     )
 
 
@@ -279,7 +291,10 @@ def benchmark_repository_review(
     facts = (
         _load_knowledge_facts(snapshot, knowledge_path)
         if knowledge_path is not None
-        else derive_facts_from_summaries(summaries)
+        else _merge_knowledge_facts(
+            derive_facts_from_summaries(summaries),
+            derive_facts_from_contracts(snapshot.function_contracts),
+        )
     )
     adjudication_backend = backend or HeuristicAdjudicationBackend()
     verdicts = _run_review_from_assessments(
@@ -521,7 +536,10 @@ def refresh_knowledge_base(
     """Rebuild and persist repository knowledge facts derived from summaries."""
 
     summaries = _collect_repository_summaries(snapshot)
-    facts = derive_facts_from_summaries(summaries)
+    facts = _merge_knowledge_facts(
+        derive_facts_from_summaries(summaries),
+        derive_facts_from_contracts(snapshot.function_contracts),
+    )
     path = Path(knowledge_path) if knowledge_path is not None else snapshot.root / "data" / "knowledge.json"
     KnowledgeBase(path).save(facts)
     return facts
@@ -1154,7 +1172,27 @@ def _load_knowledge_facts(
     knowledge_path: str | Path | None,
 ) -> tuple[object, ...]:
     path = Path(knowledge_path) if knowledge_path is not None else snapshot.root / "data" / "knowledge.json"
-    return KnowledgeBase(path).load()
+    persisted = KnowledgeBase(path).load()
+    contract_facts = derive_facts_from_contracts(snapshot.function_contracts)
+    return _merge_knowledge_facts(persisted, contract_facts)
+
+
+def _merge_knowledge_facts(*fact_groups: tuple[object, ...]) -> tuple[object, ...]:
+    merged: list[object] = []
+    seen: set[tuple[object, object, object]] = set()
+
+    for group in fact_groups:
+        for fact in group:
+            key = (
+                getattr(fact, "key", None),
+                getattr(fact, "subject", None),
+                getattr(fact, "statement", None),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(fact)
+    return tuple(merged)
 
 
 def _expected_benchmark_label(file_path: str) -> str | None:

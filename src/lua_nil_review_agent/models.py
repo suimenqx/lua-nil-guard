@@ -107,6 +107,7 @@ class RepositorySnapshot:
     sink_rules: tuple[SinkRule, ...]
     confidence_policy: ConfidencePolicy
     lua_files: tuple[Path, ...]
+    function_contracts: tuple["FunctionContract", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +142,15 @@ class FunctionSummary:
     confidence: str
     source: str
     module_name: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionContract:
+    """A user-configured callable contract that can suppress nil-risk false positives."""
+
+    qualified_name: str
+    returns_non_nil: bool
+    notes: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

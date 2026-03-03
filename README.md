@@ -75,8 +75,9 @@ Target repositories are expected to contain:
 
 - `config/sink_rules.json`
 - `config/confidence_policy.json`
+- `config/function_contracts.json`
 
-`init-config` writes the default versions of both files into the target repository. You can edit them afterward to match project-specific rules or confidence policy.
+`init-config` writes the default versions of all three files into the target repository. `function_contracts.json` lets you declare high-confidence wrapper functions such as `normalize_name` that always return a non-nil value, which helps suppress false positives without relying on prompt-only inference.
 
 ## Notes
 

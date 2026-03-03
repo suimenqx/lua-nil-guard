@@ -5,9 +5,11 @@ from pathlib import Path
 from lua_nil_review_agent.knowledge import (
     KnowledgeBase,
     KnowledgeFact,
+    derive_facts_from_contracts,
     derive_facts_from_summaries,
     facts_for_subject,
 )
+from lua_nil_review_agent.models import FunctionContract
 from lua_nil_review_agent.summaries import summarize_source
 
 
@@ -87,3 +89,20 @@ def test_derive_facts_from_summaries_uses_qualified_module_names() -> None:
     assert len(facts) == 1
     assert facts[0].subject == "account.profile.normalize_name"
     assert facts[0].statement == "account.profile.normalize_name returns non-nil value"
+
+
+def test_derive_facts_from_contracts_emits_high_confidence_non_nil_fact() -> None:
+    contracts = (
+        FunctionContract(
+            qualified_name="user.profile.normalize_name",
+            returns_non_nil=True,
+            notes="normalizes nil usernames",
+        ),
+    )
+
+    facts = derive_facts_from_contracts(contracts)
+
+    assert len(facts) == 1
+    assert facts[0].subject == "user.profile.normalize_name"
+    assert facts[0].confidence == "high"
+    assert facts[0].source == "config"

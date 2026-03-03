@@ -48,8 +48,13 @@ from .adjudication import adjudicate_packet
 from .baseline import BaselineStore, build_baseline, filter_new_findings
 from .cli import main, run
 from .collector import collect_candidates
-from .config_loader import ConfigError, load_confidence_policy, load_sink_rules
-from .knowledge import KnowledgeBase, derive_facts_from_summaries, facts_for_subject
+from .config_loader import ConfigError, load_confidence_policy, load_function_contracts, load_sink_rules
+from .knowledge import (
+    KnowledgeBase,
+    derive_facts_from_contracts,
+    derive_facts_from_summaries,
+    facts_for_subject,
+)
 from .models import (
     AdjudicationRecord,
     AutofixPatch,
@@ -62,6 +67,7 @@ from .models import (
     EvidencePacket,
     EvidenceTarget,
     RepositorySnapshot,
+    FunctionContract,
     FunctionSummary,
     KnowledgeFact,
     RoleOpinion,
@@ -138,6 +144,7 @@ __all__ = [
     "GEMINI_PROVIDER_SPEC",
     "EvidencePacket",
     "EvidenceTarget",
+    "FunctionContract",
     "FunctionSummary",
     "KnowledgeBase",
     "KnowledgeFact",
@@ -173,6 +180,7 @@ __all__ = [
     "compile_adjudicator_skill_header",
     "default_adjudicator_skill_path",
     "derive_facts_from_summaries",
+    "derive_facts_from_contracts",
     "export_adjudication_tasks",
     "export_autofix_patches",
     "export_autofix_unified_diff",
@@ -186,6 +194,7 @@ __all__ = [
     "get_cli_protocol_backend",
     "get_cli_protocol_builder",
     "load_confidence_policy",
+    "load_function_contracts",
     "load_adjudicator_skill",
     "load_sink_rules",
     "load_skill_definition",

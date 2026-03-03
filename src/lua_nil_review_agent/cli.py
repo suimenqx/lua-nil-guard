@@ -79,7 +79,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "init-config requires exactly one repository path"
         root = Path(positional[0])
         try:
-            sink_path, policy_path = initialize_repository_config(root, force=force)
+            sink_path, policy_path, contracts_path = initialize_repository_config(root, force=force)
         except (ConfigError, OSError) as exc:
             return 2, str(exc)
         return 0, "\n".join(
@@ -88,6 +88,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 f"Force overwrite: {'yes' if force else 'no'}",
                 f"Sink rules: {sink_path}",
                 f"Confidence policy: {policy_path}",
+                f"Function contracts: {contracts_path}",
             ]
         )
 

@@ -159,15 +159,19 @@ def test_cli_init_config_writes_default_templates(tmp_path: Path) -> None:
 
     sink_path = tmp_path / "config" / "sink_rules.json"
     policy_path = tmp_path / "config" / "confidence_policy.json"
+    contracts_path = tmp_path / "config" / "function_contracts.json"
     sink_payload = json.loads(sink_path.read_text(encoding="utf-8"))
     policy_payload = json.loads(policy_path.read_text(encoding="utf-8"))
+    contracts_payload = json.loads(contracts_path.read_text(encoding="utf-8"))
 
     assert exit_code == 0
     assert "Repository config initialized." in output
     assert f"Sink rules: {sink_path}" in output
     assert f"Confidence policy: {policy_path}" in output
+    assert f"Function contracts: {contracts_path}" in output
     assert any(rule["id"] == "string.match.arg1" for rule in sink_payload)
     assert policy_payload["default_report_min_confidence"] == "high"
+    assert contracts_payload == []
 
 
 def test_cli_init_config_rejects_existing_files_without_force(tmp_path: Path) -> None:
@@ -188,18 +192,22 @@ def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None
     config_dir.mkdir()
     sink_path = config_dir / "sink_rules.json"
     policy_path = config_dir / "confidence_policy.json"
+    contracts_path = config_dir / "function_contracts.json"
     sink_path.write_text("[]", encoding="utf-8")
     policy_path.write_text("{}", encoding="utf-8")
+    contracts_path.write_text("{}", encoding="utf-8")
 
     exit_code, output = run(["init-config", "--force", str(tmp_path)])
 
     sink_payload = json.loads(sink_path.read_text(encoding="utf-8"))
     policy_payload = json.loads(policy_path.read_text(encoding="utf-8"))
+    contracts_payload = json.loads(contracts_path.read_text(encoding="utf-8"))
 
     assert exit_code == 0
     assert "Force overwrite: yes" in output
     assert any(rule["id"] == "string.match.arg1" for rule in sink_payload)
     assert policy_payload["default_report_min_confidence"] == "high"
+    assert contracts_payload == []
 
 
 def test_cli_clear_backend_cache_removes_cache_file(tmp_path: Path) -> None:

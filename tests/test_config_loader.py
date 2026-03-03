@@ -8,6 +8,7 @@ import pytest
 from lua_nil_review_agent.config_loader import (
     ConfigError,
     load_confidence_policy,
+    load_function_contracts,
     load_sink_rules,
 )
 
@@ -59,3 +60,25 @@ def test_load_confidence_policy_reads_defaults() -> None:
     assert policy.default_report_min_confidence == "high"
     assert policy.default_include_medium_in_audit is True
     assert policy.levels == ("low", "medium", "high")
+
+
+def test_load_function_contracts_reads_defaults() -> None:
+    contracts = load_function_contracts(ROOT / "config" / "function_contracts.json")
+
+    assert contracts == []
+
+
+def test_load_function_contracts_rejects_duplicate_names(tmp_path: Path) -> None:
+    config_path = tmp_path / "function_contracts.json"
+    config_path.write_text(
+        json.dumps(
+            [
+                {"qualified_name": "user.profile.normalize_name", "returns_non_nil": True},
+                {"qualified_name": "user.profile.normalize_name", "returns_non_nil": True},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="Duplicate function contract"):
+        load_function_contracts(config_path)
