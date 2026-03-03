@@ -15,6 +15,9 @@ _SUPPORTED_CALL_ROLES = frozenset({"assignment_origin", "sink_expression", "guar
 _SUPPORTED_USAGE_MODES = frozenset({"single_assignment", "multi_assignment", "direct_sink"})
 _SUPPORTED_SCOPE_KINDS = frozenset({"top_level", "function_body"})
 _SUPPORTED_TOP_LEVEL_PHASES = frozenset({"init", "post_definitions"})
+_SUPPORTED_ARG_SHAPES = frozenset(
+    {"identifier", "member_access", "indexed_access", "literal", "call", "expression"}
+)
 
 
 def initialize_repository_config(
@@ -163,7 +166,16 @@ def _parse_function_contract(data: Any) -> FunctionContract:
     applies_to_call_roles = _optional_str_list(data, "applies_to_call_roles")
     applies_to_usage_modes = _optional_str_list(data, "applies_to_usage_modes")
     applies_with_arg_count = _optional_positive_int(data, "applies_with_arg_count")
-    required_literal_args = _optional_literal_arg_map(data, "required_literal_args")
+    required_literal_args = _optional_choice_arg_map(
+        data,
+        "required_literal_args",
+        value_label="literal strings",
+    )
+    required_arg_shapes = _optional_choice_arg_map(
+        data,
+        "required_arg_shapes",
+        value_label="argument shape names",
+    )
     if any(role not in _SUPPORTED_CALL_ROLES for role in applies_to_call_roles):
         raise ConfigError(
             "Function contract field 'applies_to_call_roles' must contain only "
@@ -183,6 +195,15 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         raise ConfigError(
             "Function contract field 'applies_to_top_level_phases' must contain only "
             "init or post_definitions"
+        )
+    if any(
+        shape not in _SUPPORTED_ARG_SHAPES
+        for _, allowed_shapes in required_arg_shapes
+        for shape in allowed_shapes
+    ):
+        raise ConfigError(
+            "Function contract field 'required_arg_shapes' must contain only "
+            "identifier, member_access, indexed_access, literal, call, or expression"
         )
 
     notes = data.get("notes")
@@ -208,6 +229,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         applies_to_usage_modes=tuple(dict.fromkeys(applies_to_usage_modes)),
         applies_with_arg_count=applies_with_arg_count,
         required_literal_args=required_literal_args,
+        required_arg_shapes=required_arg_shapes,
         notes=notes,
     )
 
@@ -266,14 +288,16 @@ def _optional_positive_int(data: dict[str, Any], key: str) -> int | None:
     return value
 
 
-def _optional_literal_arg_map(
+def _optional_choice_arg_map(
     data: dict[str, Any],
     key: str,
+    *,
+    value_label: str,
 ) -> tuple[tuple[int, tuple[str, ...]], ...]:
     value = data.get(key, {})
     if not isinstance(value, dict):
         raise ConfigError(
-            f"Function contract field '{key}' must be an object mapping argument indexes to literal strings"
+            f"Function contract field '{key}' must be an object mapping argument indexes to {value_label}"
         )
 
     pairs: list[tuple[int, tuple[str, ...]]] = []

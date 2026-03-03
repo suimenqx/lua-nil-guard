@@ -615,6 +615,137 @@ def test_run_repository_review_skips_literal_scoped_return_contract_when_call_di
     assert verdicts[0].status == "uncertain"
 
 
+def test_run_repository_review_uses_shape_scoped_return_contract_when_call_matches(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "function_contracts.json").write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "normalize_name",
+                    "returns_non_nil": True,
+                    "required_arg_shapes": {"1": "member_access"},
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "function normalize_name(value)",
+                "  return value",
+                "end",
+                "",
+                "local username = normalize_name(req.params.username)",
+                "return string.match(username, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status == "safe"
+    assert any("returns non-nil" in fact for fact in verdicts[0].safety_evidence)
+
+
+def test_run_repository_review_skips_shape_scoped_return_contract_when_call_differs(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "function_contracts.json").write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "normalize_name",
+                    "returns_non_nil": True,
+                    "required_arg_shapes": {"1": "member_access"},
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "function normalize_name(value)",
+                "  return value",
+                "end",
+                "",
+                "local username = normalize_name(username)",
+                "return string.match(username, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status == "uncertain"
+
+
 def test_run_repository_review_uses_sink_expression_role_scoped_contracts(
     tmp_path: Path,
 ) -> None:

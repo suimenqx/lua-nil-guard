@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from .models import FunctionContract, FunctionSummary, KnowledgeFact
+
+
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_MEMBER_ACCESS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$")
+_INDEXED_ACCESS_RE = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?:\[[^\]]+\])+$"
+)
+_SIMPLE_CALL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_:.]*\s*\(.*\)$")
+_NUMERIC_LITERAL_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 
 
 class KnowledgeBase:
@@ -205,9 +215,7 @@ def contract_applies_to_call(
     if not arg_count_matches:
         return False
 
-    if not contract.required_literal_args:
-        return True
-    if arg_values is None:
+    if (contract.required_literal_args or contract.required_arg_shapes) and arg_values is None:
         return False
 
     for index, allowed_literals in contract.required_literal_args:
@@ -215,7 +223,42 @@ def contract_applies_to_call(
             return False
         if arg_values[index - 1].strip() not in allowed_literals:
             return False
+
+    for index, allowed_shapes in contract.required_arg_shapes:
+        if index < 1 or index > len(arg_values):
+            return False
+        if _classify_arg_shape(arg_values[index - 1]) not in allowed_shapes:
+            return False
     return True
+
+
+def _classify_arg_shape(raw_value: str) -> str:
+    value = raw_value.strip()
+    if _is_literal(value):
+        return "literal"
+    if _SIMPLE_CALL_RE.match(value):
+        return "call"
+    if _INDEXED_ACCESS_RE.match(value):
+        return "indexed_access"
+    if _MEMBER_ACCESS_RE.match(value):
+        return "member_access"
+    if _IDENTIFIER_RE.match(value):
+        return "identifier"
+    return "expression"
+
+
+def _is_literal(value: str) -> bool:
+    if not value:
+        return False
+    if value in {"nil", "true", "false"}:
+        return True
+    if _NUMERIC_LITERAL_RE.match(value):
+        return True
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return True
+    if value.startswith("{") and value.endswith("}"):
+        return True
+    return False
 
 
 def _returns_non_nil_value(summary: FunctionSummary) -> bool:
