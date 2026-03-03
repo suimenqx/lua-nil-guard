@@ -75,6 +75,7 @@ from .models import (
     StaticProof,
     StaticAnalysisResult,
     Verdict,
+    VerificationSummary,
     with_candidate_state,
 )
 from .pipeline import build_evidence_packet, should_report
@@ -163,6 +164,7 @@ __all__ = [
     "StaticAnalysisResult",
     "StaticProof",
     "Verdict",
+    "VerificationSummary",
     "with_candidate_state",
     "adjudicate_packet",
     "apply_autofix_manifest",

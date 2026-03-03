@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import json
 
-from lua_nil_review_agent.models import AutofixPatch, ConfidencePolicy, Verdict
+from lua_nil_review_agent.models import (
+    AutofixPatch,
+    ConfidencePolicy,
+    VerificationSummary,
+    Verdict,
+)
 from lua_nil_review_agent.reporting import render_json_report, render_markdown_report
 
 
@@ -63,6 +68,10 @@ def test_render_json_report_outputs_machine_readable_findings() -> None:
             end_line=8,
             replacement="username = username or ''",
         ),
+        verification_summary=VerificationSummary(
+            mode="risk_no_guard",
+            evidence=("username <- req.params.username",),
+        ),
     )
 
     payload = json.loads(render_json_report((risky,), policy))
@@ -71,6 +80,41 @@ def test_render_json_report_outputs_machine_readable_findings() -> None:
     assert payload[0]["status"] == "risky_verified"
     assert payload[0]["autofix_patch"]["action"] == "insert_before"
     assert payload[0]["autofix_patch"]["start_line"] == 8
+    assert payload[0]["verification_summary"]["mode"] == "risk_no_guard"
+
+
+def test_render_markdown_report_lists_verified_suppressions() -> None:
+    policy = ConfidencePolicy(
+        levels=("low", "medium", "high"),
+        default_report_min_confidence="high",
+        default_include_medium_in_audit=True,
+    )
+    safe = Verdict(
+        case_id="case_250",
+        status="safe_verified",
+        confidence="high",
+        risk_path=(),
+        safety_evidence=("if username then",),
+        counterarguments_considered=(),
+        suggested_fix=None,
+        needs_human=False,
+        verification_summary=VerificationSummary(
+            mode="structured_static_proof",
+            strongest_proof_kind="direct_guard",
+            strongest_proof_depth=0,
+            strongest_proof_summary="if username then",
+            verification_score=100,
+            evidence=("if username then",),
+        ),
+    )
+
+    report = render_markdown_report((safe,), policy)
+
+    assert "No reportable findings." in report
+    assert "## Verified Suppressions" in report
+    assert "case_250: safe_verified (high)" in report
+    assert "direct_guard depth=0" in report
+    assert "score=100" in report
 
 
 def test_render_markdown_report_formats_multiline_fix_as_code_block() -> None:

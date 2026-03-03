@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .models import EvidencePacket, StaticProof, Verdict
+from .models import EvidencePacket, StaticProof, Verdict, VerificationSummary
 
 
 _SAFE_VERIFY_THRESHOLD = 80
@@ -24,13 +24,27 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
             suggested_fix=verdict.suggested_fix,
             needs_human=False,
             autofix_patch=verdict.autofix_patch,
+            verification_summary=VerificationSummary(
+                mode="risk_no_guard",
+                evidence=verdict.risk_path,
+            ),
         )
 
     if verdict.status == "safe":
         proofs = packet.static_proofs
         if proofs:
+            strongest_proof = _strongest_safe_proof(proofs)
             strongest_score = _safe_verification_score(proofs)
-            safety_evidence = verdict.safety_evidence or _proof_summaries(proofs)
+            proof_summaries = _proof_summaries(proofs)
+            safety_evidence = verdict.safety_evidence or proof_summaries
+            verification_summary = VerificationSummary(
+                mode="structured_static_proof",
+                strongest_proof_kind=strongest_proof.kind,
+                strongest_proof_depth=strongest_proof.depth,
+                strongest_proof_summary=strongest_proof.summary,
+                verification_score=strongest_score,
+                evidence=proof_summaries,
+            )
 
             if strongest_score >= _SAFE_VERIFY_THRESHOLD:
                 return Verdict(
@@ -43,6 +57,7 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
                     suggested_fix=None,
                     needs_human=False,
                     autofix_patch=None,
+                    verification_summary=verification_summary,
                 )
 
             if strongest_score >= _SAFE_ELEVATE_THRESHOLD:
@@ -53,6 +68,7 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
                 if (
                     elevated_confidence != verdict.confidence
                     or safety_evidence != verdict.safety_evidence
+                    or verification_summary != verdict.verification_summary
                 ):
                     return Verdict(
                         case_id=verdict.case_id,
@@ -64,6 +80,7 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
                         suggested_fix=verdict.suggested_fix,
                         needs_human=verdict.needs_human,
                         autofix_patch=verdict.autofix_patch,
+                        verification_summary=verification_summary,
                     )
                 return verdict
 
@@ -80,6 +97,10 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
                 suggested_fix=None,
                 needs_human=False,
                 autofix_patch=None,
+                verification_summary=VerificationSummary(
+                    mode="legacy_observed_guards",
+                    evidence=verdict.safety_evidence or observed_guards,
+                ),
             )
 
     return verdict
@@ -122,6 +143,13 @@ def _safe_verification_score(proofs: tuple[StaticProof, ...]) -> int:
         5 * sum(1 for score in scored_proofs[1:] if score >= 60),
     )
     return min(100, strongest_score + corroboration_bonus)
+
+
+def _strongest_safe_proof(proofs: tuple[StaticProof, ...]) -> StaticProof:
+    return max(
+        proofs,
+        key=lambda proof: (_safe_proof_score(proof), -proof.depth, proof.kind, proof.summary),
+    )
 
 
 def _safe_confidence_floor(score: int) -> str:

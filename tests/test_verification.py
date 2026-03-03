@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from lua_nil_review_agent.models import EvidencePacket, EvidenceTarget, StaticProof, Verdict
+from lua_nil_review_agent.models import (
+    EvidencePacket,
+    EvidenceTarget,
+    StaticProof,
+    Verdict,
+)
 from lua_nil_review_agent.verification import verify_verdict
 
 
@@ -40,6 +45,8 @@ def test_verify_verdict_upgrades_clear_risk_to_risky_verified() -> None:
 
     assert result.status == "risky_verified"
     assert result.confidence == "high"
+    assert result.verification_summary is not None
+    assert result.verification_summary.mode == "risk_no_guard"
 
 
 def test_verify_verdict_upgrades_safe_to_safe_verified_when_guard_exists() -> None:
@@ -78,6 +85,8 @@ def test_verify_verdict_upgrades_safe_to_safe_verified_when_guard_exists() -> No
 
     assert result.status == "safe_verified"
     assert result.confidence == "high"
+    assert result.verification_summary is not None
+    assert result.verification_summary.mode == "legacy_observed_guards"
 
 
 def test_verify_verdict_upgrades_safe_to_safe_verified_for_strong_static_proof() -> None:
@@ -124,6 +133,11 @@ def test_verify_verdict_upgrades_safe_to_safe_verified_for_strong_static_proof()
     assert result.status == "safe_verified"
     assert result.confidence == "high"
     assert result.safety_evidence == ("if username then",)
+    assert result.verification_summary is not None
+    assert result.verification_summary.mode == "structured_static_proof"
+    assert result.verification_summary.strongest_proof_kind == "direct_guard"
+    assert result.verification_summary.strongest_proof_depth == 0
+    assert result.verification_summary.verification_score == 100
 
 
 def test_verify_verdict_elevates_safe_confidence_for_deep_chained_proof() -> None:
@@ -173,6 +187,11 @@ def test_verify_verdict_elevates_safe_confidence_for_deep_chained_proof() -> Non
     assert result.confidence == "medium"
     assert result.needs_human is True
     assert result.safety_evidence == ("finalize_name(...) returns non-nil",)
+    assert result.verification_summary is not None
+    assert result.verification_summary.mode == "structured_static_proof"
+    assert result.verification_summary.strongest_proof_kind == "chained_return_contract"
+    assert result.verification_summary.strongest_proof_depth == 3
+    assert result.verification_summary.verification_score == 60
 
 
 def test_verify_verdict_does_not_let_legacy_guards_override_weak_structured_proof() -> None:
@@ -221,3 +240,4 @@ def test_verify_verdict_does_not_let_legacy_guards_override_weak_structured_proo
     assert result.status == "safe"
     assert result.confidence == "low"
     assert result.safety_evidence == ()
+    assert result.verification_summary is None

@@ -86,6 +86,18 @@ class AutofixPatch:
 
 
 @dataclass(frozen=True, slots=True)
+class VerificationSummary:
+    """Structured metadata explaining why a verdict was auto-verified or elevated."""
+
+    mode: str
+    strongest_proof_kind: str | None = None
+    strongest_proof_depth: int | None = None
+    strongest_proof_summary: str | None = None
+    verification_score: int | None = None
+    evidence: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Verdict:
     """A final or intermediate adjudication result for a case."""
 
@@ -98,6 +110,7 @@ class Verdict:
     suggested_fix: str | None
     needs_human: bool
     autofix_patch: AutofixPatch | None = None
+    verification_summary: VerificationSummary | None = None
 
 
 @dataclass(frozen=True, slots=True)
