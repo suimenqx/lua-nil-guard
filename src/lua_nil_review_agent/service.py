@@ -9,7 +9,7 @@ from typing import Callable
 
 from .adjudication import attach_autofix_patch
 from .agent_driver_models import AgentProviderSpec
-from .agent_backend import AdjudicationBackend, HeuristicAdjudicationBackend
+from .agent_backend import AdjudicationBackend, CliAgentBackend, HeuristicAdjudicationBackend
 from .collector import collect_candidates
 from .config_loader import load_confidence_policy, load_sink_rules
 from .knowledge import KnowledgeBase, derive_facts_from_summaries, facts_for_subject
@@ -448,7 +448,11 @@ def _run_review_from_assessments(
                 sink_rule_by_id[assessment.candidate.sink_rule_id],
             )
             final_verdict = verify_verdict(verdict, packet)
-            if _should_retry_with_expanded_evidence(adjudication, final_verdict):
+            if _should_retry_with_expanded_evidence(
+                adjudication_backend,
+                adjudication,
+                final_verdict,
+            ):
                 expanded_related_evidence = _build_related_evidence(
                     assessment,
                     summary_text_by_name=summary_text_by_name,
@@ -937,15 +941,24 @@ def _knowledge_facts_for_assessment(
 
 
 def _should_retry_with_expanded_evidence(
+    backend: AdjudicationBackend,
     adjudication: AdjudicationRecord,
     verdict: Verdict,
 ) -> bool:
     if verdict.status != "uncertain":
         return False
+    if not _supports_expanded_evidence_retry(backend):
+        return False
     return "expand_context" in {
         adjudication.prosecutor.recommended_next_action,
         adjudication.defender.recommended_next_action,
     }
+
+
+def _supports_expanded_evidence_retry(backend: AdjudicationBackend) -> bool:
+    if isinstance(backend, CliAgentBackend):
+        return True
+    return bool(getattr(backend, "supports_expanded_evidence_retry", False))
 
 
 def _select_function_summaries(
