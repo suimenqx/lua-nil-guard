@@ -166,3 +166,24 @@ def test_load_function_contracts_reads_sink_scope_restrictions(tmp_path: Path) -
 
     assert len(contracts) == 1
     assert contracts[0].applies_to_sinks == ("string.match.arg1", "string.match")
+
+
+def test_load_function_contracts_reads_call_shape_restrictions(tmp_path: Path) -> None:
+    config_path = tmp_path / "function_contracts.json"
+    config_path.write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "normalize_name",
+                    "returns_non_nil": True,
+                    "applies_with_arg_count": 2,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    contracts = load_function_contracts(config_path)
+
+    assert len(contracts) == 1
+    assert contracts[0].applies_with_arg_count == 2

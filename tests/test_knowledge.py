@@ -151,3 +151,17 @@ def test_derive_facts_from_contracts_filters_scoped_contracts_by_sink() -> None:
 
     assert len(scoped) == 1
     assert scoped[0].subject == "normalize_name"
+
+
+def test_derive_facts_from_contracts_skips_call_shaped_contracts_without_call_context() -> None:
+    contracts = (
+        FunctionContract(
+            qualified_name="normalize_name",
+            returns_non_nil=True,
+            applies_with_arg_count=2,
+        ),
+    )
+
+    facts = derive_facts_from_contracts(contracts)
+
+    assert facts == ()

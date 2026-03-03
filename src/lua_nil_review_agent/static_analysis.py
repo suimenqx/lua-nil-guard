@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from .knowledge import contract_applies_in_module, contract_applies_to_sink
+from .knowledge import contract_applies_in_module, contract_applies_to_call, contract_applies_to_sink
 from .models import CandidateCase, FunctionContract, StaticAnalysisResult
 from .summaries import detect_module_name
 
@@ -287,6 +287,8 @@ def _active_contract_guard(
         contract = contract_by_name.get(resolved_name)
         if contract is None:
             continue
+        if not contract_applies_to_call(contract, arg_count=len(args)):
+            continue
         if _contract_matches_symbol(contract, args, symbol):
             active_guard = f"{resolved_name}({symbol})"
 
@@ -330,6 +332,8 @@ def _origin_return_contract_guard(
     )
     contract = contract_by_name.get(resolved_name)
     if contract is None:
+        return None
+    if not contract_applies_to_call(contract, arg_count=len(args)):
         return None
 
     if not _contract_has_all_required_args(contract.returns_non_nil_from_args, args):

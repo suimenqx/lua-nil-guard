@@ -151,6 +151,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
     returns_non_nil_from_args = _optional_positive_int_list(data, "returns_non_nil_from_args")
     applies_in_modules = _optional_str_list(data, "applies_in_modules")
     applies_to_sinks = _optional_str_list(data, "applies_to_sinks")
+    applies_with_arg_count = _optional_positive_int(data, "applies_with_arg_count")
 
     notes = data.get("notes")
     if notes is not None and not isinstance(notes, str):
@@ -168,6 +169,7 @@ def _parse_function_contract(data: Any) -> FunctionContract:
         returns_non_nil_from_args=tuple(returns_non_nil_from_args),
         applies_in_modules=tuple(applies_in_modules),
         applies_to_sinks=tuple(applies_to_sinks),
+        applies_with_arg_count=applies_with_arg_count,
         notes=notes,
     )
 
@@ -214,6 +216,15 @@ def _optional_positive_int_list(data: dict[str, Any], key: str) -> list[int]:
     value = data.get(key, [])
     if not isinstance(value, list) or any(not isinstance(item, int) or item < 1 for item in value):
         raise ConfigError(f"Function contract field '{key}' must be a positive integer array")
+    return value
+
+
+def _optional_positive_int(data: dict[str, Any], key: str) -> int | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, int) or value < 1:
+        raise ConfigError(f"Function contract field '{key}' must be a positive integer")
     return value
 
 

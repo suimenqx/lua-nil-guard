@@ -85,6 +85,8 @@ def derive_facts_from_contracts(
             current_sink_name=current_sink_name,
         ):
             continue
+        if not contract_applies_to_call(contract, arg_count=None):
+            continue
         if contract.returns_non_nil:
             facts.append(
                 KnowledgeFact(
@@ -123,6 +125,20 @@ def contract_applies_to_sink(
         return True
     candidates = {current_sink_rule_id, current_sink_name}
     return any(item in candidates for item in contract.applies_to_sinks)
+
+
+def contract_applies_to_call(
+    contract: FunctionContract,
+    *,
+    arg_count: int | None,
+) -> bool:
+    """Return whether a contract is active for the current call shape."""
+
+    if contract.applies_with_arg_count is None:
+        return True
+    if arg_count is None:
+        return False
+    return arg_count == contract.applies_with_arg_count
 
 
 def _returns_non_nil_value(summary: FunctionSummary) -> bool:
