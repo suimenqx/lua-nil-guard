@@ -1568,6 +1568,40 @@ def test_analyze_candidate_proves_defaulting_wrapper_without_contract() -> None:
     assert result.origin_return_slots == (1,)
 
 
+def test_analyze_candidate_proves_fallback_arg_defaulting_wrapper_without_contract() -> None:
+    source = "\n".join(
+        [
+            "function wrap_name(value, fallback)",
+            "  local normalized = value or fallback",
+            "  return normalized",
+            "end",
+            "",
+            "local final = wrap_name(req.params.username, '')",
+            "return string.match(final, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_fallback_arg_defaulting_wrapper_without_contract",
+        file="demo.lua",
+        line=7,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="final",
+        symbol="final",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "safe_static"
+    assert result.observed_guards == ("wrap_name(...) preserves or defaults to non-nil",)
+    assert result.origin_candidates == ("wrap_name(req.params.username, '')",)
+    assert result.origin_return_slots == (1,)
+
+
 def test_analyze_candidate_limits_transparent_wrapper_chain_depth() -> None:
     source = "\n".join(
         [

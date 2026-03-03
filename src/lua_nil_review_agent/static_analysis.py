@@ -757,6 +757,8 @@ def _transparent_wrapper_returns_safe_value(
     passthrough_value = args[passthrough_index - 1].strip()
     if not passthrough_value or passthrough_value == resolved_name:
         return False
+    if _is_non_nil_literal(passthrough_value):
+        return True
     if _IDENTIFIER_RE.match(passthrough_value):
         if _is_symbol_guarded(
             lines,
@@ -989,9 +991,12 @@ def _wrapper_return_source_arg(
         return None
     if match.group(1) not in params:
         return None
-    if not _is_non_nil_literal(match.group(2).strip()):
-        return None
-    return 0
+    fallback_value = match.group(2).strip()
+    if _is_non_nil_literal(fallback_value):
+        return 0
+    if fallback_value in params:
+        return params.index(fallback_value) + 1
+    return None
 
 
 def _is_non_nil_literal(value: str) -> bool:
