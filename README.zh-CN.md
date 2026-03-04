@@ -39,9 +39,12 @@ lua-nil-guard init-config /path/to/target-repo
 
 ```sh
 lua-nil-guard macro-audit /path/to/target-repo
+lua-nil-guard macro-build-cache /path/to/target-repo
+lua-nil-guard macro-cache-status /path/to/target-repo
 ```
 
 这类文件只会被当作预处理输入：它们提供编译期非 nil 事实，但不会被当作普通业务 Lua 文件参与候选扫描。
+LuaNilGuard 还会为它们编译并复用本地宏缓存，这样重复执行时不需要每次重新解析未变更的超大宏字典文件。
 
 6. 如果仓库里可能有历史编码的 Lua 文件，先做编码审计和转码：
 
@@ -171,6 +174,8 @@ lua-nil-guard proposal-analytics /path/to/target-repo
 
 ```sh
 lua-nil-guard macro-audit /path/to/target-repo
+lua-nil-guard macro-build-cache /path/to/target-repo
+lua-nil-guard macro-cache-status /path/to/target-repo
 ```
 
 `macro-audit` 会告诉你：
@@ -178,6 +183,8 @@ lua-nil-guard macro-audit /path/to/target-repo
 - 哪些宏文件被加载了
 - 哪些宏行被识别成可用的编译期事实
 - 哪些行因为超出当前有界语法而被保守地标记为 unresolved
+
+`macro-build-cache` 会预构建编译后的宏缓存，`macro-cache-status` 会显示缓存是否新鲜、是否需要重建。正常的扫描命令在缓存新鲜时也会自动复用它。当命中的预处理文件发生变化、有效的预处理文件配置发生变化，或缓存 schema 版本变化时，缓存会自动重建。
 
 ## Backend
 

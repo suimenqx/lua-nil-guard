@@ -37,9 +37,12 @@ lua-nil-guard init-config /path/to/target-repo
 
 ```sh
 lua-nil-guard macro-audit /path/to/target-repo
+lua-nil-guard macro-build-cache /path/to/target-repo
+lua-nil-guard macro-cache-status /path/to/target-repo
 ```
 
 Those files are treated as preprocessor inputs only: they provide compile-time non-nil facts, but they are not scanned as ordinary business Lua review targets.
+LuaNilGuard also compiles and reuses a local macro cache for them so repeated runs do not need to reparse unchanged giant dictionary files.
 
 6. If the repository may contain legacy-encoded Lua files, audit and normalize them first:
 
@@ -169,6 +172,8 @@ If your repository uses giant preprocessor-style macro dictionary files (for exa
 
 ```sh
 lua-nil-guard macro-audit /path/to/target-repo
+lua-nil-guard macro-build-cache /path/to/target-repo
+lua-nil-guard macro-cache-status /path/to/target-repo
 ```
 
 `macro-audit` shows:
@@ -176,6 +181,8 @@ lua-nil-guard macro-audit /path/to/target-repo
 - which configured macro files were loaded
 - which macro lines were converted into compile-time facts
 - which lines were left unresolved because they were outside the bounded supported syntax
+
+`macro-build-cache` prebuilds the compiled macro cache, and `macro-cache-status` tells you whether the cache is fresh or needs a rebuild. Normal review commands also reuse the cache automatically when it is fresh. The cache is rebuilt automatically when a matched preprocessor file changes, when the effective preprocessor-file configuration changes, or when the cache schema changes.
 
 ## Backends
 

@@ -33,6 +33,7 @@ from .service import (
     apply_autofix_manifest,
     benchmark_cache_compare,
     benchmark_repository_review,
+    build_repository_macro_cache,
     bootstrap_repository,
     clear_backend_cache,
     draft_review_improvements,
@@ -41,6 +42,7 @@ from .service import (
     export_autofix_unified_diff,
     find_repository_root_for_file,
     macro_audit_repository,
+    macro_cache_status_for_repository,
     refresh_knowledge_base,
     refresh_summary_cache,
     review_repository_file,
@@ -158,6 +160,90 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         return 0, "\n".join(
             [
                 "Macro audit JSON export complete.",
+                f"Output: {output_path}",
+            ]
+        )
+
+    if command == "macro-build-cache":
+        if len(args) not in {2, 3}:
+            return 2, "macro-build-cache requires a repository path and optional output path"
+        root = Path(args[1])
+        output_path = Path(args[2]) if len(args) == 3 else None
+        try:
+            status = build_repository_macro_cache(root)
+        except (OSError, ValueError) as exc:
+            return 2, str(exc)
+        rendered = _render_macro_cache_status_markdown(root, status)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Macro cache build complete.",
+                f"Output: {output_path}",
+            ]
+        )
+
+    if command == "macro-build-cache-json":
+        if len(args) not in {2, 3}:
+            return 2, "macro-build-cache-json requires a repository path and optional output path"
+        root = Path(args[1])
+        output_path = Path(args[2]) if len(args) == 3 else None
+        try:
+            status = build_repository_macro_cache(root)
+        except (OSError, ValueError) as exc:
+            return 2, str(exc)
+        rendered = json.dumps(_serialize_macro_cache_status(root, status), indent=2, sort_keys=True)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Macro cache build JSON export complete.",
+                f"Output: {output_path}",
+            ]
+        )
+
+    if command == "macro-cache-status":
+        if len(args) not in {2, 3}:
+            return 2, "macro-cache-status requires a repository path and optional output path"
+        root = Path(args[1])
+        output_path = Path(args[2]) if len(args) == 3 else None
+        try:
+            status = macro_cache_status_for_repository(root)
+        except (OSError, ValueError) as exc:
+            return 2, str(exc)
+        rendered = _render_macro_cache_status_markdown(root, status)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Macro cache status export complete.",
+                f"Output: {output_path}",
+            ]
+        )
+
+    if command == "macro-cache-status-json":
+        if len(args) not in {2, 3}:
+            return 2, "macro-cache-status-json requires a repository path and optional output path"
+        root = Path(args[1])
+        output_path = Path(args[2]) if len(args) == 3 else None
+        try:
+            status = macro_cache_status_for_repository(root)
+        except (OSError, ValueError) as exc:
+            return 2, str(exc)
+        rendered = json.dumps(_serialize_macro_cache_status(root, status), indent=2, sort_keys=True)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Macro cache status JSON export complete.",
                 f"Output: {output_path}",
             ]
         )
@@ -1589,6 +1675,7 @@ def _render_doctor_report() -> str:
         "Compiler probe order: cc, gcc, clang",
         f"Detected compiler: {backend_info.selected_compiler or '(none)'}",
         f"Local grammar library: {backend_info.local_library_path or '(not available)'}",
+        "Repository macro cache: repository-specific (use `lua-nil-guard macro-cache-status <repository>`)",
     ]
     if not backend_info.tree_sitter_available:
         lines.extend(
@@ -2202,6 +2289,42 @@ def _render_macro_audit_markdown(root: Path, audit: object) -> str:
     return "\n".join(lines).rstrip()
 
 
+def _serialize_macro_cache_status(root: Path, status: object) -> dict[str, object]:
+    return {
+        "repository": str(root),
+        "path": status.path,
+        "state": status.state,
+        "reason": status.reason,
+        "configured_files": list(status.configured_files),
+        "file_count": status.file_count,
+        "fact_count": status.fact_count,
+        "unresolved_count": status.unresolved_count,
+        "parser_version": status.parser_version,
+    }
+
+
+def _render_macro_cache_status_markdown(root: Path, status: object) -> str:
+    lines = [
+        "# Preprocessor Macro Cache Status",
+        "",
+        f"Repository: {root}",
+        f"Cache path: {status.path}",
+        f"State: {status.state}",
+        f"Reason: {status.reason}",
+        f"Configured macro files: {status.file_count}",
+        f"Resolved macro facts: {status.fact_count}",
+        f"Unresolved lines: {status.unresolved_count}",
+        f"Parser version: {status.parser_version}",
+        "",
+    ]
+    if status.configured_files:
+        lines.append("## Macro Files")
+        for file in status.configured_files:
+            lines.append(f"- {file}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
 def _render_encoding_normalization(
     results: tuple[object, ...],
     root: Path,
@@ -2261,6 +2384,10 @@ def _usage() -> str:
             "  {cli} init-config [--force] <repository>",
             "  {cli} macro-audit <repository> [output]",
             "  {cli} macro-audit-json <repository> [output]",
+            "  {cli} macro-build-cache <repository> [output]",
+            "  {cli} macro-build-cache-json <repository> [output]",
+            "  {cli} macro-cache-status <repository> [output]",
+            "  {cli} macro-cache-status-json <repository> [output]",
             "  {cli} encoding-audit <repository> [output]",
             "  {cli} normalize-encoding [--write] <repository> [output]",
             "  {cli} clear-backend-cache <cache-file>",

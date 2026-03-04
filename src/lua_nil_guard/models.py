@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field
 from dataclasses import replace
 from pathlib import Path
 
@@ -124,6 +125,7 @@ class RepositorySnapshot:
     lua_files: tuple[Path, ...]
     preprocessor_files: tuple[Path, ...] = ()
     macro_index: "MacroIndex | None" = None
+    macro_cache_status: "MacroCacheStatus | None" = None
     function_contracts: tuple["FunctionContract", ...] = ()
 
 
@@ -166,6 +168,24 @@ class MacroIndex:
 
     facts: tuple[MacroFact, ...] = ()
     unresolved_lines: tuple[MacroUnresolvedLine, ...] = ()
+    fact_by_key: dict[str, MacroFact] = field(default_factory=dict, repr=False, compare=False)
+    missing_keys: set[str] = field(default_factory=set, repr=False, compare=False)
+    cache_db_path: str | None = None
+    cache_connection: object | None = field(default=None, repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class MacroCacheStatus:
+    """Operator-facing summary of compiled macro cache state."""
+
+    path: str
+    state: str
+    reason: str
+    configured_files: tuple[str, ...] = ()
+    file_count: int = 0
+    fact_count: int = 0
+    unresolved_count: int = 0
+    parser_version: int = 0
 
 
 @dataclass(frozen=True, slots=True)

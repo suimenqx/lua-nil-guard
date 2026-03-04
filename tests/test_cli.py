@@ -30,6 +30,10 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "init-config" in output
     assert "macro-audit" in output
     assert "macro-audit-json" in output
+    assert "macro-build-cache" in output
+    assert "macro-build-cache-json" in output
+    assert "macro-cache-status" in output
+    assert "macro-cache-status-json" in output
     assert "generate-backend-manifest" in output
     assert "scan-file" in output
     assert "report-file" in output
@@ -136,6 +140,7 @@ def test_cli_doctor_reports_parser_diagnostics(monkeypatch: pytest.MonkeyPatch) 
     assert "Parser backend: unavailable" in output
     assert "Status: tree_sitter Python package not installed" in output
     assert "Detected compiler: gcc (/usr/bin/gcc)" in output
+    assert "macro-cache-status <repository>" in output
 
 
 def test_cli_scan_requires_tree_sitter_backend(
@@ -444,6 +449,70 @@ def test_cli_macro_audit_json_renders_structured_payload(tmp_path: Path) -> None
     assert payload["total_files"] == 1
     assert payload["total_facts"] == 1
     assert payload["facts"][0]["key"] == "MAX_LEVEL"
+
+
+def test_cli_macro_build_cache_and_status_report_compiled_cache(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "preprocessor_files.json").write_text(
+        json.dumps({"preprocessor_files": ["src/macros.lua"], "preprocessor_globs": []}),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "macros.lua").write_text("MAX_LEVEL = 100\n", encoding="utf-8")
+    (tmp_path / "src" / "demo.lua").write_text("return nil\n", encoding="utf-8")
+
+    exit_code, output = run(["macro-build-cache", str(tmp_path)])
+
+    assert exit_code == 0
+    assert "Preprocessor Macro Cache Status" in output
+    assert "State: rebuilt" in output
+    assert "Resolved macro facts: 1" in output
+
+    exit_code, output = run(["macro-cache-status", str(tmp_path)])
+
+    assert exit_code == 0
+    assert "State: fresh" in output
+    assert "Configured macro files: 1" in output
+
+
+def test_cli_macro_cache_status_json_reports_missing_cache(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "preprocessor_files.json").write_text(
+        json.dumps({"preprocessor_files": ["src/macros.lua"], "preprocessor_globs": []}),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "macros.lua").write_text("MAX_LEVEL = 100\n", encoding="utf-8")
+    (tmp_path / "src" / "demo.lua").write_text("return nil\n", encoding="utf-8")
+
+    exit_code, output = run(["macro-cache-status-json", str(tmp_path)])
+
+    payload = json.loads(output)
+    assert exit_code == 0
+    assert payload["state"] == "missing"
+    assert payload["file_count"] == 1
 
 
 def test_cli_normalize_encoding_dry_run_and_write(tmp_path: Path) -> None:

@@ -186,6 +186,57 @@ def test_run_repository_review_uses_preprocessor_macro_facts_without_scanning_ma
     assert all(verdict.status.startswith("safe") for verdict in verdicts)
 
 
+def test_run_repository_review_uses_default_id_macro_facts_to_suppress_member_access_noise(
+    tmp_path: Path,
+) -> None:
+    _write_review_config(
+        tmp_path,
+        [
+            {
+                "id": "member_access.receiver",
+                "kind": "receiver",
+                "qualified_name": "member_access",
+                "arg_index": 0,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["assert(x)", "if x then ... end"],
+            }
+        ],
+    )
+    (tmp_path / "src" / "id.lua").write_text(
+        "\n".join(
+            [
+                "AAA = 1",
+                "_fid_a = {}",
+                "_fid_a.name = 1",
+                "_fid_a.id = 2",
+                "_fid_alias = _fid_a",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "consumer.lua").write_text(
+        "\n".join(
+            [
+                "function show()",
+                "  print(_fid_a.name)",
+                "  print(_fid_alias.id)",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert snapshot.preprocessor_files == (tmp_path / "src" / "id.lua",)
+    assert snapshot.lua_files == (tmp_path / "src" / "consumer.lua",)
+    assert len(verdicts) == 2
+    assert all(verdict.status.startswith("safe") for verdict in verdicts)
+
+
 def test_run_repository_review_uses_function_contracts_to_suppress_false_positive(
     tmp_path: Path,
 ) -> None:

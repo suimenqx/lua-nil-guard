@@ -5,7 +5,12 @@ from pathlib import Path
 from lua_nil_guard.models import PreprocessorConfig
 from lua_nil_guard.preprocessor import (
     build_macro_audit,
+    build_macro_cache,
     build_macro_index,
+    ensure_macro_index,
+    inspect_macro_cache,
+    lookup_macro_fact,
+    macro_cache_path,
     parse_macro_file,
     resolve_macro_facts,
     split_preprocessor_files,
@@ -111,3 +116,47 @@ def test_build_macro_index_and_audit_use_source_loader(tmp_path: Path) -> None:
     assert len(audit.facts) == 2
     assert len(index.facts) == 2
     assert any(fact.key == "GREETING" and fact.provably_non_nil for fact in index.facts)
+
+
+def test_build_macro_cache_and_ensure_macro_index_reuse_fresh_cache(tmp_path: Path) -> None:
+    macro = tmp_path / "macros.lua"
+    macro.write_text("GREETING = \"hi\"\nTABLE = {}\n", encoding="utf-8")
+
+    built_index, build_status = build_macro_cache(
+        tmp_path,
+        (macro,),
+        source_loader=lambda path: path.read_text(encoding="utf-8"),
+    )
+    reused_index, reused_status = ensure_macro_index(
+        tmp_path,
+        (macro,),
+        source_loader=lambda path: path.read_text(encoding="utf-8"),
+    )
+
+    assert build_status.state == "rebuilt"
+    assert build_status.fact_count == 2
+    assert built_index.fact_by_key["GREETING"].resolved_value == "hi"
+    assert macro_cache_path(tmp_path).is_file()
+    assert reused_status.state == "fresh"
+    assert reused_index.cache_connection is not None
+    assert reused_index.facts == ()
+    assert reused_index.unresolved_lines == ()
+    reused_fact = lookup_macro_fact(reused_index, "GREETING")
+    assert reused_fact is not None
+    assert reused_fact.resolved_value == "hi"
+
+
+def test_inspect_macro_cache_detects_stale_source_change(tmp_path: Path) -> None:
+    macro = tmp_path / "macros.lua"
+    macro.write_text("GREETING = \"hi\"\n", encoding="utf-8")
+    build_macro_cache(
+        tmp_path,
+        (macro,),
+        source_loader=lambda path: path.read_text(encoding="utf-8"),
+    )
+    macro.write_text("GREETING = \"hello\"\n", encoding="utf-8")
+
+    status = inspect_macro_cache(tmp_path, (macro,))
+
+    assert status.state == "stale"
+    assert "preprocessor source changed" in status.reason

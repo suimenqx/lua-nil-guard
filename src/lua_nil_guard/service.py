@@ -43,13 +43,21 @@ from .models import (
     ImprovementAnalytics,
     ImprovementProposal,
     MacroAuditResult,
+    MacroCacheStatus,
     RepositorySnapshot,
     SinkRule,
     Verdict,
     with_candidate_state,
 )
 from .pipeline import build_evidence_packet, should_report
-from .preprocessor import build_macro_audit, build_macro_index, split_preprocessor_files
+from .preprocessor import (
+    build_macro_audit,
+    build_macro_cache,
+    ensure_macro_index,
+    inspect_macro_cache,
+    load_macro_audit_from_cache,
+    split_preprocessor_files,
+)
 from .prompting import build_adjudication_prompt
 from .repository import discover_lua_files, read_lua_source_text
 from .summaries import (
@@ -125,6 +133,21 @@ class _RelatedEvidenceSelection:
     context_texts: tuple[str, ...]
 
 
+def _resolve_preprocessor_files(root_path: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    all_lua_files = tuple(discover_lua_files(root_path))
+    preprocessor_config_path = root_path / "config" / "preprocessor_files.json"
+    preprocessor_config = (
+        load_preprocessor_config(preprocessor_config_path)
+        if preprocessor_config_path.is_file()
+        else default_preprocessor_config()
+    )
+    return split_preprocessor_files(
+        root_path,
+        all_lua_files,
+        preprocessor_config,
+    )
+
+
 def bootstrap_repository(root: str | Path) -> RepositorySnapshot:
     """Load the current repository's core review inputs."""
 
@@ -141,25 +164,14 @@ def bootstrap_repository(root: str | Path) -> RepositorySnapshot:
 
     sink_rules = tuple(load_sink_rules(root_path / "config" / "sink_rules.json"))
     confidence_policy = load_confidence_policy(root_path / "config" / "confidence_policy.json")
-    all_lua_files = tuple(discover_lua_files(root_path))
     contracts_path = root_path / "config" / "function_contracts.json"
     function_contracts = (
         tuple(load_function_contracts(contracts_path))
         if contracts_path.is_file()
         else ()
     )
-    preprocessor_config_path = root_path / "config" / "preprocessor_files.json"
-    preprocessor_config = (
-        load_preprocessor_config(preprocessor_config_path)
-        if preprocessor_config_path.is_file()
-        else default_preprocessor_config()
-    )
-    review_lua_files, preprocessor_files = split_preprocessor_files(
-        root_path,
-        all_lua_files,
-        preprocessor_config,
-    )
-    macro_index = build_macro_index(
+    review_lua_files, preprocessor_files = _resolve_preprocessor_files(root_path)
+    macro_index, macro_cache_status = ensure_macro_index(
         root_path,
         preprocessor_files,
         source_loader=read_lua_source_text,
@@ -172,8 +184,38 @@ def bootstrap_repository(root: str | Path) -> RepositorySnapshot:
         lua_files=review_lua_files,
         preprocessor_files=preprocessor_files,
         macro_index=macro_index,
+        macro_cache_status=macro_cache_status,
         function_contracts=function_contracts,
     )
+
+
+def macro_cache_status_for_repository(root: str | Path) -> MacroCacheStatus:
+    """Inspect current macro cache state for a repository without rebuilding it."""
+
+    root_path = Path(root)
+    if not root_path.exists():
+        raise FileNotFoundError(f"Repository root not found: {root_path}")
+    if not root_path.is_dir():
+        raise NotADirectoryError(f"Repository root is not a directory: {root_path}")
+    _review_files, preprocessor_files = _resolve_preprocessor_files(root_path)
+    return inspect_macro_cache(root_path, preprocessor_files)
+
+
+def build_repository_macro_cache(root: str | Path) -> MacroCacheStatus:
+    """Build or refresh the compiled macro cache for one repository."""
+
+    root_path = Path(root)
+    if not root_path.exists():
+        raise FileNotFoundError(f"Repository root not found: {root_path}")
+    if not root_path.is_dir():
+        raise NotADirectoryError(f"Repository root is not a directory: {root_path}")
+    _review_files, preprocessor_files = _resolve_preprocessor_files(root_path)
+    _macro_index, status = build_macro_cache(
+        root_path,
+        preprocessor_files,
+        source_loader=read_lua_source_text,
+    )
+    return status
 
 
 def find_repository_root_for_file(file_path: str | Path) -> Path:
@@ -322,6 +364,19 @@ def review_repository_file(
 def macro_audit_repository(snapshot: RepositorySnapshot) -> MacroAuditResult:
     """Return operator-facing macro dictionary ingestion details for a snapshot."""
 
+    cached_audit = load_macro_audit_from_cache(
+        snapshot.root,
+        snapshot.macro_index,
+        files=snapshot.preprocessor_files,
+    )
+    if cached_audit is not None:
+        return cached_audit
+    if snapshot.macro_index is not None:
+        return MacroAuditResult(
+            files=tuple(str(path) for path in snapshot.preprocessor_files),
+            facts=snapshot.macro_index.facts,
+            unresolved_lines=snapshot.macro_index.unresolved_lines,
+        )
     return build_macro_audit(
         snapshot.root,
         snapshot.preprocessor_files,

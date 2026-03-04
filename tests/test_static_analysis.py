@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lua_nil_guard.models import CandidateCase, FunctionContract
+from lua_nil_guard.models import CandidateCase, FunctionContract, MacroFact, MacroIndex
 from lua_nil_guard.parser_backend import get_parser_backend_info
 from lua_nil_guard.static_analysis import analyze_candidate
 
@@ -93,6 +93,45 @@ def test_analyze_candidate_leaves_unguarded_value_unknown() -> None:
     assert result.state == "unknown_static"
     assert result.observed_guards == ()
     assert result.origin_candidates == ("req.params.username",)
+
+
+def test_analyze_candidate_uses_macro_fact_to_suppress_member_access_nil_receiver() -> None:
+    source = "return _fid_a.name"
+    candidate = CandidateCase(
+        case_id="case_macro_receiver",
+        file="demo.lua",
+        line=1,
+        column=8,
+        sink_rule_id="member_access.receiver",
+        sink_name="member_access",
+        arg_index=0,
+        expression="_fid_a",
+        symbol="_fid_a",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        macro_index=MacroIndex(
+            facts=(
+                MacroFact(
+                    key="_fid_a",
+                    kind="empty_table",
+                    value="{}",
+                    provably_non_nil=True,
+                    file="src/id.lua",
+                    line=1,
+                ),
+            )
+        ),
+    )
+
+    assert result.state == "safe_static"
+    assert result.proofs
+    assert result.proofs[0].kind == "macro_fact_guard"
+    assert "_fid_a" in result.proofs[0].summary
 
 
 def test_analyze_candidate_does_not_treat_nil_branch_ternary_as_defaulted() -> None:

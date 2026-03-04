@@ -263,6 +263,86 @@ def test_bootstrap_repository_uses_default_id_globs_without_explicit_preprocesso
     assert any(fact.key == "USER_NAME" for fact in snapshot.macro_index.facts)
 
 
+def test_bootstrap_repository_reuses_fresh_macro_cache_on_second_load(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    src_dir = tmp_path / "src"
+    config_dir.mkdir()
+    src_dir.mkdir()
+    (config_dir / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (config_dir / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    macro_file = src_dir / "id.lua"
+    business_file = src_dir / "consumer.lua"
+    macro_file.write_text("USER_NAME = \"guest\"\n", encoding="utf-8")
+    business_file.write_text("return nil\n", encoding="utf-8")
+
+    first_snapshot = bootstrap_repository(tmp_path)
+    second_snapshot = bootstrap_repository(tmp_path)
+
+    assert first_snapshot.macro_cache_status is not None
+    assert first_snapshot.macro_cache_status.state == "rebuilt"
+    assert second_snapshot.macro_cache_status is not None
+    assert second_snapshot.macro_cache_status.state == "fresh"
+    assert second_snapshot.macro_index is not None
+    assert second_snapshot.macro_index.cache_connection is not None
+    assert second_snapshot.macro_index.facts == ()
+
+
+def test_run_file_review_uses_cached_macro_facts_after_second_bootstrap(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    src_dir = tmp_path / "src"
+    config_dir.mkdir()
+    src_dir.mkdir()
+    (config_dir / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.find.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.find",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (config_dir / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    macro_file = src_dir / "id.lua"
+    target_file = src_dir / "consumer.lua"
+    macro_file.write_text("USER_NAME = \"guest\"\n", encoding="utf-8")
+    target_file.write_text("return string.find(USER_NAME, '^g')\n", encoding="utf-8")
+
+    _first_snapshot = bootstrap_repository(tmp_path)
+    second_snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_file_review(second_snapshot, target_file)
+
+    assert second_snapshot.macro_cache_status is not None
+    assert second_snapshot.macro_cache_status.state == "fresh"
+    assert len(verdicts) == 1
+    assert verdicts[0].status.startswith("safe")
+
+
 def test_find_repository_root_for_file_walks_up_to_config_directory(tmp_path: Path) -> None:
     config_dir = tmp_path / "config"
     nested_dir = tmp_path / "src" / "handlers"

@@ -1698,6 +1698,10 @@ def _macro_lookup_key(expression: str) -> str | None:
 
 
 def _macro_fact_matches_sink(kind: str, candidate: CandidateCase) -> bool:
+    if candidate.sink_rule_id == "member_access.receiver":
+        # Member access uses this check only for nil-receiver risk. Any macro
+        # fact proven non-nil is enough to suppress that specific warning.
+        return True
     if kind == "string_literal":
         return (
             candidate.sink_name.startswith("string.")
