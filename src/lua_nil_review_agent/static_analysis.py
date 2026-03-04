@@ -1918,6 +1918,8 @@ def _collect_transparent_return_wrappers_from_source_ast(
             if _node_text(source_bytes, child).strip()
         ]
         transparent_mapping = _transparent_return_mapping(meaningful_lines, list(params))
+        if not transparent_mapping:
+            transparent_mapping = _ast_defaulting_wrapper_return_mapping(body, source_bytes, params)
         if transparent_mapping:
             wrappers[normalized_name] = transparent_mapping
     return wrappers
@@ -2050,6 +2052,132 @@ def _statement_returns_symbol(statement, source_bytes: bytes, symbol: str) -> bo
         return False
     first_value = _split_top_level_values(values[0])[0].strip() if _split_top_level_values(values[0]) else values[0]
     return _same_symbol_reference(first_value, symbol)
+
+
+def _ast_defaulting_wrapper_return_mapping(
+    body_node,
+    source_bytes: bytes,
+    params: tuple[str, ...],
+) -> tuple[tuple[int, int], ...]:
+    statements = tuple(child for child in body_node.named_children if _node_text(source_bytes, child).strip())
+    if len(statements) == 2:
+        return _if_defaulting_wrapper_return_mapping(
+            if_statement=statements[0],
+            return_statement=statements[1],
+            source_bytes=source_bytes,
+            params=params,
+        )
+    if len(statements) == 3:
+        return _aliased_if_defaulting_wrapper_return_mapping(
+            alias_statement=statements[0],
+            if_statement=statements[1],
+            return_statement=statements[2],
+            source_bytes=source_bytes,
+            params=params,
+        )
+    return ()
+
+
+def _if_defaulting_wrapper_return_mapping(
+    *,
+    if_statement,
+    return_statement,
+    source_bytes: bytes,
+    params: tuple[str, ...],
+) -> tuple[tuple[int, int], ...]:
+    if if_statement.type != "if_statement" or if_statement.child_by_field_name("alternative") is not None:
+        return ()
+    condition = if_statement.child_by_field_name("condition")
+    consequence = if_statement.child_by_field_name("consequence")
+    if condition is None or consequence is None:
+        return ()
+    guarded_symbol = _negative_guarded_symbol_text(condition, source_bytes)
+    if guarded_symbol is None:
+        return ()
+    if not _statement_returns_symbol(return_statement, source_bytes, guarded_symbol):
+        return ()
+    fallback_source = _single_statement_defaulting_assignment(
+        consequence,
+        source_bytes,
+        target_symbol=guarded_symbol,
+        params=params,
+    )
+    if fallback_source is None:
+        return ()
+    return ((1, fallback_source),)
+
+
+def _aliased_if_defaulting_wrapper_return_mapping(
+    *,
+    alias_statement,
+    if_statement,
+    return_statement,
+    source_bytes: bytes,
+    params: tuple[str, ...],
+) -> tuple[tuple[int, int], ...]:
+    alias_assignment = _split_assignment_statement(_node_text(source_bytes, alias_statement))
+    if alias_assignment is None:
+        return ()
+    targets, values = alias_assignment
+    if len(targets) != 1 or len(values) != 1:
+        return ()
+    alias = targets[0]
+    if _wrapper_return_source_arg(values[0], list(params)) is None:
+        return ()
+    if not _statement_returns_symbol(return_statement, source_bytes, alias):
+        return ()
+    if if_statement.type != "if_statement" or if_statement.child_by_field_name("alternative") is not None:
+        return ()
+    condition = if_statement.child_by_field_name("condition")
+    consequence = if_statement.child_by_field_name("consequence")
+    if condition is None or consequence is None:
+        return ()
+    guarded_symbol = _negative_guarded_symbol_text(condition, source_bytes)
+    if guarded_symbol is None or not _same_symbol_reference(guarded_symbol, alias):
+        return ()
+    fallback_source = _single_statement_defaulting_assignment(
+        consequence,
+        source_bytes,
+        target_symbol=alias,
+        params=params,
+    )
+    if fallback_source is None:
+        return ()
+    return ((1, fallback_source),)
+
+
+def _negative_guarded_symbol_text(condition_node, source_bytes: bytes) -> str | None:
+    text = _node_text(source_bytes, condition_node).strip()
+    if text.startswith("not "):
+        symbol = text[len("not ") :].strip()
+        if symbol:
+            return symbol
+    if text.endswith(" == nil"):
+        symbol = text[: -len(" == nil")].strip()
+        if symbol:
+            return symbol
+    return None
+
+
+def _single_statement_defaulting_assignment(
+    block_node,
+    source_bytes: bytes,
+    *,
+    target_symbol: str,
+    params: tuple[str, ...],
+) -> int | None:
+    statements = tuple(child for child in block_node.named_children if _node_text(source_bytes, child).strip())
+    if len(statements) != 1:
+        return None
+    assignment = _split_assignment_statement(_node_text(source_bytes, statements[0]))
+    if assignment is None:
+        return None
+    targets, values = assignment
+    if len(targets) != 1 or len(values) != 1:
+        return None
+    if not _same_symbol_reference(targets[0], target_symbol):
+        return None
+    return _wrapper_return_source_arg(values[0], list(params))
 
 
 def _transparent_return_mapping(
