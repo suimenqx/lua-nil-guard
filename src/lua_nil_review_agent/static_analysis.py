@@ -48,6 +48,7 @@ def analyze_candidate(
     *,
     function_contracts: tuple[FunctionContract, ...] = (),
     transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]] | None = None,
+    inline_guard_contracts: tuple[FunctionContract, ...] | None = None,
 ) -> StaticAnalysisResult:
     """Apply bounded local heuristics before escalating to agent review."""
 
@@ -71,8 +72,14 @@ def analyze_candidate(
     effective_transparent_return_wrappers = (
         dict(transparent_return_wrappers)
         if transparent_return_wrappers is not None
-        else collect_transparent_return_wrappers((source,))
+        else collect_transparent_return_wrappers((source,), allow_local=True)
     )
+    effective_inline_guard_contracts = (
+        tuple(inline_guard_contracts)
+        if inline_guard_contracts is not None
+        else collect_inline_guard_contracts((source,), allow_local=True)
+    )
+    effective_function_contracts = effective_inline_guard_contracts + tuple(function_contracts)
     ast_guard_outcome = _analyze_guards_with_ast(source, candidate)
     analysis_mode = ast_guard_outcome.analysis_mode
     unknown_reason = ast_guard_outcome.unknown_reason
@@ -91,7 +98,7 @@ def analyze_candidate(
     contract_guard = _active_contract_guard(
         prior_lines,
         candidate.symbol,
-        function_contracts=function_contracts,
+        function_contracts=effective_function_contracts,
         current_module=current_module,
         current_function_scope=candidate.function_scope,
         current_top_level_phase=current_top_level_phase,
@@ -112,7 +119,7 @@ def analyze_candidate(
         prior_lines,
         origin_context,
         subject=candidate.symbol,
-        function_contracts=function_contracts,
+        function_contracts=effective_function_contracts,
         current_module=current_module,
         current_function_scope=candidate.function_scope,
         current_top_level_phase=current_top_level_phase,
@@ -1792,22 +1799,59 @@ def _has_terminal_safe_return_origin(
 
 def collect_transparent_return_wrappers(
     sources: tuple[str, ...],
+    *,
+    allow_local: bool = True,
 ) -> dict[str, tuple[tuple[int, int], ...]]:
     wrappers: dict[str, tuple[tuple[int, int], ...]] = {}
+    language = _load_lua_language()
     for source in sources:
-        wrappers.update(
-            _collect_transparent_return_wrappers_from_source(
+        current_module = detect_module_name(source)
+        if language is not None:
+            ast_wrappers = _collect_transparent_return_wrappers_from_source_ast(
                 source,
-                current_module=detect_module_name(source),
+                current_module=current_module,
+                allow_local=allow_local,
+                language=language,
+            )
+            if ast_wrappers:
+                wrappers.update(ast_wrappers)
+                continue
+        wrappers.update(
+            _collect_transparent_return_wrappers_from_source_fallback(
+                source,
+                current_module=current_module,
+                allow_local=allow_local,
             )
         )
     return wrappers
 
 
-def _collect_transparent_return_wrappers_from_source(
+def collect_inline_guard_contracts(
+    sources: tuple[str, ...],
+    *,
+    allow_local: bool = True,
+) -> tuple[FunctionContract, ...]:
+    language = _load_lua_language()
+    if language is None:
+        return ()
+    contracts: list[FunctionContract] = []
+    for source in sources:
+        contracts.extend(
+            _collect_inline_guard_contracts_from_source_ast(
+                source,
+                current_module=detect_module_name(source),
+                allow_local=allow_local,
+                language=language,
+            )
+        )
+    return tuple(contracts)
+
+
+def _collect_transparent_return_wrappers_from_source_fallback(
     source: str,
     *,
     current_module: str | None,
+    allow_local: bool,
 ) -> dict[str, tuple[tuple[int, int], ...]]:
     lines = source.splitlines()
     wrappers: dict[str, tuple[tuple[int, int], ...]] = {}
@@ -1817,6 +1861,9 @@ def _collect_transparent_return_wrappers_from_source(
         stripped = _strip_lua_comment(lines[index]).strip()
         match = _FUNCTION_DEF_RE.match(stripped)
         if match is None:
+            index += 1
+            continue
+        if not allow_local and stripped.startswith("local function "):
             index += 1
             continue
 
@@ -1846,6 +1893,163 @@ def _collect_transparent_return_wrappers_from_source(
             wrappers[_normalize_defined_function_name(raw_name, current_module=current_module)] = transparent_mapping
 
     return wrappers
+
+
+def _collect_transparent_return_wrappers_from_source_ast(
+    source: str,
+    *,
+    current_module: str | None,
+    allow_local: bool,
+    language,
+) -> dict[str, tuple[tuple[int, int], ...]]:
+    wrappers: dict[str, tuple[tuple[int, int], ...]] = {}
+    for function_node, source_bytes, normalized_name, params in _iter_ast_function_definitions(
+        source,
+        current_module=current_module,
+        allow_local=allow_local,
+        language=language,
+    ):
+        body = function_node.child_by_field_name("body")
+        if body is None:
+            continue
+        meaningful_lines = [
+            _node_text(source_bytes, child).strip()
+            for child in body.named_children
+            if _node_text(source_bytes, child).strip()
+        ]
+        transparent_mapping = _transparent_return_mapping(meaningful_lines, list(params))
+        if transparent_mapping:
+            wrappers[normalized_name] = transparent_mapping
+    return wrappers
+
+
+def _collect_inline_guard_contracts_from_source_ast(
+    source: str,
+    *,
+    current_module: str | None,
+    allow_local: bool,
+    language,
+) -> tuple[FunctionContract, ...]:
+    contracts: list[FunctionContract] = []
+    for function_node, source_bytes, normalized_name, params in _iter_ast_function_definitions(
+        source,
+        current_module=current_module,
+        allow_local=allow_local,
+        language=language,
+    ):
+        body = function_node.child_by_field_name("body")
+        if body is None or not params:
+            continue
+        ensured_args = _inline_guarded_param_indexes(body, source_bytes, params)
+        if not ensured_args:
+            continue
+        contracts.append(
+            FunctionContract(
+                qualified_name=normalized_name,
+                returns_non_nil=False,
+                ensures_non_nil_args=ensured_args,
+                notes="ast_inlined_guard_helper",
+            )
+        )
+    return tuple(contracts)
+
+
+def _iter_ast_function_definitions(
+    source: str,
+    *,
+    current_module: str | None,
+    allow_local: bool,
+    language,
+) -> tuple[tuple[object, bytes, str, tuple[str, ...]], ...]:
+    try:
+        from tree_sitter import Parser
+    except Exception:
+        return ()
+
+    try:
+        parser = Parser()
+        parser.language = language
+        source_bytes = source.encode("utf-8")
+        tree = parser.parse(source_bytes)
+    except Exception:
+        return ()
+
+    functions: list[tuple[object, bytes, str, tuple[str, ...]]] = []
+    stack = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "function_declaration":
+            if not allow_local and _is_local_function_declaration(node):
+                stack.extend(reversed(node.children))
+                continue
+            name_node = node.child_by_field_name("name")
+            params_node = node.child_by_field_name("parameters")
+            if name_node is not None and params_node is not None:
+                raw_name = _node_text(source_bytes, name_node).strip()
+                params = tuple(
+                    _node_text(source_bytes, child).strip()
+                    for child in params_node.named_children
+                    if _IDENTIFIER_RE.match(_node_text(source_bytes, child).strip())
+                )
+                functions.append(
+                    (
+                        node,
+                        source_bytes,
+                        _normalize_defined_function_name(raw_name, current_module=current_module),
+                        params,
+                    )
+                )
+        stack.extend(reversed(node.children))
+    return tuple(functions)
+
+
+def _inline_guarded_param_indexes(
+    body_node,
+    source_bytes: bytes,
+    params: tuple[str, ...],
+) -> tuple[int, ...]:
+    statements = tuple(body_node.named_children)
+    if not statements:
+        return ()
+
+    guarded_indexes: list[int] = []
+    for index, param in enumerate(params, start=1):
+        if _body_guards_and_returns_param(statements, source_bytes, param):
+            guarded_indexes.append(index)
+    return tuple(guarded_indexes)
+
+
+def _body_guards_and_returns_param(
+    statements: tuple[object, ...],
+    source_bytes: bytes,
+    param: str,
+) -> bool:
+    if len(statements) == 2 and statements[0].type == "function_call":
+        return _node_is_assert_guard(statements[0], param, source_bytes) and _statement_returns_symbol(
+            statements[1],
+            source_bytes,
+            param,
+        )
+
+    if len(statements) != 2 or statements[0].type != "if_statement":
+        return False
+    if not _node_is_negative_guard_exit(statements[0], param, source_bytes):
+        return False
+    return _statement_returns_symbol(statements[1], source_bytes, param)
+
+
+def _statement_returns_symbol(statement, source_bytes: bytes, symbol: str) -> bool:
+    if statement.type != "return_statement":
+        return False
+    values = tuple(
+        _node_text(source_bytes, child).strip()
+        for child in statement.named_children
+        if _node_text(source_bytes, child).strip()
+    )
+    if not values:
+        return False
+    first_value = _split_top_level_values(values[0])[0].strip() if _split_top_level_values(values[0]) else values[0]
+    return _same_symbol_reference(first_value, symbol)
 
 
 def _transparent_return_mapping(

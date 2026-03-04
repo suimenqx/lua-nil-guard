@@ -110,3 +110,40 @@ def test_review_source_handles_length_operator_candidates() -> None:
     assert assessment.candidate.static_state == "safe_static"
     assert assessment.static_analysis.observed_guards == ("items = items or ...",)
     assert assessment.static_analysis.origin_candidates == ("req.items or {}",)
+
+
+def test_review_source_uses_local_ast_inlined_guard_helpers() -> None:
+    sink_rules = (
+        SinkRule(
+            id="string.match.arg1",
+            kind="function_arg",
+            qualified_name="string.match",
+            arg_index=1,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("assert(x)",),
+        ),
+    )
+    source = "\n".join(
+        [
+            "local function assert_present(value)",
+            "  if not value then",
+            "    error('missing')",
+            "  end",
+            "  return value",
+            "end",
+            "",
+            "local username = req.params.username",
+            "assert_present(username)",
+            "return string.match(username, '^a')",
+        ]
+    )
+
+    assessments = review_source(Path("foo.lua"), source, sink_rules)
+
+    assert len(assessments) == 1
+    assessment = assessments[0]
+    assert assessment.candidate.static_state == "safe_static"
+    assert assessment.static_analysis.observed_guards == ("assert_present(username)",)
+    assert any(proof.kind == "contract_guard" for proof in assessment.static_analysis.proofs)

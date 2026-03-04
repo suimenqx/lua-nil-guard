@@ -41,7 +41,11 @@ from .pipeline import build_evidence_packet, should_report
 from .prompting import build_adjudication_prompt
 from .repository import discover_lua_files
 from .summaries import SummaryStore, detect_module_name, summarize_source
-from .static_analysis import analyze_candidate, collect_transparent_return_wrappers
+from .static_analysis import (
+    analyze_candidate,
+    collect_inline_guard_contracts,
+    collect_transparent_return_wrappers,
+)
 from .verification import verify_verdict
 
 
@@ -156,13 +160,26 @@ def review_source(
     *,
     function_contracts: tuple[object, ...] = (),
     transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]] | None = None,
+    inline_guard_contracts: tuple[object, ...] | None = None,
 ) -> tuple[CandidateAssessment, ...]:
     """Collect candidates from one source file and attach local static analysis."""
 
     effective_transparent_return_wrappers = (
         dict(transparent_return_wrappers)
         if transparent_return_wrappers is not None
-        else collect_transparent_return_wrappers((source,))
+        else {}
+    )
+    effective_transparent_return_wrappers.update(
+        collect_transparent_return_wrappers((source,), allow_local=True)
+    )
+    effective_inline_guard_contracts = (
+        tuple(inline_guard_contracts)
+        if inline_guard_contracts is not None
+        else ()
+    )
+    effective_inline_guard_contracts = (
+        effective_inline_guard_contracts
+        + collect_inline_guard_contracts((source,), allow_local=True)
     )
     assessments: list[CandidateAssessment] = []
     for candidate in collect_candidates(file_path, source, sink_rules):
@@ -171,6 +188,7 @@ def review_source(
             candidate,
             function_contracts=tuple(function_contracts),
             transparent_return_wrappers=effective_transparent_return_wrappers,
+            inline_guard_contracts=effective_inline_guard_contracts,
         )
         assessments.append(
             CandidateAssessment(
@@ -185,6 +203,7 @@ def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment
     """Run the current static first-pass review across all discovered Lua files."""
 
     transparent_return_wrappers = _collect_snapshot_transparent_return_wrappers(snapshot)
+    inline_guard_contracts = _collect_snapshot_inline_guard_contracts(snapshot)
     assessments: list[CandidateAssessment] = []
     for file_path in snapshot.lua_files:
         source = file_path.read_text(encoding="utf-8")
@@ -195,6 +214,7 @@ def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment
                 snapshot.sink_rules,
                 function_contracts=snapshot.function_contracts,
                 transparent_return_wrappers=transparent_return_wrappers,
+                inline_guard_contracts=inline_guard_contracts,
             )
         )
     return tuple(assessments)
@@ -209,12 +229,14 @@ def review_repository_file(
     resolved_file = _resolve_snapshot_lua_file(snapshot, file_path)
     source = resolved_file.read_text(encoding="utf-8")
     transparent_return_wrappers = _collect_snapshot_transparent_return_wrappers(snapshot)
+    inline_guard_contracts = _collect_snapshot_inline_guard_contracts(snapshot)
     return review_source(
         resolved_file,
         source,
         snapshot.sink_rules,
         function_contracts=snapshot.function_contracts,
         transparent_return_wrappers=transparent_return_wrappers,
+        inline_guard_contracts=inline_guard_contracts,
     )
 
 
@@ -630,6 +652,8 @@ def export_adjudication_tasks(
     function_context_by_name = _build_function_context_index(snapshot, summaries)
     file_module_by_path = _build_file_module_index(snapshot)
     facts = _load_knowledge_facts(snapshot, knowledge_path)
+    transparent_return_wrappers = _collect_snapshot_transparent_return_wrappers(snapshot)
+    inline_guard_contracts = _collect_snapshot_inline_guard_contracts(snapshot)
     tasks: list[dict[str, object]] = []
 
     for file_path in snapshot.lua_files:
@@ -639,6 +663,8 @@ def export_adjudication_tasks(
             source,
             snapshot.sink_rules,
             function_contracts=snapshot.function_contracts,
+            transparent_return_wrappers=transparent_return_wrappers,
+            inline_guard_contracts=inline_guard_contracts,
         ):
             related_evidence = _build_related_evidence(
                 assessment,
@@ -830,7 +856,17 @@ def _collect_snapshot_transparent_return_wrappers(
     snapshot: RepositorySnapshot,
 ) -> dict[str, tuple[tuple[int, int], ...]]:
     return collect_transparent_return_wrappers(
-        tuple(file_path.read_text(encoding="utf-8") for file_path in snapshot.lua_files)
+        tuple(file_path.read_text(encoding="utf-8") for file_path in snapshot.lua_files),
+        allow_local=False,
+    )
+
+
+def _collect_snapshot_inline_guard_contracts(
+    snapshot: RepositorySnapshot,
+) -> tuple[object, ...]:
+    return collect_inline_guard_contracts(
+        tuple(file_path.read_text(encoding="utf-8") for file_path in snapshot.lua_files),
+        allow_local=False,
     )
 
 
