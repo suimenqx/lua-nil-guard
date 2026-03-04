@@ -14,6 +14,7 @@ from lua_nil_review_agent.service import (
     benchmark_repository_review,
     bootstrap_repository,
     clear_backend_cache,
+    draft_function_contracts,
     export_autofix_patches,
     export_autofix_unified_diff,
     find_repository_root_for_file,
@@ -612,6 +613,87 @@ def test_run_file_review_uses_cross_file_ast_defaulting_wrappers_for_static_safe
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("safe")
+
+
+def test_draft_function_contracts_infers_guard_and_wrapper_drafts_without_mutating_config(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "function_contracts.json").write_text(
+        json.dumps(
+            [
+                {
+                    "qualified_name": "already_configured",
+                    "returns_non_nil": True,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "helpers.lua").write_text(
+        "\n".join(
+            [
+                "function assert_present(value)",
+                "  if not value then",
+                "    error('missing')",
+                "  end",
+                "  return value",
+                "end",
+                "",
+                "function normalize_name(value)",
+                "  if not value then",
+                "    value = ''",
+                "  end",
+                "  return value",
+                "end",
+                "",
+                "function wrap_name(value)",
+                "  return value",
+                "end",
+                "",
+                "function already_configured(value)",
+                "  return value or ''",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    drafts = draft_function_contracts(snapshot)
+
+    draft_by_name = {draft.qualified_name: draft for draft in drafts}
+
+    assert "assert_present" in draft_by_name
+    assert draft_by_name["assert_present"].ensures_non_nil_args == (1,)
+    assert draft_by_name["assert_present"].notes == "draft:ast_inlined_guard_helper"
+
+    assert "normalize_name" in draft_by_name
+    assert draft_by_name["normalize_name"].returns_non_nil is True
+    assert draft_by_name["normalize_name"].notes == "draft:ast_defaulting_wrapper"
+
+    assert "wrap_name" in draft_by_name
+    assert draft_by_name["wrap_name"].returns_non_nil_from_args == (1,)
+    assert (
+        draft_by_name["wrap_name"].returns_non_nil_from_args_by_return_slot
+        == ((1, (1,)),)
+    )
+    assert draft_by_name["wrap_name"].notes == "draft:ast_wrapper_passthrough"
+
+    assert "already_configured" not in draft_by_name
 
 
 def test_run_file_review_budgets_and_prioritizes_related_function_contexts(

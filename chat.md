@@ -629,3 +629,20 @@ Phase 4 没有做泛化 prompt 膨胀，而是按原定方向做了 **proof-awar
 
 #### 最新状态
 - 全量测试通过：`349 passed`
+
+### 我（Phase 5 最小闭环已落地）
+
+当前已经接上一个 **draft-only 的数据飞轮起点**：
+
+1. 系统可以从当前 AST 已稳定识别的 helper 中生成 contract drafts
+2. drafts 来源目前包括：
+   - AST inlined guard helper
+   - AST 识别的透明 wrapper
+   - AST 识别的小型默认化 wrapper
+3. 这些 drafts：
+   - 不会自动写回正式配置
+   - 不会直接进入生产 review
+   - 只作为后续人工确认的候选合同
+
+#### 最新状态
+- 全量测试通过：`350 passed`

@@ -32,6 +32,7 @@ from .models import (
     BenchmarkSummary,
     CandidateAssessment,
     EvidencePacket,
+    FunctionContract,
     RepositorySnapshot,
     SinkRule,
     Verdict,
@@ -636,6 +637,45 @@ def refresh_knowledge_base(
     return facts
 
 
+def draft_function_contracts(
+    snapshot: RepositorySnapshot,
+) -> tuple[FunctionContract, ...]:
+    """Generate review-only contract drafts inferred from current AST-safe helpers."""
+
+    source_texts = tuple(file_path.read_text(encoding="utf-8") for file_path in snapshot.lua_files)
+    existing_names = {contract.qualified_name for contract in snapshot.function_contracts}
+    drafts: list[FunctionContract] = []
+    seen: set[str] = set()
+
+    for contract in collect_inline_guard_contracts(source_texts, allow_local=False):
+        if contract.qualified_name in existing_names or contract.qualified_name in seen:
+            continue
+        drafts.append(
+            FunctionContract(
+                qualified_name=contract.qualified_name,
+                returns_non_nil=False,
+                ensures_non_nil_args=contract.ensures_non_nil_args,
+                notes="draft:ast_inlined_guard_helper",
+            )
+        )
+        seen.add(contract.qualified_name)
+
+    for qualified_name, mapping in collect_transparent_return_wrappers(
+        source_texts,
+        allow_local=False,
+    ).items():
+        if qualified_name in existing_names or qualified_name in seen:
+            continue
+        draft = _draft_contract_from_wrapper_mapping(qualified_name, mapping)
+        if draft is None:
+            continue
+        drafts.append(draft)
+        seen.add(qualified_name)
+
+    drafts.sort(key=lambda contract: contract.qualified_name)
+    return tuple(drafts)
+
+
 def export_adjudication_tasks(
     snapshot: RepositorySnapshot,
     *,
@@ -867,6 +907,30 @@ def _collect_snapshot_inline_guard_contracts(
     return collect_inline_guard_contracts(
         tuple(file_path.read_text(encoding="utf-8") for file_path in snapshot.lua_files),
         allow_local=False,
+    )
+
+
+def _draft_contract_from_wrapper_mapping(
+    qualified_name: str,
+    mapping: tuple[tuple[int, int], ...],
+) -> FunctionContract | None:
+    first_slot = next((arg_index for slot, arg_index in mapping if slot == 1), None)
+    if first_slot is None:
+        return None
+    if first_slot == 0:
+        return FunctionContract(
+            qualified_name=qualified_name,
+            returns_non_nil=True,
+            notes="draft:ast_defaulting_wrapper",
+        )
+    if first_slot < 1:
+        return None
+    return FunctionContract(
+        qualified_name=qualified_name,
+        returns_non_nil=False,
+        returns_non_nil_from_args=(first_slot,),
+        returns_non_nil_from_args_by_return_slot=((1, (first_slot,)),),
+        notes="draft:ast_wrapper_passthrough",
     )
 
 
