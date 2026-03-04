@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 import json
 from pathlib import Path
 from typing import Sequence
@@ -51,6 +52,11 @@ from .service import (
     run_repository_review,
 )
 
+_FOCUS_MODE_ALL = "all"
+_FOCUS_MODE_STRING = "string"
+_FOCUS_MODE_VALUES = (_FOCUS_MODE_ALL, _FOCUS_MODE_STRING)
+_STRING_FOCUS_RULE_PREFIXES = ("string.", "concat.")
+
 
 def run(argv: Sequence[str]) -> tuple[int, str]:
     """Execute the minimal CLI and return an exit code with rendered output."""
@@ -61,32 +67,47 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     command = args[0]
     if command == "scan":
-        if len(args) != 2:
+        try:
+            focus_mode, positional = _parse_focus_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 1:
             return 2, "scan requires exactly one repository path"
-        root = Path(args[1])
+        root = Path(positional[0])
         parser_error = _require_tree_sitter_backend()
         if parser_error is not None:
             return 2, parser_error
         snapshot, error = _load_repository_snapshot(root)
         if error is not None:
             return 2, error
+        snapshot = _apply_focus_mode(snapshot, focus_mode)
         assessments = review_repository(snapshot)
-        return 0, _render_scan_summary(snapshot.root, assessments)
+        return 0, _render_scan_summary(snapshot.root, assessments, focus_mode=focus_mode)
 
     if command == "scan-file":
-        if len(args) != 2:
+        try:
+            focus_mode, positional = _parse_focus_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 1:
             return 2, "scan-file requires exactly one Lua file path"
-        file_path = Path(args[1])
+        file_path = Path(positional[0])
         parser_error = _require_tree_sitter_backend()
         if parser_error is not None:
             return 2, parser_error
         try:
             root = find_repository_root_for_file(file_path)
             snapshot = bootstrap_repository(root)
+            snapshot = _apply_focus_mode(snapshot, focus_mode)
             assessments = review_repository_file(snapshot, file_path)
         except (OSError, ValueError) as exc:
             return 2, str(exc)
-        return 0, _render_scan_summary(snapshot.root, assessments, target_file=file_path)
+        return 0, _render_scan_summary(
+            snapshot.root,
+            assessments,
+            target_file=file_path,
+            focus_mode=focus_mode,
+        )
 
     if command == "doctor":
         if len(args) != 1:
@@ -460,6 +481,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "report":
         try:
+            focus_mode, review_args = _parse_focus_options(args[1:])
             (
                 backend_name,
                 model,
@@ -473,7 +495,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
-            ) = _parse_review_options(args[1:])
+            ) = _parse_review_options(review_args)
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) != 1:
@@ -485,6 +507,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         snapshot, error = _load_repository_snapshot(root)
         if error is not None:
             return 2, error
+        snapshot = _apply_focus_mode(snapshot, focus_mode)
         try:
             verdicts = run_repository_review(
                 snapshot,
@@ -509,6 +532,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "report-file":
         try:
+            focus_mode, review_args = _parse_focus_options(args[1:])
             (
                 backend_name,
                 model,
@@ -522,7 +546,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
-            ) = _parse_review_options(args[1:])
+            ) = _parse_review_options(review_args)
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) != 1:
@@ -534,6 +558,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         try:
             root = find_repository_root_for_file(file_path)
             snapshot = bootstrap_repository(root)
+            snapshot = _apply_focus_mode(snapshot, focus_mode)
             verdicts = run_file_review(
                 snapshot,
                 file_path,
@@ -558,6 +583,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "report-json":
         try:
+            focus_mode, review_args = _parse_focus_options(args[1:])
             (
                 backend_name,
                 model,
@@ -571,7 +597,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
-            ) = _parse_review_options(args[1:])
+            ) = _parse_review_options(review_args)
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) != 1:
@@ -583,6 +609,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         snapshot, error = _load_repository_snapshot(root)
         if error is not None:
             return 2, error
+        snapshot = _apply_focus_mode(snapshot, focus_mode)
         try:
             verdicts = run_repository_review(
                 snapshot,
@@ -607,6 +634,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
     if command == "report-file-json":
         try:
+            focus_mode, review_args = _parse_focus_options(args[1:])
             (
                 backend_name,
                 model,
@@ -620,7 +648,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
-            ) = _parse_review_options(args[1:])
+            ) = _parse_review_options(review_args)
         except ValueError as exc:
             return 2, str(exc)
         if len(positional) != 1:
@@ -632,6 +660,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         try:
             root = find_repository_root_for_file(file_path)
             snapshot = bootstrap_repository(root)
+            snapshot = _apply_focus_mode(snapshot, focus_mode)
             verdicts = run_file_review(
                 snapshot,
                 file_path,
@@ -1636,6 +1665,7 @@ def _render_scan_summary(
     assessments: tuple[object, ...],
     *,
     target_file: Path | None = None,
+    focus_mode: str = _FOCUS_MODE_ALL,
 ) -> str:
     backend_info = get_parser_backend_info()
     counts = Counter(
@@ -1649,6 +1679,7 @@ def _render_scan_summary(
         f"Repository: {root}",
         f"Parser backend: {backend_info.name}",
         f"Parser detail: {backend_info.reason}",
+        f"Focus mode: {focus_mode}",
         f"Total candidates: {len(assessments)}",
     ]
     if backend_info.selected_compiler is not None:
@@ -2379,7 +2410,7 @@ def _usage() -> str:
         line.format(cli=cli_name)
         for line in [
             "Usage:",
-            "  {cli} scan <repository>",
+            "  {cli} scan [--focus MODE] <repository>",
             "  {cli} doctor",
             "  {cli} init-config [--force] <repository>",
             "  {cli} macro-audit <repository> [output]",
@@ -2397,8 +2428,8 @@ def _usage() -> str:
             "  {cli} register-backend-manifest [--replace] <manifest-path>",
             "  {cli} register-backend-manifest-json [--replace] <manifest-path> [output]",
             "  {cli} compare-benchmark-json <before> <after> [output]",
-            "  {cli} report [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
-            "  {cli} report-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  {cli} report [--focus MODE] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  {cli} report-json [--focus MODE] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  {cli} benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  {cli} benchmark-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
             "  {cli} benchmark-cache-compare [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] --backend-cache PATH [--backend-config KEY=VALUE] <repository>",
@@ -2412,17 +2443,52 @@ def _usage() -> str:
             "  {cli} export-autofix [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
             "  {cli} apply-autofix [--dry-run] [--case-id CASE_ID] [--file PATH] <autofix-manifest>",
             "  {cli} export-unified-diff [--case-id CASE_ID] [--file PATH] <autofix-manifest> [output]",
-            "  {cli} scan-file <file.lua>",
-            "  {cli} report-file [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <file.lua>",
-            "  {cli} report-file-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <file.lua>",
+            "  {cli} scan-file [--focus MODE] <file.lua>",
+            "  {cli} report-file [--focus MODE] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <file.lua>",
+            "  {cli} report-file-json [--focus MODE] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <file.lua>",
             "  {cli} proposal-export [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
             "  {cli} proposal-export-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
             "  {cli} proposal-analytics [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
             "  {cli} proposal-analytics-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
             "",
             "Backend values: heuristic | codex | claude | gemini",
+            "Focus values: all | string",
         ]
     )
+
+
+def _parse_focus_options(args: list[str]) -> tuple[str, list[str]]:
+    focus_mode = _FOCUS_MODE_ALL
+    positional: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--focus":
+            if index + 1 >= len(args):
+                raise ValueError("--focus requires a value")
+            focus_value = args[index + 1].strip().lower()
+            if focus_value not in _FOCUS_MODE_VALUES:
+                allowed = ", ".join(_FOCUS_MODE_VALUES)
+                raise ValueError(f"--focus must be one of: {allowed}")
+            focus_mode = focus_value
+            index += 2
+            continue
+        positional.append(token)
+        index += 1
+    return focus_mode, positional
+
+
+def _apply_focus_mode(snapshot, focus_mode: str):  # noqa: ANN001
+    if focus_mode == _FOCUS_MODE_ALL:
+        return snapshot
+    if focus_mode != _FOCUS_MODE_STRING:
+        raise ValueError(f"Unsupported focus mode: {focus_mode}")
+    filtered_rules = tuple(
+        rule
+        for rule in snapshot.sink_rules
+        if any(rule.id.startswith(prefix) for prefix in _STRING_FOCUS_RULE_PREFIXES)
+    )
+    return replace(snapshot, sink_rules=filtered_rules)
 
 
 def _parse_review_options(

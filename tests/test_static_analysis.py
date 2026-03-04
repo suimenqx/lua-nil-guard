@@ -134,6 +134,90 @@ def test_analyze_candidate_uses_macro_fact_to_suppress_member_access_nil_receive
     assert "_fid_a" in result.proofs[0].summary
 
 
+def test_analyze_candidate_treats_globally_required_module_receiver_as_non_nil() -> None:
+    source = "\n".join(
+        [
+            "require('bsbsocket')",
+            "return bsbsocket.connect",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_required_module_receiver",
+        file="demo.lua",
+        line=2,
+        column=8,
+        sink_rule_id="member_access.receiver",
+        sink_name="member_access",
+        arg_index=0,
+        expression="bsbsocket",
+        symbol="bsbsocket",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "safe_static"
+    assert any(proof.kind == "required_module_guard" for proof in result.proofs)
+
+
+def test_analyze_candidate_treats_require_assignment_origin_as_non_nil() -> None:
+    source = "\n".join(
+        [
+            "local sock = require 'bsbsocket'",
+            "return sock.connect",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_required_assignment_receiver",
+        file="demo.lua",
+        line=2,
+        column=8,
+        sink_rule_id="member_access.receiver",
+        sink_name="member_access",
+        arg_index=0,
+        expression="sock",
+        symbol="sock",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "safe_static"
+    assert result.origin_candidates == ("require 'bsbsocket'",)
+    assert any(proof.kind == "required_module_guard" for proof in result.proofs)
+
+
+def test_analyze_candidate_does_not_suppress_reassigned_required_module_symbol() -> None:
+    source = "\n".join(
+        [
+            "require('bsbsocket')",
+            "local bsbsocket = nil",
+            "return bsbsocket.connect",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_required_reassigned_receiver",
+        file="demo.lua",
+        line=3,
+        column=8,
+        sink_rule_id="member_access.receiver",
+        sink_name="member_access",
+        arg_index=0,
+        expression="bsbsocket",
+        symbol="bsbsocket",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "unknown_static"
+    assert result.origin_candidates == ("nil",)
+    assert all(proof.kind != "required_module_guard" for proof in result.proofs)
+
+
 def test_analyze_candidate_does_not_treat_nil_branch_ternary_as_defaulted() -> None:
     source = "\n".join(
         [

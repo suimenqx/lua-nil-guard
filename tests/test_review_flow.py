@@ -81,6 +81,35 @@ def test_review_source_handles_receiver_candidates() -> None:
     assert profile_assessment.static_analysis.origin_candidates == ("req.profile",)
 
 
+def test_review_source_suppresses_receiver_false_positive_for_global_require_module() -> None:
+    sink_rules = (
+        SinkRule(
+            id="member_access.receiver",
+            kind="receiver",
+            qualified_name="member_access",
+            arg_index=0,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("if x then ... end",),
+        ),
+    )
+    source = "\n".join(
+        [
+            "require('bsbsocket')",
+            "return bsbsocket.connect",
+        ]
+    )
+
+    assessments = review_source(Path("foo.lua"), source, sink_rules)
+
+    assert len(assessments) == 1
+    assessment = assessments[0]
+    assert assessment.candidate.expression == "bsbsocket"
+    assert assessment.candidate.static_state == "safe_static"
+    assert any(proof.kind == "required_module_guard" for proof in assessment.static_analysis.proofs)
+
+
 def test_review_source_handles_length_operator_candidates() -> None:
     sink_rules = (
         SinkRule(

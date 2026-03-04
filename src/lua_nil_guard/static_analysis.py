@@ -24,13 +24,16 @@ from .models import (
 )
 from .preprocessor import lookup_macro_fact
 from .parser_backend import _load_lua_language
-from .summaries import detect_module_name
+from .summaries import detect_module_name, required_module_symbol_map as build_required_module_symbol_map
 
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SIMPLE_CALL_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_:.]*)\s*\((.*)\)\s*$")
 _FUNCTION_DEF_RE = re.compile(r"^\s*(?:local\s+)?function\s+([A-Za-z_][A-Za-z0-9_:.]*)\s*\((.*?)\)\s*$")
 _ASSIGNMENT_RE = re.compile(r"^\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$")
+_REQUIRE_CALL_RE = re.compile(
+    r"^\s*require(?:\s*\(\s*(['\"])([^'\"]+)\1\s*\)|\s+(['\"])([^'\"]+)\3)\s*$"
+)
 _MAX_CHAINED_RETURN_PROOF_DEPTH = 2
 _AST_CONTROL_FLOW_QUERY_PATH = Path(__file__).resolve().parent / "queries" / "lua" / "control_flow.scm"
 _AST_CONTROL_FLOW_QUERY_TEXT: str | None = None
@@ -67,6 +70,7 @@ def analyze_candidate(
     coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]] | None = None,
     inline_guard_contracts: tuple[FunctionContract, ...] | None = None,
     macro_index: MacroIndex | None = None,
+    required_module_symbol_map: dict[str, tuple[str, ...]] | None = None,
 ) -> StaticAnalysisResult:
     """Apply bounded local heuristics before escalating to agent review."""
 
@@ -138,6 +142,11 @@ def analyze_candidate(
         if inline_guard_contracts is not None
         else collect_inline_guard_contracts((source,), allow_local=True)
     )
+    effective_required_module_symbol_map = (
+        dict(required_module_symbol_map)
+        if required_module_symbol_map is not None
+        else build_required_module_symbol_map(source)
+    )
     effective_function_contracts = effective_inline_guard_contracts + tuple(function_contracts)
     ast_guard_outcome = _analyze_guards_with_ast(
         source,
@@ -178,6 +187,13 @@ def analyze_candidate(
     )
     if macro_fact_guard is not None:
         proofs.append(macro_fact_guard)
+    required_module_guard = _required_module_guard(
+        candidate,
+        origin_detail,
+        required_module_symbol_map=effective_required_module_symbol_map,
+    )
+    if required_module_guard is not None:
+        proofs.append(required_module_guard)
     guarded_field_origin_proof = _guarded_field_origin_proof(
         prior_lines,
         origin_detail,
@@ -1716,6 +1732,56 @@ def _macro_fact_matches_sink(kind: str, candidate: CandidateCase) -> bool:
     if kind in {"empty_table", "table_literal", "inferred_table"}:
         return candidate.sink_rule_id in {"pairs.arg1", "ipairs.arg1", "length.operand"}
     return False
+
+
+def _required_module_guard(
+    candidate: CandidateCase,
+    origin_detail: tuple[str, str, int, int] | None,
+    *,
+    required_module_symbol_map: dict[str, tuple[str, ...]],
+) -> StaticProof | None:
+    if origin_detail is None:
+        modules = required_module_symbol_map.get(candidate.symbol)
+        if modules:
+            module_name = modules[0]
+            return StaticProof(
+                kind="required_module_guard",
+                summary=f"{candidate.symbol} is loaded via require({module_name})",
+                subject=candidate.symbol,
+                source_symbol=candidate.symbol,
+                supporting_summaries=(),
+                provenance=(
+                    f"bare `require('{module_name}')` declares `{candidate.symbol}` as a loaded module symbol",
+                ),
+                depth=1,
+            )
+        return None
+
+    origin, _usage_mode, _return_slot, _assignment_line_index = origin_detail
+    module_name = _require_module_name_from_expression(origin)
+    if module_name is None:
+        return None
+    return StaticProof(
+        kind="required_module_guard",
+        summary=f"{candidate.symbol} is loaded via require({module_name})",
+        subject=candidate.symbol,
+        source_call=origin,
+        supporting_summaries=(),
+        provenance=(
+            f"`{origin}` loads `{module_name}` through `require`, which aborts on failure instead of returning nil",
+        ),
+        depth=1,
+    )
+
+
+def _require_module_name_from_expression(expression: str) -> str | None:
+    stripped = _strip_lua_comment(expression).strip()
+    if not stripped:
+        return None
+    match = _REQUIRE_CALL_RE.match(stripped)
+    if match is None:
+        return None
+    return match.group(2) or match.group(4)
 
 
 def _dedupe_proofs(proofs: tuple[StaticProof, ...]) -> tuple[StaticProof, ...]:

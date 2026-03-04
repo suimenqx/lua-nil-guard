@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lua_nil_guard.summaries import SummaryStore, detect_required_modules, summarize_source
+from lua_nil_guard.summaries import (
+    SummaryStore,
+    detect_required_modules,
+    required_module_symbol_map,
+    summarize_source,
+)
 
 
 def test_summarize_source_extracts_basic_function_contracts() -> None:
@@ -82,3 +87,18 @@ def test_detect_required_modules_parses_global_require_forms() -> None:
     required = detect_required_modules(source)
 
     assert required == ("user.normalizer", "admin.audit")
+
+
+def test_required_module_symbol_map_expands_dotted_module_prefixes() -> None:
+    source = "\n".join(
+        [
+            "require('user.normalizer')",
+            "require('bsbsocket')",
+        ]
+    )
+
+    symbol_map = required_module_symbol_map(source)
+
+    assert symbol_map["user"] == ("user.normalizer",)
+    assert symbol_map["user.normalizer"] == ("user.normalizer",)
+    assert symbol_map["bsbsocket"] == ("bsbsocket",)

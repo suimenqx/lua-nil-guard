@@ -63,6 +63,13 @@ lua-nil-guard scan /path/to/target-repo
 lua-nil-guard report /path/to/target-repo
 ```
 
+If you want a faster first pass that only focuses on string-library and string-concat nil hazards, use:
+
+```sh
+lua-nil-guard scan --focus string /path/to/target-repo
+lua-nil-guard report --focus string /path/to/target-repo
+```
+
 ## Single-File Review
 
 If you only want to inspect one Lua file, use the file entrypoints. The file still needs to live inside a repository that has been initialized with `init-config`.
@@ -71,6 +78,13 @@ If you only want to inspect one Lua file, use the file entrypoints. The file sti
 lua-nil-guard scan-file /path/to/target-repo/src/demo.lua
 lua-nil-guard report-file /path/to/target-repo/src/demo.lua
 lua-nil-guard report-file-json /path/to/target-repo/src/demo.lua
+```
+
+For a string-only single-file pass:
+
+```sh
+lua-nil-guard scan-file --focus string /path/to/target-repo/src/demo.lua
+lua-nil-guard report-file --focus string /path/to/target-repo/src/demo.lua
 ```
 
 Single-file review keeps repository context, so cross-file function summaries and related function source snippets can still be used during adjudication.
@@ -235,6 +249,7 @@ For dotted assignments (for example `a.b = 1`), LuaNilGuard also infers parent t
 - Lua source files are expected to be UTF-8. Use `encoding-audit` to find non-UTF-8 `.lua` files and `normalize-encoding --write` to convert supported legacy files (`utf-8-sig`, `gb18030`) before review.
 - Single-file review works best when important helper functions are either present in the same repository or represented in `config/function_contracts.json`.
 - Missing helper definitions do not block review, but they reduce cross-file proof strength and can increase `uncertain` results.
+- Bare global `require("module.name")` declarations are treated as non-nil module symbols for nil-risk review, so member-access checks do not repeatedly report those module receivers as nil risks.
 - The current implementation is optimized for precision, not full coverage. It will stay conservative when it cannot prove a bounded safe or risky path.
 - Large-repository performance work such as global AST caching, incremental PR analysis, and concurrency is planned, but not part of this release. For now, module-scale or file-scale trials are the recommended rollout path.
 - Source-tree or editable-install usage is the supported path. The default adjudicator skill is bundled as package data, but the vendored Lua grammar build still relies on this repository checkout.

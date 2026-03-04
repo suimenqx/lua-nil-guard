@@ -46,6 +46,8 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "--expanded-evidence-retry MODE" in output
     assert "--backend-cache PATH" in output
     assert "--backend-config KEY=VALUE" in output
+    assert "--focus MODE" in output
+    assert "Focus values: all | string" in output
     assert "encoding-audit" in output
     assert "normalize-encoding" in output
     assert "benchmark" in output
@@ -117,6 +119,70 @@ def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
     assert "Parser detail:" in output
     assert "Total candidates: 1" in output
     assert "safe_static: 1" in output
+
+
+def test_cli_scan_supports_string_focus_filter(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                },
+                {
+                    "id": "compare.lt.left",
+                    "kind": "binary_operand",
+                    "qualified_name": "<",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or 0"],
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local username = req.params.username",
+                "local score = req.params.score",
+                "return string.match(username, '^a'), score < 10",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["scan", str(tmp_path)])
+
+    assert exit_code == 0
+    assert "Focus mode: all" in output
+    assert "Total candidates: 2" in output
+
+    exit_code, output = run(["scan", "--focus", "string", str(tmp_path)])
+
+    assert exit_code == 0
+    assert "Focus mode: string" in output
+    assert "Total candidates: 1" in output
 
 
 def test_cli_doctor_reports_parser_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2432,6 +2498,13 @@ def test_cli_report_rejects_invalid_backend_timeout() -> None:
     assert output == "--backend-timeout must be a positive number"
 
 
+def test_cli_scan_rejects_invalid_focus_value() -> None:
+    exit_code, output = run(["scan", "--focus", "network", "demo"])
+
+    assert exit_code == 2
+    assert output == "--focus must be one of: all, string"
+
+
 def test_cli_report_rejects_invalid_backend_config() -> None:
     exit_code, output = run(["report", "--backend-config", "reasoning_effort", "demo"])
 
@@ -2457,3 +2530,73 @@ def test_cli_report_surfaces_unsupported_codeagent_backend_config(
 
     assert exit_code == 2
     assert output == "Provider codeagent does not support backend config overrides"
+
+
+def test_cli_report_applies_focus_filter_to_repository_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                },
+                {
+                    "id": "pairs.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "pairs",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or {}"],
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local username = req.params.username",
+                "for _, v in pairs(req.params.users or {}) do end",
+                "return string.match(username, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_review(snapshot, backend):
+        captured["sink_ids"] = tuple(rule.id for rule in snapshot.sink_rules)
+        return ()
+
+    monkeypatch.setattr("lua_nil_guard.cli.create_adjudication_backend", lambda *args, **kwargs: object())
+    monkeypatch.setattr("lua_nil_guard.cli.run_repository_review", fake_review)
+
+    exit_code, output = run(["report", "--focus", "string", str(tmp_path)])
+
+    assert exit_code == 0
+    assert captured["sink_ids"] == ("string.match.arg1",)
+    assert "# Lua Nil Risk Report" in output

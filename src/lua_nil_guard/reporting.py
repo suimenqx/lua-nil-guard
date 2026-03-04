@@ -28,6 +28,7 @@ def render_markdown_report(
         for verdict in verdicts
         if verdict.status in {"safe", "safe_verified"}
         and verdict.verification_summary is not None
+        and not _is_macro_only_verified_suppression(verdict)
         and not should_report(verdict, policy, audit_mode=audit_mode)
     ]
 
@@ -279,3 +280,10 @@ def _render_counter_lines(entries: tuple[tuple[str, int], ...]) -> list[str]:
     if not entries:
         return ["- (none)"]
     return [f"- {key}: {count}" for key, count in entries]
+
+
+def _is_macro_only_verified_suppression(verdict: Verdict) -> bool:
+    summary = verdict.verification_summary
+    if summary is None:
+        return False
+    return summary.strongest_proof_kind == "macro_fact_guard"

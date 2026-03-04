@@ -127,6 +127,38 @@ def test_render_markdown_report_lists_verified_suppressions() -> None:
     assert "score=100" in report
 
 
+def test_render_markdown_report_hides_macro_only_verified_suppressions() -> None:
+    policy = ConfidencePolicy(
+        levels=("low", "medium", "high"),
+        default_report_min_confidence="high",
+        default_include_medium_in_audit=True,
+    )
+    macro_safe = Verdict(
+        case_id="case_macro_1",
+        status="safe_verified",
+        confidence="high",
+        risk_path=(),
+        safety_evidence=("profile resolves to non-nil via macro `PROFILE`",),
+        counterarguments_considered=(),
+        suggested_fix=None,
+        needs_human=False,
+        verification_summary=VerificationSummary(
+            mode="structured_static_proof",
+            strongest_proof_kind="macro_fact_guard",
+            strongest_proof_depth=1,
+            strongest_proof_summary="profile resolves to non-nil via macro `PROFILE`",
+            verification_score=95,
+            evidence=("profile resolves to non-nil via macro `PROFILE`",),
+        ),
+    )
+
+    report = render_markdown_report((macro_safe,), policy)
+
+    assert "No reportable findings." in report
+    assert "## Verified Suppressions" not in report
+    assert "non-nil via macro" not in report
+
+
 def test_render_markdown_report_formats_multiline_fix_as_code_block() -> None:
     policy = ConfidencePolicy(
         levels=("low", "medium", "high"),

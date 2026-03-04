@@ -235,6 +235,7 @@ def _safe_proof_score(proof: StaticProof) -> int:
         "early_exit_guard": 100,
         "assert_guard": 100,
         "contract_guard": 95,
+        "required_module_guard": 95,
         "guarded_field_origin": 95,
         "local_defaulting": 95,
         "return_contract": 90,

@@ -65,6 +65,13 @@ lua-nil-guard scan /path/to/target-repo
 lua-nil-guard report /path/to/target-repo
 ```
 
+如果你希望先做一轮更快的“字符串风险专项排查”（仅关注字符串库首参与字符串拼接），可用：
+
+```sh
+lua-nil-guard scan --focus string /path/to/target-repo
+lua-nil-guard report --focus string /path/to/target-repo
+```
+
 ## 单文件审查
 
 如果你只想审查某一个 Lua 文件，可以使用单文件入口。该文件仍然必须位于一个已经执行过 `init-config` 的目标仓库中。
@@ -73,6 +80,13 @@ lua-nil-guard report /path/to/target-repo
 lua-nil-guard scan-file /path/to/target-repo/src/demo.lua
 lua-nil-guard report-file /path/to/target-repo/src/demo.lua
 lua-nil-guard report-file-json /path/to/target-repo/src/demo.lua
+```
+
+如需单文件“字符串风险专项排查”，可用：
+
+```sh
+lua-nil-guard scan-file --focus string /path/to/target-repo/src/demo.lua
+lua-nil-guard report-file --focus string /path/to/target-repo/src/demo.lua
 ```
 
 单文件审查会保留仓库上下文，因此在条件允许时，仍然会使用跨文件函数摘要和相关函数源码片段辅助裁决。
@@ -273,6 +287,7 @@ lua-nil-guard generate-backend-manifest my-provider stdout_envelope_cli
 - 当前要求 Lua 源文件使用 UTF-8。你可以先用 `encoding-audit` 找出非 UTF-8 的 `.lua` 文件，再用 `normalize-encoding --write` 将受支持的历史编码文件（`utf-8-sig`、`gb18030`）统一转为 UTF-8。
 - 单文件审查在“重要 helper 源码位于同一仓库”或“这些 helper 已通过 `function_contracts.json` 声明契约”时效果最好。
 - 缺少 helper 定义不会阻止审查，但会削弱跨文件证明能力，并增加 `uncertain` 的概率。
+- 对于裸全局 `require("module.name")`，工具会把对应模块符号视为已加载非 nil，因此不会在成员访问场景里反复把这些模块 receiver 当作 nil 风险上报。
 - 当前实现是“精度优先”而不是“覆盖优先”。当工具无法做出有界证明时，会保守回退，而不是强行给出确定结论。
 - 面向超大仓库的性能优化（如全局 AST 缓存、增量分析、并发执行）不在本次发布范围内。本次更适合文件级或模块级试用。
 

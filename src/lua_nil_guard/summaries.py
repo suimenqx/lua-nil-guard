@@ -16,6 +16,7 @@ _MODULE_DECLARATION_RE = re.compile(
 _REQUIRE_DECLARATION_RE = re.compile(
     r"^\s*require(?:\s*\(\s*(['\"])([^'\"]+)\1\s*\)|\s+(['\"])([^'\"]+)\3)\s*$"
 )
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class SummaryStore:
@@ -159,6 +160,34 @@ def detect_required_modules(source: str) -> tuple[str, ...]:
             continue
         modules.append(module_name)
     return tuple(dict.fromkeys(modules))
+
+
+def module_receiver_symbols(module_name: str) -> tuple[str, ...]:
+    """Expand a module name into receiver symbol prefixes (for example a.b -> a, a.b)."""
+
+    parts = [part.strip() for part in module_name.split(".") if part.strip()]
+    if not parts or any(_IDENTIFIER_RE.match(part) is None for part in parts):
+        return ()
+    symbols: list[str] = []
+    for index in range(1, len(parts) + 1):
+        symbols.append(".".join(parts[:index]))
+    return tuple(symbols)
+
+
+def required_module_symbol_map(source: str) -> dict[str, tuple[str, ...]]:
+    """Map receiver symbols to global modules declared via bare require(...) lines."""
+
+    symbol_to_modules: dict[str, list[str]] = {}
+    for module_name in detect_required_modules(source):
+        symbols = module_receiver_symbols(module_name)
+        if not symbols:
+            continue
+        for symbol in symbols:
+            symbol_to_modules.setdefault(symbol, []).append(module_name)
+    return {
+        symbol: tuple(dict.fromkeys(modules))
+        for symbol, modules in symbol_to_modules.items()
+    }
 
 
 def _parse_params(raw: str) -> dict[str, str]:

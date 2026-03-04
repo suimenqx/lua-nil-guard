@@ -64,6 +64,7 @@ from .summaries import (
     SummaryStore,
     detect_module_name,
     detect_required_module_line,
+    required_module_symbol_map,
     summarize_source,
 )
 from .static_analysis import (
@@ -289,6 +290,7 @@ def review_source(
     effective_coalescing_return_helpers.update(
         collect_coalescing_return_helpers(summarize_source(file_path, source))
     )
+    effective_required_module_symbol_map = required_module_symbol_map(source)
     assessments: list[CandidateAssessment] = []
     for candidate in collect_candidates(file_path, source, sink_rules):
         static_analysis = analyze_candidate(
@@ -300,6 +302,7 @@ def review_source(
             coalescing_return_helpers=effective_coalescing_return_helpers,
             inline_guard_contracts=effective_inline_guard_contracts,
             macro_index=macro_index,
+            required_module_symbol_map=effective_required_module_symbol_map,
         )
         assessments.append(
             CandidateAssessment(
