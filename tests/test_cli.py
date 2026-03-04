@@ -13,6 +13,8 @@ from lua_nil_review_agent.models import (
     AdjudicationRecord,
     BenchmarkCacheComparison,
     BenchmarkSummary,
+    ImprovementAnalytics,
+    ImprovementProposal,
     RoleOpinion,
     Verdict,
 )
@@ -49,6 +51,10 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "benchmark-json" in output
     assert "benchmark-cache-compare-json" in output
     assert "compare-benchmark-json" in output
+    assert "proposal-export" in output
+    assert "proposal-export-json" in output
+    assert "proposal-analytics" in output
+    assert "proposal-analytics-json" in output
 
 
 def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
@@ -649,6 +655,89 @@ def test_cli_benchmark_json_writes_output_file(
     assert "Benchmark JSON export complete." in output
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["total_cases"] == 1
+
+
+def test_cli_proposal_export_json_outputs_machine_readable_proposals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        cli_module,
+        "draft_review_improvements",
+        lambda snapshot, backend: (
+            ImprovementProposal(
+                kind="ast_pattern",
+                case_id="case_1",
+                file="src/demo.lua",
+                status="uncertain",
+                confidence="medium",
+                reason="structured fallback blocked proof",
+                suggested_pattern="no_bounded_ast_proof",
+                evidence=("username",),
+            ),
+        ),
+    )
+
+    exit_code, output = run(["proposal-export-json", str(tmp_path)])
+
+    payload = json.loads(output)
+    assert exit_code == 0
+    assert payload[0]["kind"] == "ast_pattern"
+    assert payload[0]["suggested_pattern"] == "no_bounded_ast_proof"
+
+
+def test_cli_proposal_analytics_renders_aggregate_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        cli_module,
+        "analyze_review_improvements",
+        lambda snapshot, backend: ImprovementAnalytics(
+            total_proposals=3,
+            unique_cases=2,
+            by_kind=(("ast_pattern", 2), ("function_contract", 1)),
+            by_reason=(("no_bounded_ast_proof", 2), ("normalize_name", 1)),
+            by_pattern=(("no_bounded_ast_proof", 2),),
+            by_contract=(("normalize_name", 1),),
+        ),
+    )
+
+    exit_code, output = run(["proposal-analytics", str(tmp_path)])
+
+    assert exit_code == 0
+    assert "# Lua Nil Review Improvement Analytics" in output
+    assert "total_proposals: 3" in output
+    assert "ast_pattern: 2" in output
+    assert "normalize_name: 1" in output
 
 
 def test_cli_benchmark_cache_compare_reports_cold_and_warm_runs(

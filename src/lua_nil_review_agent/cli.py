@@ -18,14 +18,23 @@ from .agent_driver_manifest import (
 from .baseline import BaselineStore, build_baseline, filter_new_findings
 from .config_loader import ConfigError, initialize_repository_config
 from .parser_backend import get_parser_backend_info
-from .reporting import render_json_report, render_markdown_report
+from .reporting import (
+    render_improvement_analytics_json,
+    render_improvement_analytics_markdown,
+    render_improvement_proposals_json,
+    render_improvement_proposals_markdown,
+    render_json_report,
+    render_markdown_report,
+)
 from .skill_runtime import SkillRuntimeError
 from .service import (
+    analyze_review_improvements,
     apply_autofix_manifest,
     benchmark_cache_compare,
     benchmark_repository_review,
     bootstrap_repository,
     clear_backend_cache,
+    draft_review_improvements,
     export_adjudication_tasks,
     export_autofix_patches,
     export_autofix_unified_diff,
@@ -528,6 +537,227 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         return 0, "\n".join(
             [
                 "Benchmark JSON export complete.",
+                f"Output: {output_path}",
+            ]
+        )
+
+    if command == "proposal-export":
+        try:
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_manifest_path,
+                backend_timeout,
+                backend_attempts,
+                expanded_evidence_retry,
+                backend_cache_path,
+                backend_config_overrides,
+                positional,
+            ) = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) not in {1, 2}:
+            return 2, "proposal-export requires a repository path and optional output path"
+        root = Path(positional[0])
+        output_path = Path(positional[1]) if len(positional) == 2 else None
+        snapshot = bootstrap_repository(root)
+        try:
+            proposals = draft_review_improvements(
+                snapshot,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                    executable=executable,
+                    backend_manifest_path=backend_manifest_path,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
+                    cache_path=backend_cache_path,
+                    config_overrides=backend_config_overrides,
+                ),
+            )
+        except (SkillRuntimeError, BackendError, ValueError) as exc:
+            return 2, str(exc)
+        rendered = render_improvement_proposals_markdown(proposals)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Improvement proposal export complete.",
+                f"Proposals: {len(proposals)}",
+                f"Output: {output_path}",
+            ]
+        )
+
+    if command == "proposal-export-json":
+        try:
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_manifest_path,
+                backend_timeout,
+                backend_attempts,
+                expanded_evidence_retry,
+                backend_cache_path,
+                backend_config_overrides,
+                positional,
+            ) = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) not in {1, 2}:
+            return 2, "proposal-export-json requires a repository path and optional output path"
+        root = Path(positional[0])
+        output_path = Path(positional[1]) if len(positional) == 2 else None
+        snapshot = bootstrap_repository(root)
+        try:
+            proposals = draft_review_improvements(
+                snapshot,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                    executable=executable,
+                    backend_manifest_path=backend_manifest_path,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
+                    cache_path=backend_cache_path,
+                    config_overrides=backend_config_overrides,
+                ),
+            )
+        except (SkillRuntimeError, BackendError, ValueError) as exc:
+            return 2, str(exc)
+        rendered = render_improvement_proposals_json(proposals)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Improvement proposal JSON export complete.",
+                f"Output: {output_path}",
+            ]
+        )
+
+    if command == "proposal-analytics":
+        try:
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_manifest_path,
+                backend_timeout,
+                backend_attempts,
+                expanded_evidence_retry,
+                backend_cache_path,
+                backend_config_overrides,
+                positional,
+            ) = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) not in {1, 2}:
+            return 2, "proposal-analytics requires a repository path and optional output path"
+        root = Path(positional[0])
+        output_path = Path(positional[1]) if len(positional) == 2 else None
+        snapshot = bootstrap_repository(root)
+        try:
+            analytics = analyze_review_improvements(
+                snapshot,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                    executable=executable,
+                    backend_manifest_path=backend_manifest_path,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
+                    cache_path=backend_cache_path,
+                    config_overrides=backend_config_overrides,
+                ),
+            )
+        except (SkillRuntimeError, BackendError, ValueError) as exc:
+            return 2, str(exc)
+        rendered = render_improvement_analytics_markdown(analytics)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Improvement analytics export complete.",
+                f"Output: {output_path}",
+            ]
+        )
+
+    if command == "proposal-analytics-json":
+        try:
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_manifest_path,
+                backend_timeout,
+                backend_attempts,
+                expanded_evidence_retry,
+                backend_cache_path,
+                backend_config_overrides,
+                positional,
+            ) = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) not in {1, 2}:
+            return 2, "proposal-analytics-json requires a repository path and optional output path"
+        root = Path(positional[0])
+        output_path = Path(positional[1]) if len(positional) == 2 else None
+        snapshot = bootstrap_repository(root)
+        try:
+            analytics = analyze_review_improvements(
+                snapshot,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                    executable=executable,
+                    backend_manifest_path=backend_manifest_path,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
+                    cache_path=backend_cache_path,
+                    config_overrides=backend_config_overrides,
+                ),
+            )
+        except (SkillRuntimeError, BackendError, ValueError) as exc:
+            return 2, str(exc)
+        rendered = render_improvement_analytics_json(analytics)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Improvement analytics JSON export complete.",
                 f"Output: {output_path}",
             ]
         )
@@ -1658,6 +1888,10 @@ def _usage() -> str:
             "  lua-nil-review-agent scan-file <file.lua>",
             "  lua-nil-review-agent report-file [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <file.lua>",
             "  lua-nil-review-agent report-file-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <file.lua>",
+            "  lua-nil-review-agent proposal-export [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
+            "  lua-nil-review-agent proposal-export-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
+            "  lua-nil-review-agent proposal-analytics [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
+            "  lua-nil-review-agent proposal-analytics-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
             "",
             "Backend values: heuristic | codex | claude | gemini | codeagent",
         ]

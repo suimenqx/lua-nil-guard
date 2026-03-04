@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import json
 
-from .models import AutofixPatch, ConfidencePolicy, VerificationSummary, Verdict
+from .models import (
+    AutofixPatch,
+    ConfidencePolicy,
+    ImprovementAnalytics,
+    ImprovementProposal,
+    VerificationSummary,
+    Verdict,
+)
 from .pipeline import should_report
 
 
@@ -87,6 +94,100 @@ def render_json_report(
     return json.dumps(payload, indent=2, sort_keys=True)
 
 
+def render_improvement_proposals_markdown(
+    proposals: tuple[ImprovementProposal, ...],
+) -> str:
+    """Render draft-only improvement proposals as markdown."""
+
+    lines = ["# Lua Nil Review Improvement Proposals", ""]
+    if not proposals:
+        lines.append("No draft improvement proposals.")
+        return "\n".join(lines)
+
+    for proposal in proposals:
+        lines.extend(
+            [
+                f"## {proposal.case_id} [{proposal.kind}]",
+                f"- file: {proposal.file}",
+                f"- status: {proposal.status}",
+                f"- confidence: {proposal.confidence}",
+                f"- reason: {proposal.reason}",
+                f"- evidence: {'; '.join(proposal.evidence) if proposal.evidence else '(none)'}",
+            ]
+        )
+        if proposal.suggested_pattern:
+            lines.append(f"- suggested_pattern: {proposal.suggested_pattern}")
+        if proposal.suggested_contract is not None:
+            lines.append(f"- suggested_contract: {proposal.suggested_contract.qualified_name}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def render_improvement_proposals_json(
+    proposals: tuple[ImprovementProposal, ...],
+) -> str:
+    """Render draft-only improvement proposals as a JSON array."""
+
+    payload = [
+        {
+            "kind": proposal.kind,
+            "case_id": proposal.case_id,
+            "file": proposal.file,
+            "status": proposal.status,
+            "confidence": proposal.confidence,
+            "reason": proposal.reason,
+            "suggested_pattern": proposal.suggested_pattern,
+            "suggested_contract": (
+                proposal.suggested_contract.qualified_name
+                if proposal.suggested_contract is not None
+                else None
+            ),
+            "evidence": list(proposal.evidence),
+        }
+        for proposal in proposals
+    ]
+    return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def render_improvement_analytics_markdown(
+    analytics: ImprovementAnalytics,
+) -> str:
+    """Render aggregate improvement analytics as markdown."""
+
+    lines = [
+        "# Lua Nil Review Improvement Analytics",
+        "",
+        f"- total_proposals: {analytics.total_proposals}",
+        f"- unique_cases: {analytics.unique_cases}",
+        "",
+        "## By Kind",
+    ]
+    lines.extend(_render_counter_lines(analytics.by_kind))
+    lines.extend(["", "## Top Reasons"])
+    lines.extend(_render_counter_lines(analytics.by_reason))
+    lines.extend(["", "## Top Patterns"])
+    lines.extend(_render_counter_lines(analytics.by_pattern))
+    lines.extend(["", "## Top Contracts"])
+    lines.extend(_render_counter_lines(analytics.by_contract))
+    return "\n".join(lines).rstrip()
+
+
+def render_improvement_analytics_json(
+    analytics: ImprovementAnalytics,
+) -> str:
+    """Render aggregate improvement analytics as JSON."""
+
+    payload = {
+        "total_proposals": analytics.total_proposals,
+        "unique_cases": analytics.unique_cases,
+        "by_kind": [{"key": key, "count": count} for key, count in analytics.by_kind],
+        "by_reason": [{"key": key, "count": count} for key, count in analytics.by_reason],
+        "by_pattern": [{"key": key, "count": count} for key, count in analytics.by_pattern],
+        "by_contract": [{"key": key, "count": count} for key, count in analytics.by_contract],
+    }
+    return json.dumps(payload, indent=2, sort_keys=True)
+
+
 def _serialize_autofix_patch(patch: AutofixPatch | None) -> dict[str, object] | None:
     if patch is None:
         return None
@@ -158,3 +259,9 @@ def _format_verification_summary(summary: VerificationSummary | None) -> str:
     if summary.strongest_proof_summary:
         details.append(summary.strongest_proof_summary)
     return " | ".join(details)
+
+
+def _render_counter_lines(entries: tuple[tuple[str, int], ...]) -> list[str]:
+    if not entries:
+        return ["- (none)"]
+    return [f"- {key}: {count}" for key, count in entries]

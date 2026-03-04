@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import difflib
 from dataclasses import dataclass
 import json
@@ -33,6 +34,7 @@ from .models import (
     CandidateAssessment,
     EvidencePacket,
     FunctionContract,
+    ImprovementAnalytics,
     ImprovementProposal,
     RepositorySnapshot,
     SinkRule,
@@ -796,6 +798,58 @@ def draft_review_improvements(
 
     proposals.sort(key=lambda proposal: (proposal.file, proposal.case_id, proposal.kind, proposal.reason))
     return tuple(proposals)
+
+
+def summarize_improvement_proposals(
+    proposals: tuple[ImprovementProposal, ...],
+) -> ImprovementAnalytics:
+    """Aggregate proposal counts into a stable analytics summary."""
+
+    kind_counts = Counter(proposal.kind for proposal in proposals)
+    reason_counts = Counter(proposal.suggested_pattern or proposal.reason for proposal in proposals)
+    pattern_counts = Counter(
+        proposal.suggested_pattern
+        for proposal in proposals
+        if proposal.suggested_pattern
+    )
+    contract_counts = Counter(
+        proposal.suggested_contract.qualified_name
+        for proposal in proposals
+        if proposal.suggested_contract is not None
+    )
+
+    def _ordered(counter: Counter[str]) -> tuple[tuple[str, int], ...]:
+        return tuple(
+            sorted(
+                counter.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+        )
+
+    return ImprovementAnalytics(
+        total_proposals=len(proposals),
+        unique_cases=len({proposal.case_id for proposal in proposals}),
+        by_kind=_ordered(kind_counts),
+        by_reason=_ordered(reason_counts),
+        by_pattern=_ordered(pattern_counts),
+        by_contract=_ordered(contract_counts),
+    )
+
+
+def analyze_review_improvements(
+    snapshot: RepositorySnapshot,
+    *,
+    backend: AdjudicationBackend | None = None,
+    knowledge_path: str | Path | None = None,
+) -> ImprovementAnalytics:
+    """Run review-improvement draft generation and return aggregate analytics."""
+
+    proposals = draft_review_improvements(
+        snapshot,
+        backend=backend,
+        knowledge_path=knowledge_path,
+    )
+    return summarize_improvement_proposals(proposals)
 
 
 def export_adjudication_tasks(

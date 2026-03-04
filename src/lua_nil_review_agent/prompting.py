@@ -14,6 +14,9 @@ _PROOF_KIND_CALIBRATIONS = {
     "loop_exit_guard": (
         "Example (loop_exit_guard): `repeat ... until username` only proves safety after the loop when no earlier reachable break can bypass the exit condition."
     ),
+    "loop_break_guard": (
+        "Example (loop_break_guard): `if not username then break` can prove safety for a sink later in the same loop body, but only when no reassignment or alternate path bypasses the guard."
+    ),
     "early_exit_guard": (
         "Example (early_exit_guard): `if not username then return end; sink(username)` is normally sufficient because the nil branch cannot reach the sink."
     ),

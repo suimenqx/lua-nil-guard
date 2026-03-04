@@ -8,6 +8,7 @@ import pytest
 
 from lua_nil_review_agent.agent_backend import BackendError, CliAgentBackend, CodexCliBackend
 from lua_nil_review_agent.models import AdjudicationRecord, AutofixPatch, RoleOpinion, Verdict
+from lua_nil_review_agent.models import FunctionContract, ImprovementProposal
 from lua_nil_review_agent.service import (
     apply_autofix_manifest,
     benchmark_cache_compare,
@@ -20,6 +21,7 @@ from lua_nil_review_agent.service import (
     export_autofix_unified_diff,
     find_repository_root_for_file,
     run_file_review,
+    summarize_improvement_proposals,
 )
 
 
@@ -823,6 +825,49 @@ def test_draft_review_improvements_links_uncertain_cases_to_patterns_and_drafts(
         and proposal.suggested_contract.qualified_name == "normalize_name"
         for proposal in contract_proposals
     )
+
+
+def test_summarize_improvement_proposals_groups_counts_stably() -> None:
+    analytics = summarize_improvement_proposals(
+        (
+            ImprovementProposal(
+                kind="ast_pattern",
+                case_id="case_1",
+                file="src/demo.lua",
+                status="uncertain",
+                confidence="medium",
+                reason="fallback blocked proof",
+                suggested_pattern="no_bounded_ast_proof",
+            ),
+            ImprovementProposal(
+                kind="ast_pattern",
+                case_id="case_2",
+                file="src/demo.lua",
+                status="uncertain",
+                confidence="medium",
+                reason="fallback blocked proof",
+                suggested_pattern="no_bounded_ast_proof",
+            ),
+            ImprovementProposal(
+                kind="function_contract",
+                case_id="case_2",
+                file="src/demo.lua",
+                status="uncertain",
+                confidence="medium",
+                reason="review normalize_name",
+                suggested_contract=FunctionContract(
+                    qualified_name="normalize_name",
+                    returns_non_nil=True,
+                ),
+            ),
+        )
+    )
+
+    assert analytics.total_proposals == 3
+    assert analytics.unique_cases == 2
+    assert analytics.by_kind == (("ast_pattern", 2), ("function_contract", 1))
+    assert analytics.by_pattern == (("no_bounded_ast_proof", 2),)
+    assert analytics.by_contract == (("normalize_name", 1),)
 
 
 def test_run_file_review_budgets_and_prioritizes_related_function_contexts(

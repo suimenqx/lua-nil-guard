@@ -5,10 +5,20 @@ import json
 from lua_nil_review_agent.models import (
     AutofixPatch,
     ConfidencePolicy,
+    FunctionContract,
+    ImprovementAnalytics,
+    ImprovementProposal,
     VerificationSummary,
     Verdict,
 )
-from lua_nil_review_agent.reporting import render_json_report, render_markdown_report
+from lua_nil_review_agent.reporting import (
+    render_improvement_analytics_json,
+    render_improvement_analytics_markdown,
+    render_improvement_proposals_json,
+    render_improvement_proposals_markdown,
+    render_json_report,
+    render_markdown_report,
+)
 
 
 def test_render_markdown_report_outputs_only_reportable_findings() -> None:
@@ -139,3 +149,48 @@ def test_render_markdown_report_formats_multiline_fix_as_code_block() -> None:
     assert "```lua" in report
     assert "local items = req.items or {}" in report
     assert "for _, item in pairs(items) do" in report
+
+
+def test_render_improvement_proposals_outputs_machine_and_markdown_views() -> None:
+    proposals = (
+        ImprovementProposal(
+            kind="function_contract",
+            case_id="case_900",
+            file="src/demo.lua",
+            status="uncertain",
+            confidence="medium",
+            reason="normalize_name participates in unresolved call chain",
+            suggested_contract=FunctionContract(
+                qualified_name="normalize_name",
+                returns_non_nil=True,
+            ),
+            evidence=("normalize_name(req.params.username)",),
+        ),
+    )
+
+    markdown = render_improvement_proposals_markdown(proposals)
+    payload = json.loads(render_improvement_proposals_json(proposals))
+
+    assert "# Lua Nil Review Improvement Proposals" in markdown
+    assert "case_900 [function_contract]" in markdown
+    assert "suggested_contract: normalize_name" in markdown
+    assert payload[0]["suggested_contract"] == "normalize_name"
+
+
+def test_render_improvement_analytics_outputs_machine_and_markdown_views() -> None:
+    analytics = ImprovementAnalytics(
+        total_proposals=3,
+        unique_cases=2,
+        by_kind=(("ast_pattern", 2), ("function_contract", 1)),
+        by_reason=(("no_bounded_ast_proof", 2), ("normalize_name", 1)),
+        by_pattern=(("no_bounded_ast_proof", 2),),
+        by_contract=(("normalize_name", 1),),
+    )
+
+    markdown = render_improvement_analytics_markdown(analytics)
+    payload = json.loads(render_improvement_analytics_json(analytics))
+
+    assert "# Lua Nil Review Improvement Analytics" in markdown
+    assert "ast_pattern: 2" in markdown
+    assert payload["total_proposals"] == 3
+    assert payload["by_contract"][0]["key"] == "normalize_name"

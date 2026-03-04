@@ -314,6 +314,18 @@ class ImprovementProposal:
     evidence: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class ImprovementAnalytics:
+    """Aggregate counts derived from draft improvement proposals."""
+
+    total_proposals: int
+    unique_cases: int
+    by_kind: tuple[tuple[str, int], ...]
+    by_reason: tuple[tuple[str, int], ...]
+    by_pattern: tuple[tuple[str, int], ...] = ()
+    by_contract: tuple[tuple[str, int], ...] = ()
+
+
 def with_candidate_state(candidate: CandidateCase, state: str) -> CandidateCase:
     """Return a candidate copy with an updated static state."""
 

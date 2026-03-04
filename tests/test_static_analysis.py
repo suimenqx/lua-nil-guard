@@ -2206,10 +2206,7 @@ def test_analyze_candidate_marks_loop_control_as_structured_unknown_when_ast_run
     source = "\n".join(
         [
             "local username = req.params.username",
-            "while true do",
-            "  if not username then",
-            "    break",
-            "  end",
+            "for i = 1, 3 do",
             "  return string.match(username, '^a')",
             "end",
         ]
@@ -2217,7 +2214,7 @@ def test_analyze_candidate_marks_loop_control_as_structured_unknown_when_ast_run
     candidate = CandidateCase(
         case_id="case_ast_unknown",
         file="demo.lua",
-        line=6,
+        line=3,
         column=10,
         sink_rule_id="string.match.arg1",
         sink_name="string.match",
@@ -2234,6 +2231,44 @@ def test_analyze_candidate_marks_loop_control_as_structured_unknown_when_ast_run
     if get_parser_backend_info().tree_sitter_available:
         assert result.analysis_mode == "ast_fallback_to_legacy"
         assert result.unknown_reason == "unsupported_control_flow"
+    else:
+        assert result.analysis_mode == "legacy_only"
+
+
+def test_analyze_candidate_marks_loop_break_guard_safe_when_ast_runs() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "while true do",
+            "  if not username then",
+            "    break",
+            "  end",
+            "  return string.match(username, '^a')",
+            "end",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_ast_loop_break_guard",
+        file="demo.lua",
+        line=6,
+        column=10,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    if get_parser_backend_info().tree_sitter_available:
+        assert result.state == "safe_static"
+        assert result.analysis_mode == "ast_primary"
+        assert result.unknown_reason is None
+        assert "if not username then break" in result.observed_guards
+        assert any(proof.kind == "loop_break_guard" for proof in result.proofs)
     else:
         assert result.analysis_mode == "legacy_only"
 
@@ -2274,6 +2309,43 @@ def test_analyze_candidate_marks_unproved_ast_case_with_structured_no_bounded_re
     else:
         assert result.analysis_mode == "legacy_only"
         assert result.origin_analysis_mode == "legacy_origin_only"
+
+
+def test_analyze_candidate_marks_negative_guard_else_branch_safe_when_ast_runs() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "if not username then",
+            "  return",
+            "else",
+            "  return string.match(username, '^a')",
+            "end",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_ast_negative_else_guard",
+        file="demo.lua",
+        line=5,
+        column=23,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    if get_parser_backend_info().tree_sitter_available:
+        assert result.state == "safe_static"
+        assert result.analysis_mode == "ast_primary"
+        assert result.unknown_reason is None
+        assert "if not username then return" in result.observed_guards
+        assert any(proof.kind == "early_exit_guard" for proof in result.proofs)
+    else:
+        assert result.analysis_mode == "legacy_only"
 
 
 def test_analyze_candidate_marks_nested_upvalue_capture_as_structured_unknown() -> None:

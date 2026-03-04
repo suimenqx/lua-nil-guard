@@ -217,6 +217,20 @@ def _analyze_guards_with_ast(
     positive_guard = _ast_positive_guard_proof(target_node, candidate.symbol, context.source_bytes)
     if positive_guard is not None:
         proofs.append(positive_guard)
+    alternative_guard = _ast_negative_guard_alternative_proof(
+        target_node,
+        candidate.symbol,
+        context.source_bytes,
+    )
+    if alternative_guard is not None:
+        proofs.append(alternative_guard)
+    loop_break_guard = _ast_loop_break_guard_proof(
+        target_node,
+        candidate.symbol,
+        context.source_bytes,
+    )
+    if loop_break_guard is not None:
+        proofs.append(loop_break_guard)
     repeat_until_guard = _ast_repeat_until_guard_proof(
         target_node,
         candidate.symbol,
@@ -272,7 +286,11 @@ def _resolve_origin_with_ast(
             unknown_reason=unknown_reason,
         )
 
-    detail = _find_bounded_origin_detail(source, candidate, target_node, context)
+    detail, origin_reason = _find_bounded_origin_detail(
+        target_node=target_node,
+        symbol=candidate.symbol,
+        context=context,
+    )
     if detail is not None:
         return _AstOriginOutcome(
             detail=detail,
@@ -282,7 +300,7 @@ def _resolve_origin_with_ast(
     return _AstOriginOutcome(
         detail=None,
         analysis_mode="ast_origin_fallback_to_legacy",
-        unknown_reason="no_bounded_ast_origin",
+        unknown_reason=origin_reason or "no_bounded_ast_origin",
     )
 
 
@@ -340,9 +358,12 @@ def _classify_ast_unknown_reason(
     target_node,
     candidate: CandidateCase,
 ) -> str | None:
-    for capture_name in ("while", "for"):
-        if any(_node_contains(node, target_node) for node in context.captures.get(capture_name, ())):
+    if any(_node_contains(node, target_node) for node in context.captures.get("while", ())):
+        if _ast_loop_break_guard_proof(target_node, candidate.symbol, context.source_bytes) is None:
             return "unsupported_control_flow"
+
+    if any(_node_contains(node, target_node) for node in context.captures.get("for", ())):
+        return "unsupported_control_flow"
 
     prefix = "\n".join(source.splitlines()[: max(0, candidate.line)])
     if "setmetatable(" in prefix or "__index" in prefix or "getmetatable(" in prefix:
@@ -358,26 +379,24 @@ def _classify_ast_unknown_reason(
 
 
 def _find_bounded_origin_detail(
-    source: str,
-    candidate: CandidateCase,
+    *,
     target_node,
+    symbol: str,
     context: _AstControlFlowContext,
-) -> tuple[str, str, int, int] | None:
+) -> tuple[tuple[str, str, int, int] | None, str | None]:
     scope_node = _nearest_origin_scope_node(context.tree.root_node, target_node)
     if scope_node is None:
-        return None
+        return None, "no_bounded_ast_origin"
 
-    scope_start_line = scope_node.start_point[0]
-    target_line = max(0, candidate.line - 1)
-    if target_line < scope_start_line:
-        return None
-
-    scope_lines = source.splitlines()[scope_start_line:target_line]
-    detail = _find_last_assignment_detail(scope_lines, candidate.symbol)
-    if detail is None:
-        return None
-    origin, usage_mode, return_slot, line_index = detail
-    return origin, usage_mode, return_slot, line_index + scope_start_line
+    detail, reason = _find_preceding_bounded_origin_detail(
+        target_node=target_node,
+        scope_node=scope_node,
+        symbol=symbol,
+        source_bytes=context.source_bytes,
+    )
+    if detail is not None:
+        return detail, None
+    return None, reason or "no_bounded_ast_origin"
 
 
 def _nearest_origin_scope_node(root_node, target_node):
@@ -386,6 +405,109 @@ def _nearest_origin_scope_node(root_node, target_node):
         return root_node
     body = function_node.child_by_field_name("body")
     return body if body is not None else root_node
+
+
+def _find_preceding_bounded_origin_detail(
+    *,
+    target_node,
+    scope_node,
+    symbol: str,
+    source_bytes: bytes,
+) -> tuple[tuple[str, str, int, int] | None, str | None]:
+    current = target_node
+    while current is not None and current != scope_node:
+        parent = current.parent
+        if parent is None:
+            break
+        for sibling in reversed(_preceding_named_siblings(parent, current)):
+            detail, reason = _bounded_origin_from_sibling(sibling, symbol, source_bytes)
+            if detail is not None or reason is not None:
+                return detail, reason
+        current = parent
+    return None, None
+
+
+def _bounded_origin_from_sibling(
+    node,
+    symbol: str,
+    source_bytes: bytes,
+) -> tuple[tuple[str, str, int, int] | None, str | None]:
+    if node.type == "assignment_statement":
+        return _assignment_detail_from_node(node, symbol, source_bytes), None
+
+    if node.type == "variable_declaration":
+        assignment = next(
+            (child for child in node.named_children if child.type == "assignment_statement"),
+            None,
+        )
+        if assignment is not None:
+            return _assignment_detail_from_node(assignment, symbol, source_bytes), None
+        return None, None
+
+    if node.type == "do_statement":
+        statements = tuple(node.named_children)
+        if not statements:
+            return None, None
+        for statement in reversed(statements):
+            detail, reason = _bounded_origin_from_sibling(statement, symbol, source_bytes)
+            if detail is not None or reason is not None:
+                return detail, reason
+        return None, None
+
+    if node.type in {
+        "if_statement",
+        "elseif_statement",
+        "else_statement",
+        "while_statement",
+        "repeat_statement",
+        "for_statement",
+        "for_in_statement",
+    } and _subtree_assigns_symbol(node, symbol, source_bytes):
+        return None, "unsupported_control_flow"
+
+    return None, None
+
+
+def _assignment_detail_from_node(
+    node,
+    symbol: str,
+    source_bytes: bytes,
+) -> tuple[str, str, int, int] | None:
+    detail = _assignment_detail_from_text(_node_text(source_bytes, node), symbol)
+    if detail is None:
+        return None
+    origin, usage_mode, return_slot = detail
+    return origin, usage_mode, return_slot, node.start_point[0]
+
+
+def _assignment_detail_from_text(
+    statement_text: str,
+    symbol: str,
+) -> tuple[str, str, int] | None:
+    assignment = _split_assignment_statement(statement_text)
+    if assignment is None:
+        return None
+    targets, values = assignment
+    if not targets or not values:
+        return None
+
+    matching_index = next(
+        (
+            index
+            for index, target in enumerate(targets)
+            if _same_symbol_reference(target, symbol)
+        ),
+        None,
+    )
+    if matching_index is None:
+        return None
+
+    usage_mode = "multi_assignment" if len(targets) > 1 else "single_assignment"
+    if matching_index < len(values):
+        return values[matching_index], usage_mode, 1
+    if len(values) == 1:
+        return values[0], "multi_assignment", matching_index + 1
+    return None
 
 
 def _enclosing_function_declaration(node):
@@ -494,6 +616,46 @@ def _ast_positive_guard_proof(target_node, symbol: str, source_bytes: bytes) -> 
     return None
 
 
+def _ast_negative_guard_alternative_proof(target_node, symbol: str, source_bytes: bytes) -> StaticProof | None:
+    ancestor = target_node
+    while ancestor is not None:
+        if ancestor.type == "if_statement":
+            alternative = ancestor.child_by_field_name("alternative")
+            condition = ancestor.child_by_field_name("condition")
+            consequence = ancestor.child_by_field_name("consequence")
+            if (
+                alternative is not None
+                and consequence is not None
+                and _node_contains(alternative, target_node)
+                and _condition_is_negative_symbol_check(condition, symbol)
+                and _block_guarantees_early_exit(consequence, source_bytes)
+                and not _path_has_assignment_between(alternative, target_node, symbol, source_bytes)
+            ):
+                return _build_early_exit_guard_proof(symbol)
+        ancestor = ancestor.parent
+    return None
+
+
+def _ast_loop_break_guard_proof(target_node, symbol: str, source_bytes: bytes) -> StaticProof | None:
+    ancestor = target_node
+    while ancestor is not None:
+        if ancestor.type == "while_statement":
+            body = ancestor.child_by_field_name("body")
+            if (
+                body is not None
+                and _node_contains(body, target_node)
+                and _find_preceding_guard_node(
+                    target_node,
+                    symbol,
+                    source_bytes,
+                    guard_kind="break",
+                )
+            ):
+                return _build_loop_break_guard_proof(symbol)
+        ancestor = ancestor.parent
+    return None
+
+
 def _ast_repeat_until_guard_proof(target_node, symbol: str, source_bytes: bytes) -> StaticProof | None:
     if _find_preceding_repeat_until_guard(target_node, symbol, source_bytes):
         return _build_repeat_until_guard_proof(symbol)
@@ -529,6 +691,8 @@ def _find_preceding_guard_node(target_node, symbol: str, source_bytes: bytes, *,
         for sibling in reversed(_preceding_named_siblings(parent, current)):
             if _subtree_assigns_symbol(sibling, symbol, source_bytes):
                 return False
+            if guard_kind == "break" and _node_is_negative_guard_break(sibling, symbol, source_bytes):
+                return True
             if guard_kind == "early_exit" and _node_is_negative_guard_exit(sibling, symbol, source_bytes):
                 return True
             if guard_kind == "assert" and _node_is_assert_guard(sibling, symbol, source_bytes):
@@ -639,6 +803,20 @@ def _node_is_negative_guard_exit(node, symbol: str, source_bytes: bytes) -> bool
     return _block_guarantees_early_exit(consequence, source_bytes)
 
 
+def _node_is_negative_guard_break(node, symbol: str, source_bytes: bytes) -> bool:
+    if node.type != "if_statement":
+        return False
+    if node.child_by_field_name("alternative") is not None:
+        return False
+    condition = node.child_by_field_name("condition")
+    consequence = node.child_by_field_name("consequence")
+    if not _condition_is_negative_symbol_check(condition, symbol):
+        return False
+    if consequence is None:
+        return False
+    return _block_guarantees_break_only(consequence)
+
+
 def _node_is_assert_guard(node, symbol: str, source_bytes: bytes) -> bool:
     if node.type != "function_call":
         return False
@@ -678,6 +856,13 @@ def _block_guarantees_early_exit(block_node, source_bytes: bytes) -> bool:
     if terminal.type == "function_call":
         return _node_text(source_bytes, terminal).strip().startswith("error(")
     return False
+
+
+def _block_guarantees_break_only(block_node) -> bool:
+    statements = list(block_node.named_children)
+    if not statements:
+        return False
+    return statements[-1].type == "break_statement"
 
 
 def _block_contains_nonlocal_break(block_node) -> bool:
@@ -993,6 +1178,17 @@ def _build_repeat_until_guard_proof(symbol: str) -> StaticProof:
         subject=symbol,
         source_symbol=symbol,
         provenance=(f"the loop only reaches the sink after `{symbol}` becomes truthy",),
+        depth=0,
+    )
+
+
+def _build_loop_break_guard_proof(symbol: str) -> StaticProof:
+    return StaticProof(
+        kind="loop_break_guard",
+        summary=f"if not {symbol} then break",
+        subject=symbol,
+        source_symbol=symbol,
+        provenance=(f"the nil branch for `{symbol}` breaks out before the loop-body sink",),
         depth=0,
     )
 

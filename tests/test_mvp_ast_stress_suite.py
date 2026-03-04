@@ -11,7 +11,7 @@ from lua_nil_review_agent.service import (
 )
 
 
-def test_ast_stress_suite_static_scan_exercises_guard_and_conservative_fallbacks(
+def test_ast_stress_suite_static_scan_exercises_guard_and_bounded_loop_support(
     tmp_path: Path,
 ) -> None:
     project_root = Path(__file__).resolve().parents[1] / "examples" / "mvp_cases" / "ast_stress_suite"
@@ -29,19 +29,14 @@ def test_ast_stress_suite_static_scan_exercises_guard_and_conservative_fallbacks
     assert by_name["provable_safe_shadowed_local_do.lua"].candidate.static_state == "safe_static"
     assert by_name["provable_safe_deep_nested_if.lua"].candidate.static_state == "safe_static"
     assert by_name["provable_safe_repeat_until.lua"].candidate.static_state == "safe_static"
-    assert by_name["provable_uncertain_loop_break.lua"].candidate.static_state == "unknown_static"
+    assert by_name["provable_safe_loop_break.lua"].candidate.static_state == "safe_static"
 
     if get_parser_backend_info().tree_sitter_available:
         assert by_name["provable_safe_shadowed_local_do.lua"].static_analysis.analysis_mode == "ast_primary"
         assert by_name["provable_safe_deep_nested_if.lua"].static_analysis.analysis_mode == "ast_primary"
         assert by_name["provable_safe_repeat_until.lua"].static_analysis.analysis_mode == "ast_primary"
-        assert (
-            by_name["provable_uncertain_loop_break.lua"].static_analysis.analysis_mode
-            == "ast_fallback_to_legacy"
-        )
-        assert by_name["provable_uncertain_loop_break.lua"].static_analysis.unknown_reason == (
-            "unsupported_control_flow"
-        )
+        assert by_name["provable_safe_loop_break.lua"].static_analysis.analysis_mode == "ast_primary"
+        assert by_name["provable_safe_loop_break.lua"].static_analysis.unknown_reason is None
     else:
         assert all(
             assessment.static_analysis.analysis_mode == "legacy_only"
@@ -62,10 +57,10 @@ def test_ast_stress_suite_benchmark_exposes_ast_migration_counts(tmp_path: Path)
     assert summary.ast_primary_cases + summary.ast_fallback_to_legacy_cases + summary.legacy_only_cases == 4
 
     if get_parser_backend_info().tree_sitter_available:
-        assert summary.ast_primary_cases >= 3
-        assert summary.ast_fallback_to_legacy_cases >= 1
+        assert summary.ast_primary_cases == 4
+        assert summary.ast_fallback_to_legacy_cases == 0
         assert summary.legacy_only_cases == 0
     else:
         assert summary.ast_primary_cases == 0
         assert summary.ast_fallback_to_legacy_cases == 0
-        assert summary.legacy_only_cases == 3
+        assert summary.legacy_only_cases == 4
