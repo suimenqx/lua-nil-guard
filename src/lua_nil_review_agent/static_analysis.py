@@ -896,7 +896,7 @@ def _contract_matching_symbol_index(
     symbol: str,
 ) -> int | None:
     for index in contract.ensures_non_nil_args:
-        if 1 <= index <= len(args) and args[index - 1].strip() == symbol:
+        if 1 <= index <= len(args) and _same_symbol_reference(args[index - 1], symbol):
             return index
     return None
 
@@ -922,7 +922,7 @@ def _build_guarded_arg_supporting_proofs(
         if index < 1 or index > len(args):
             return None
         symbol = args[index - 1].strip()
-        if not _IDENTIFIER_RE.match(symbol):
+        if not _is_trackable_symbol(symbol):
             return None
         proof = _find_symbol_proof(
             lines,
@@ -960,7 +960,7 @@ def _find_symbol_proof(
     remaining_chain_depth: int,
     allow_terminal_origin: bool = False,
 ) -> StaticProof | None:
-    if not _IDENTIFIER_RE.match(symbol):
+    if not _is_trackable_symbol(symbol):
         return None
     if _has_active_positive_guard(lines, symbol):
         return _build_positive_guard_proof(symbol)
@@ -1682,7 +1682,7 @@ def _transparent_wrapper_returns_safe_value(
         return False
     if _is_non_nil_literal(passthrough_value):
         return True
-    if _IDENTIFIER_RE.match(passthrough_value):
+    if _is_trackable_symbol(passthrough_value):
         if _is_symbol_guarded(
             lines,
             passthrough_value,

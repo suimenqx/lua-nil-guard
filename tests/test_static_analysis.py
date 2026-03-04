@@ -1358,6 +1358,51 @@ def test_analyze_candidate_requires_guard_before_return_normalizer_combo() -> No
     assert result.origin_return_slots == (2,)
 
 
+def test_analyze_candidate_combines_field_guard_contract_with_return_normalizer() -> None:
+    source = "\n".join(
+        [
+            "assert_present(req.params.username)",
+            "local raw, normalized = normalize_pair(req.params.username, '')",
+            "return string.match(normalized, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_field_guarded_return_combo",
+        file="demo.lua",
+        line=3,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="normalized",
+        symbol="normalized",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(
+        source,
+        candidate,
+        function_contracts=(
+            FunctionContract(
+                qualified_name="assert_present",
+                returns_non_nil=False,
+                ensures_non_nil_args=(1,),
+            ),
+            FunctionContract(
+                qualified_name="normalize_pair",
+                returns_non_nil=False,
+                returns_non_nil_from_args_by_return_slot=((2, (2,)),),
+                requires_guarded_args_by_return_slot=((2, (1,)),),
+            ),
+        ),
+    )
+
+    assert result.state == "safe_static"
+    assert result.observed_guards == ("normalize_pair(...) returns non-nil",)
+    assert result.origin_return_slots == (2,)
+
+
 def test_analyze_candidate_proves_two_hop_return_normalizer_chain() -> None:
     source = "\n".join(
         [
