@@ -296,20 +296,34 @@ def test_cli_init_config_writes_default_templates(tmp_path: Path) -> None:
     assert any(rule["id"] == "string.match.arg1" for rule in sink_payload)
     assert policy_payload["default_report_min_confidence"] == "high"
     assert contracts_payload == []
-    assert preprocessor_payload == {"preprocessor_files": [], "preprocessor_globs": []}
+    assert preprocessor_payload == {
+        "preprocessor_files": [],
+        "preprocessor_globs": ["id.lua", "*_id.lua"],
+    }
 
 
-def test_cli_init_config_rejects_existing_files_without_force(tmp_path: Path) -> None:
+def test_cli_init_config_preserves_existing_files_and_backfills_missing_templates(tmp_path: Path) -> None:
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     sink_path = config_dir / "sink_rules.json"
+    policy_path = config_dir / "confidence_policy.json"
+    contracts_path = config_dir / "function_contracts.json"
+    preprocessor_path = config_dir / "preprocessor_files.json"
     sink_path.write_text("[]", encoding="utf-8")
+    policy_path.write_text("{}", encoding="utf-8")
+    contracts_path.write_text("[]", encoding="utf-8")
 
     exit_code, output = run(["init-config", str(tmp_path)])
 
-    assert exit_code == 2
-    assert output.startswith(f"Config file already exists: {sink_path}")
+    assert exit_code == 0
+    assert "Repository config initialized." in output
     assert sink_path.read_text(encoding="utf-8") == "[]"
+    assert policy_path.read_text(encoding="utf-8") == "{}"
+    assert contracts_path.read_text(encoding="utf-8") == "[]"
+    assert json.loads(preprocessor_path.read_text(encoding="utf-8")) == {
+        "preprocessor_files": [],
+        "preprocessor_globs": ["id.lua", "*_id.lua"],
+    }
 
 
 def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None:
@@ -318,21 +332,28 @@ def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None
     sink_path = config_dir / "sink_rules.json"
     policy_path = config_dir / "confidence_policy.json"
     contracts_path = config_dir / "function_contracts.json"
+    preprocessor_path = config_dir / "preprocessor_files.json"
     sink_path.write_text("[]", encoding="utf-8")
     policy_path.write_text("{}", encoding="utf-8")
     contracts_path.write_text("{}", encoding="utf-8")
+    preprocessor_path.write_text("{}", encoding="utf-8")
 
     exit_code, output = run(["init-config", "--force", str(tmp_path)])
 
     sink_payload = json.loads(sink_path.read_text(encoding="utf-8"))
     policy_payload = json.loads(policy_path.read_text(encoding="utf-8"))
     contracts_payload = json.loads(contracts_path.read_text(encoding="utf-8"))
+    preprocessor_payload = json.loads(preprocessor_path.read_text(encoding="utf-8"))
 
     assert exit_code == 0
     assert "Force overwrite: yes" in output
     assert any(rule["id"] == "string.match.arg1" for rule in sink_payload)
     assert policy_payload["default_report_min_confidence"] == "high"
     assert contracts_payload == []
+    assert preprocessor_payload == {
+        "preprocessor_files": [],
+        "preprocessor_globs": ["id.lua", "*_id.lua"],
+    }
 
 
 def test_cli_encoding_audit_reports_convertible_and_unsupported_files(tmp_path: Path) -> None:

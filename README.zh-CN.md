@@ -35,7 +35,7 @@ lua-nil-guard doctor
 lua-nil-guard init-config /path/to/target-repo
 ```
 
-5. 如果仓库里存在超大的“编译前宏字典”文件，请先在 `config/preprocessor_files.json` 中列出它们，再查看工具能从这些文件中提取哪些事实：
+5. 默认情况下，LuaNilGuard 已经会把 `id.lua` 和 `*_id.lua` 视为预处理宏字典候选。如果你的仓库里存在超大的“编译前宏字典”文件，请先检查或扩展 `config/preprocessor_files.json`，再查看工具能从这些文件中提取哪些事实：
 
 ```sh
 lua-nil-guard macro-audit /path/to/target-repo
@@ -167,7 +167,7 @@ lua-nil-guard proposal-analytics /path/to/target-repo
 - 真正尚未支持的代码模式
 - 需要补充 helper 契约的场景
 
-如果你的仓库里有超大的“宏定义/默认值”文件（例如每行都是 `NAME = ""` 或 `Defaults.Name = 0`，并在编译阶段做替换），请把它们加入 `config/preprocessor_files.json`，然后运行：
+如果你的仓库里有超大的“宏定义/默认值”文件（例如每行都是 `NAME = ""` 或 `Defaults.Name = 0`，并在编译阶段做替换），注意 `id.lua` 和 `*_id.lua` 默认已经会按预处理文件处理。其他文件请继续加入 `config/preprocessor_files.json`，然后运行：
 
 ```sh
 lua-nil-guard macro-audit /path/to/target-repo
@@ -247,7 +247,7 @@ lua-nil-guard generate-backend-manifest my-provider stdout_envelope_cli
 
 这套机制的目标是：在不依赖 prompt 猜测的前提下，尽量降低误报。
 
-`preprocessor_files.json` 用于声明那类“编译阶段宏字典”文件。它们不是普通业务 Lua 文件，因此不会参与常规候选扫描；LuaNilGuard 只会从中提取有界、确定的编译期事实，例如：
+`preprocessor_files.json` 用于声明那类“编译阶段宏字典”文件。默认模板已经内置了 `id.lua` 和 `*_id.lua` 这两个匹配规则。被匹配到的文件不是普通业务 Lua 文件，因此不会参与常规候选扫描；LuaNilGuard 只会从中提取有界、确定的编译期事实，例如：
 
 - `NAME = ""`
 - `COUNT = 0`

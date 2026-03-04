@@ -7,6 +7,7 @@ import pytest
 
 from lua_nil_guard.config_loader import (
     ConfigError,
+    default_preprocessor_config,
     load_confidence_policy,
     load_function_contracts,
     load_preprocessor_config,
@@ -77,7 +78,14 @@ def test_load_preprocessor_config_reads_defaults() -> None:
     config = load_preprocessor_config(ROOT / "config" / "preprocessor_files.json")
 
     assert config.preprocessor_files == ()
-    assert config.preprocessor_globs == ()
+    assert config.preprocessor_globs == ("id.lua", "*_id.lua")
+
+
+def test_default_preprocessor_config_matches_template_defaults() -> None:
+    config = default_preprocessor_config()
+
+    assert config.preprocessor_files == ()
+    assert config.preprocessor_globs == ("id.lua", "*_id.lua")
 
 
 def test_load_preprocessor_config_reads_explicit_files_and_globs(tmp_path: Path) -> None:

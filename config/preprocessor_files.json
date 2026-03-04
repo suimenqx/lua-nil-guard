@@ -1,4 +1,7 @@
 {
   "preprocessor_files": [],
-  "preprocessor_globs": []
+  "preprocessor_globs": [
+    "id.lua",
+    "*_id.lua"
+  ]
 }

@@ -13,6 +13,7 @@ from .agent_driver_models import AgentProviderSpec
 from .agent_backend import AdjudicationBackend, CliAgentBackend, HeuristicAdjudicationBackend
 from .collector import collect_candidates, top_level_phase_for_prefix
 from .config_loader import (
+    default_preprocessor_config,
     load_confidence_policy,
     load_function_contracts,
     load_preprocessor_config,
@@ -151,12 +152,12 @@ def bootstrap_repository(root: str | Path) -> RepositorySnapshot:
     preprocessor_config = (
         load_preprocessor_config(preprocessor_config_path)
         if preprocessor_config_path.is_file()
-        else None
+        else default_preprocessor_config()
     )
-    review_lua_files, preprocessor_files = (
-        split_preprocessor_files(root_path, all_lua_files, preprocessor_config)
-        if preprocessor_config is not None
-        else (all_lua_files, ())
+    review_lua_files, preprocessor_files = split_preprocessor_files(
+        root_path,
+        all_lua_files,
+        preprocessor_config,
     )
     macro_index = build_macro_index(
         root_path,

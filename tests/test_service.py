@@ -232,6 +232,37 @@ def test_bootstrap_repository_splits_preprocessor_files_and_run_file_review_uses
     assert verdicts[0].status.startswith("safe")
 
 
+def test_bootstrap_repository_uses_default_id_globs_without_explicit_preprocessor_config(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / "config"
+    src_dir = tmp_path / "src"
+    config_dir.mkdir()
+    src_dir.mkdir()
+    (config_dir / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (config_dir / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    macro_file = src_dir / "id.lua"
+    business_file = src_dir / "consumer.lua"
+    macro_file.write_text("USER_NAME = \"guest\"\n", encoding="utf-8")
+    business_file.write_text("return nil\n", encoding="utf-8")
+
+    snapshot = bootstrap_repository(tmp_path)
+
+    assert snapshot.preprocessor_files == (macro_file,)
+    assert snapshot.lua_files == (business_file,)
+    assert snapshot.macro_index is not None
+    assert any(fact.key == "USER_NAME" for fact in snapshot.macro_index.facts)
+
+
 def test_find_repository_root_for_file_walks_up_to_config_directory(tmp_path: Path) -> None:
     config_dir = tmp_path / "config"
     nested_dir = tmp_path / "src" / "handlers"

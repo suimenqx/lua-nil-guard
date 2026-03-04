@@ -18,6 +18,8 @@ _SUPPORTED_TOP_LEVEL_PHASES = frozenset({"init", "post_definitions"})
 _SUPPORTED_ARG_SHAPES = frozenset(
     {"identifier", "member_access", "indexed_access", "literal", "call", "expression"}
 )
+_DEFAULT_PREPROCESSOR_FILES: tuple[str, ...] = ()
+_DEFAULT_PREPROCESSOR_GLOBS: tuple[str, ...] = ("id.lua", "*_id.lua")
 
 
 def initialize_repository_config(
@@ -44,20 +46,16 @@ def initialize_repository_config(
     contracts_target = config_dir / "function_contracts.json"
     preprocessor_target = config_dir / "preprocessor_files.json"
 
-    for target_path in (sink_target, policy_target, contracts_target, preprocessor_target):
-        if target_path.exists() and not force:
-            raise ConfigError(
-                f"Config file already exists: {target_path} (use --force to overwrite)"
-            )
-
     config_dir.mkdir(parents=True, exist_ok=True)
-    sink_target.write_text(sink_source.read_text(encoding="utf-8"), encoding="utf-8")
-    policy_target.write_text(policy_source.read_text(encoding="utf-8"), encoding="utf-8")
-    contracts_target.write_text(contracts_source.read_text(encoding="utf-8"), encoding="utf-8")
-    preprocessor_target.write_text(
-        preprocessor_source.read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
+    for source_path, target_path in (
+        (sink_source, sink_target),
+        (policy_source, policy_target),
+        (contracts_source, contracts_target),
+        (preprocessor_source, preprocessor_target),
+    ):
+        if target_path.exists() and not force:
+            continue
+        target_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
     return sink_target, policy_target, contracts_target, preprocessor_target
 
 
@@ -135,6 +133,15 @@ def load_preprocessor_config(path: str | Path) -> PreprocessorConfig:
     return PreprocessorConfig(
         preprocessor_files=tuple(dict.fromkeys(explicit_files)),
         preprocessor_globs=tuple(dict.fromkeys(globs)),
+    )
+
+
+def default_preprocessor_config() -> PreprocessorConfig:
+    """Return the built-in preprocessor dictionary defaults."""
+
+    return PreprocessorConfig(
+        preprocessor_files=_DEFAULT_PREPROCESSOR_FILES,
+        preprocessor_globs=_DEFAULT_PREPROCESSOR_GLOBS,
     )
 
 

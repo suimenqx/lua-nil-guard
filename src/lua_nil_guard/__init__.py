@@ -50,6 +50,7 @@ from .cli import main, run
 from .collector import collect_candidates
 from .config_loader import (
     ConfigError,
+    default_preprocessor_config,
     load_confidence_policy,
     load_function_contracts,
     load_preprocessor_config,
@@ -209,6 +210,7 @@ __all__ = [
     "discover_lua_files",
     "compile_adjudicator_skill_header",
     "default_adjudicator_skill_path",
+    "default_preprocessor_config",
     "derive_facts_from_summaries",
     "derive_facts_from_contracts",
     "export_adjudication_tasks",
