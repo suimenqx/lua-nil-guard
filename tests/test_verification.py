@@ -4,9 +4,10 @@ from lua_nil_review_agent.models import (
     EvidencePacket,
     EvidenceTarget,
     StaticProof,
+    StaticRiskSignal,
     Verdict,
 )
-from lua_nil_review_agent.verification import preview_static_verification, verify_verdict
+from lua_nil_review_agent.verification import preview_static_risk, preview_static_verification, verify_verdict
 
 
 def test_verify_verdict_upgrades_clear_risk_to_risky_verified() -> None:
@@ -165,6 +166,31 @@ def test_preview_static_verification_reports_strongest_proof_and_depth() -> None
     assert preview.verification_score == 100
 
 
+def test_preview_static_risk_reports_strongest_signal_and_depth() -> None:
+    preview = preview_static_risk(
+        (
+            StaticRiskSignal(
+                kind="unguarded_field_origin",
+                summary="username may inherit nil from req.params.username",
+                subject="username",
+                depth=1,
+            ),
+            StaticRiskSignal(
+                kind="direct_sink_field_path",
+                summary="req.params.username reaches string.match directly",
+                subject="req.params.username",
+                depth=0,
+            ),
+        )
+    )
+
+    assert preview is not None
+    assert preview.mode == "structured_static_risk_preview"
+    assert preview.strongest_proof_kind == "direct_sink_field_path"
+    assert preview.strongest_proof_depth == 0
+    assert preview.verification_score == 100
+
+
 def test_verify_verdict_elevates_safe_confidence_for_deep_chained_proof() -> None:
     verdict = Verdict(
         case_id="case_safe_chained",
@@ -269,6 +295,58 @@ def test_verify_verdict_overrides_uncertain_with_strong_static_proof() -> None:
     assert result.verification_summary.mode == "structured_static_proof_override"
     assert result.verification_summary.strongest_proof_kind == "direct_guard"
     assert result.verification_summary.verification_score == 100
+
+
+def test_verify_verdict_overrides_uncertain_with_strong_static_risk_signal() -> None:
+    verdict = Verdict(
+        case_id="case_uncertain_risk_structured",
+        status="uncertain",
+        confidence="medium",
+        risk_path=(),
+        safety_evidence=(),
+        counterarguments_considered=("backend requested more context",),
+        suggested_fix="local safe_value = req.params.username or ''",
+        needs_human=True,
+    )
+    packet = EvidencePacket(
+        case_id="case_uncertain_risk_structured",
+        target=EvidenceTarget(
+            file="demo.lua",
+            line=13,
+            column=1,
+            sink="string.match",
+            arg_index=1,
+            expression="req.params.username",
+        ),
+        local_context="return string.match(req.params.username, '^a')",
+        related_functions=(),
+        function_summaries=(),
+        knowledge_facts=(),
+        static_reasoning={
+            "state": "unknown_static",
+            "origin_candidates": ("req.params.username",),
+            "observed_guards": (),
+        },
+        static_risk_signals=(
+            StaticRiskSignal(
+                kind="direct_sink_field_path",
+                summary="req.params.username reaches string.match directly",
+                subject="req.params.username",
+                source_expression="req.params.username",
+                depth=0,
+            ),
+        ),
+    )
+
+    result = verify_verdict(verdict, packet)
+
+    assert result.status == "risky_verified"
+    assert result.confidence == "high"
+    assert result.needs_human is False
+    assert result.verification_summary is not None
+    assert result.verification_summary.mode == "structured_static_risk_override"
+    assert result.verification_summary.strongest_proof_kind == "direct_sink_field_path"
+    assert result.verification_summary.verification_score == 95
 
 
 def test_verify_verdict_does_not_let_legacy_guards_override_weak_structured_proof() -> None:

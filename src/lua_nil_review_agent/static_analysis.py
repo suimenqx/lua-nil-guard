@@ -14,7 +14,13 @@ from .knowledge import (
     contract_applies_to_sink,
     extract_access_path,
 )
-from .models import CandidateCase, FunctionContract, StaticAnalysisResult, StaticProof
+from .models import (
+    CandidateCase,
+    FunctionContract,
+    StaticAnalysisResult,
+    StaticProof,
+    StaticRiskSignal,
+)
 from .parser_backend import _load_lua_language
 from .summaries import detect_module_name
 
@@ -89,6 +95,7 @@ def analyze_candidate(
         )
     origin = origin_context[0] if origin_context is not None else None
     proofs: list[StaticProof] = []
+    risk_signals: list[StaticRiskSignal] = []
     current_module = detect_module_name(source)
     effective_transparent_return_wrappers = (
         dict(transparent_return_wrappers)
@@ -159,6 +166,16 @@ def analyze_candidate(
         proofs.append(_build_defaulting_origin_proof(candidate.symbol, origin))
 
     deduped_proofs = _dedupe_proofs(tuple(proofs))
+    if not deduped_proofs:
+        risk_signals.extend(
+            _field_path_risk_signals(
+                prior_lines,
+                candidate,
+                origin_detail,
+                unknown_reason=unknown_reason,
+            )
+        )
+    deduped_risk_signals = _dedupe_risk_signals(tuple(risk_signals))
     observed_guards = tuple(proof.summary for proof in deduped_proofs)
     state = "safe_static" if deduped_proofs else "unknown_static"
     if deduped_proofs:
@@ -181,6 +198,7 @@ def analyze_candidate(
         origin_usage_modes=origin_usage_modes,
         origin_return_slots=origin_return_slots,
         proofs=deduped_proofs,
+        risk_signals=deduped_risk_signals,
         analysis_mode=analysis_mode,
         unknown_reason=unknown_reason,
         origin_analysis_mode=origin_outcome.analysis_mode,
@@ -358,11 +376,19 @@ def _classify_ast_unknown_reason(
     target_node,
     candidate: CandidateCase,
 ) -> str | None:
-    if any(_node_contains(node, target_node) for node in context.captures.get("while", ())):
-        if _ast_loop_break_guard_proof(target_node, candidate.symbol, context.source_bytes) is None:
+    for loop_node in context.captures.get("while", ()):
+        if _node_contains(loop_node, target_node) and _ast_loop_break_guard_proof(
+            target_node,
+            candidate.symbol,
+            context.source_bytes,
+        ) is None:
             return "unsupported_control_flow"
 
-    if any(_node_contains(node, target_node) for node in context.captures.get("for", ())):
+    for loop_node in context.captures.get("for", ()):
+        if not _node_contains(loop_node, target_node):
+            continue
+        if _target_is_supported_for_loop_sink(loop_node, target_node):
+            break
         return "unsupported_control_flow"
 
     prefix = "\n".join(source.splitlines()[: max(0, candidate.line)])
@@ -912,6 +938,13 @@ def _node_contains(ancestor, node) -> bool:
     return ancestor.start_byte <= node.start_byte and node.end_byte <= ancestor.end_byte
 
 
+def _target_is_supported_for_loop_sink(loop_node, target_node) -> bool:
+    body = loop_node.child_by_field_name("body")
+    if body is None:
+        return False
+    return not _node_contains(body, target_node)
+
+
 def _node_text(source_bytes: bytes, node) -> str:
     return source_bytes[node.start_byte : node.end_byte].decode("utf-8")
 
@@ -1229,6 +1262,67 @@ def _build_defaulting_origin_proof(symbol: str, origin: str | None) -> StaticPro
     )
 
 
+def _field_path_risk_signals(
+    lines: list[str],
+    candidate: CandidateCase,
+    origin_detail: tuple[str, str, int, int] | None,
+    *,
+    unknown_reason: str | None,
+) -> tuple[StaticRiskSignal, ...]:
+    supported_unknown_reasons = {None, "", "no_bounded_ast_proof", "unsupported_control_flow"}
+    if unknown_reason not in supported_unknown_reasons:
+        return ()
+
+    candidate_path = extract_access_path(candidate.expression)
+    if (
+        origin_detail is None
+        and candidate_path is not None
+        and _same_symbol_reference(candidate.expression, candidate.symbol)
+    ):
+        return (
+            StaticRiskSignal(
+                kind="direct_sink_field_path",
+                summary=f"{candidate.expression} reaches {candidate.sink_name} directly",
+                subject=candidate.symbol,
+                source_expression=candidate.expression,
+                provenance=(
+                    f"the sink consumes field path `{candidate.expression}` directly without a bounded local guard",
+                ),
+                depth=0,
+            ),
+        )
+
+    if origin_detail is None:
+        return ()
+    if not _IDENTIFIER_RE.match(candidate.symbol):
+        return ()
+
+    origin, _usage_mode, _return_slot, assignment_line_index = origin_detail
+    if extract_access_path(origin) is None:
+        return ()
+
+    assignment_prefix = lines[:assignment_line_index]
+    if (
+        _has_active_positive_guard(assignment_prefix, origin)
+        or _has_early_exit_guard(assignment_prefix, origin)
+        or _has_active_assert(assignment_prefix, origin)
+    ):
+        return ()
+
+    return (
+        StaticRiskSignal(
+            kind="unguarded_field_origin",
+            summary=f"{candidate.symbol} may inherit nil from {origin}",
+            subject=candidate.symbol,
+            source_expression=origin,
+            provenance=(
+                f"`{candidate.symbol}` is assigned from unguarded field path `{origin}` before the sink",
+            ),
+            depth=1,
+        ),
+    )
+
+
 def _guarded_field_origin_proof(
     lines: list[str],
     origin_detail: tuple[str, str, int, int] | None,
@@ -1287,6 +1381,27 @@ def _dedupe_proofs(proofs: tuple[StaticProof, ...]) -> tuple[StaticProof, ...]:
             continue
         seen.add(key)
         unique.append(proof)
+    return tuple(unique)
+
+
+def _dedupe_risk_signals(
+    signals: tuple[StaticRiskSignal, ...],
+) -> tuple[StaticRiskSignal, ...]:
+    unique: list[StaticRiskSignal] = []
+    seen: set[tuple[object, ...]] = set()
+    for signal in signals:
+        key = (
+            signal.kind,
+            signal.summary,
+            signal.subject,
+            signal.source_expression,
+            signal.provenance,
+            signal.depth,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(signal)
     return tuple(unique)
 
 

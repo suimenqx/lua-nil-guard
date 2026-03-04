@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .models import EvidencePacket, StaticProof, Verdict, VerificationSummary
+from .models import EvidencePacket, StaticProof, StaticRiskSignal, Verdict, VerificationSummary
 
 
 _SAFE_VERIFY_THRESHOLD = 80
@@ -26,13 +26,53 @@ def preview_static_verification(proofs: tuple[StaticProof, ...]) -> Verification
     )
 
 
+def preview_static_risk(signals: tuple[StaticRiskSignal, ...]) -> VerificationSummary | None:
+    """Summarize the current structured local risk signals before adjudication."""
+
+    if not signals:
+        return None
+    strongest_signal = _strongest_risk_signal(signals)
+    strongest_score = _static_risk_score(signals)
+    signal_summaries = _risk_summaries(signals)
+    return VerificationSummary(
+        mode="structured_static_risk_preview",
+        strongest_proof_kind=strongest_signal.kind,
+        strongest_proof_depth=strongest_signal.depth,
+        strongest_proof_summary=strongest_signal.summary,
+        verification_score=strongest_score,
+        evidence=signal_summaries,
+    )
+
+
 def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
     """Apply a lightweight automatic verification pass to a verdict."""
 
     observed_guards = _tuple_field(packet, "observed_guards")
     proofs = packet.static_proofs
+    risk_signals = packet.static_risk_signals
 
     if verdict.status == "risky" and not observed_guards and verdict.risk_path:
+        risk_preview = preview_static_risk(risk_signals)
+        if risk_preview is not None and (risk_preview.verification_score or 0) >= _SAFE_VERIFY_THRESHOLD:
+            return Verdict(
+                case_id=verdict.case_id,
+                status="risky_verified",
+                confidence="high",
+                risk_path=verdict.risk_path,
+                safety_evidence=verdict.safety_evidence,
+                counterarguments_considered=verdict.counterarguments_considered,
+                suggested_fix=verdict.suggested_fix,
+                needs_human=False,
+                autofix_patch=verdict.autofix_patch,
+                verification_summary=VerificationSummary(
+                    mode="structured_static_risk",
+                    strongest_proof_kind=risk_preview.strongest_proof_kind,
+                    strongest_proof_depth=risk_preview.strongest_proof_depth,
+                    strongest_proof_summary=risk_preview.strongest_proof_summary,
+                    verification_score=risk_preview.verification_score,
+                    evidence=risk_preview.evidence,
+                ),
+            )
         return Verdict(
             case_id=verdict.case_id,
             status="risky_verified",
@@ -70,6 +110,36 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
                     strongest_proof_summary=preview.strongest_proof_summary,
                     verification_score=preview.verification_score,
                     evidence=proof_summaries,
+                ),
+            )
+
+    if (
+        verdict.status == "uncertain"
+        and verdict.confidence != "high"
+        and not observed_guards
+        and not proofs
+        and risk_signals
+    ):
+        risk_preview = preview_static_risk(risk_signals)
+        if risk_preview is not None and (risk_preview.verification_score or 0) >= _SAFE_VERIFY_THRESHOLD:
+            risk_path = verdict.risk_path or risk_preview.evidence
+            return Verdict(
+                case_id=verdict.case_id,
+                status="risky_verified",
+                confidence="high",
+                risk_path=risk_path,
+                safety_evidence=(),
+                counterarguments_considered=verdict.counterarguments_considered,
+                suggested_fix=verdict.suggested_fix,
+                needs_human=False,
+                autofix_patch=verdict.autofix_patch,
+                verification_summary=VerificationSummary(
+                    mode="structured_static_risk_override",
+                    strongest_proof_kind=risk_preview.strongest_proof_kind,
+                    strongest_proof_depth=risk_preview.strongest_proof_depth,
+                    strongest_proof_summary=risk_preview.strongest_proof_summary,
+                    verification_score=risk_preview.verification_score,
+                    evidence=risk_preview.evidence,
                 ),
             )
 
@@ -199,6 +269,38 @@ def _strongest_safe_proof(proofs: tuple[StaticProof, ...]) -> StaticProof:
     )
 
 
+def _safe_risk_signal_score(signal: StaticRiskSignal) -> int:
+    base_scores = {
+        "direct_sink_field_path": 95,
+        "unguarded_field_origin": 90,
+    }
+    base = base_scores.get(signal.kind, 70)
+    penalty = 5 * max(0, signal.depth)
+    return max(0, base - penalty)
+
+
+def _static_risk_score(signals: tuple[StaticRiskSignal, ...]) -> int:
+    scored_signals = sorted((_safe_risk_signal_score(signal) for signal in signals), reverse=True)
+    strongest_score = scored_signals[0]
+    corroboration_bonus = min(
+        10,
+        5 * sum(1 for score in scored_signals[1:] if score >= 70),
+    )
+    return min(100, strongest_score + corroboration_bonus)
+
+
+def _strongest_risk_signal(signals: tuple[StaticRiskSignal, ...]) -> StaticRiskSignal:
+    return max(
+        signals,
+        key=lambda signal: (
+            _safe_risk_signal_score(signal),
+            -signal.depth,
+            signal.kind,
+            signal.summary,
+        ),
+    )
+
+
 def _safe_confidence_floor(score: int) -> str:
     if score >= 70:
         return "high"
@@ -217,6 +319,26 @@ def _proof_summaries(proofs: tuple[StaticProof, ...]) -> tuple[str, ...]:
             continue
         summaries.append(proof.summary)
         seen.add(proof.summary)
+    return tuple(summaries)
+
+
+def _risk_summaries(signals: tuple[StaticRiskSignal, ...]) -> tuple[str, ...]:
+    ordered_signals = sorted(
+        signals,
+        key=lambda signal: (
+            -_safe_risk_signal_score(signal),
+            signal.depth,
+            signal.kind,
+            signal.summary,
+        ),
+    )
+    seen: set[str] = set()
+    summaries: list[str] = []
+    for signal in ordered_signals:
+        if signal.summary in seen:
+            continue
+        summaries.append(signal.summary)
+        seen.add(signal.summary)
     return tuple(summaries)
 
 

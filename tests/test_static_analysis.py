@@ -2307,6 +2307,40 @@ def test_analyze_candidate_marks_loop_break_guard_safe_when_ast_runs() -> None:
         assert result.analysis_mode == "legacy_only"
 
 
+def test_analyze_candidate_allows_bounded_pairs_header_origin_proof() -> None:
+    source = "\n".join(
+        [
+            "local items = req.items or {}",
+            "for _, item in pairs(items) do",
+            "  return item",
+            "end",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_ast_pairs_header_origin",
+        file="demo.lua",
+        line=2,
+        column=22,
+        sink_rule_id="pairs.arg1",
+        sink_name="pairs",
+        arg_index=1,
+        expression="items",
+        symbol="items",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    if get_parser_backend_info().tree_sitter_available:
+        assert result.state == "safe_static"
+        assert result.unknown_reason is None
+        assert result.origin_candidates == ("req.items or {}",)
+        assert "items = items or ..." in result.observed_guards
+    else:
+        assert result.analysis_mode == "legacy_only"
+
+
 def test_analyze_candidate_marks_unproved_ast_case_with_structured_no_bounded_reason() -> None:
     source = "\n".join(
         [
@@ -2552,6 +2586,31 @@ def test_analyze_candidate_normalizes_bracket_field_paths_for_guards() -> None:
         assert result.analysis_mode == "legacy_only"
 
 
+def test_analyze_candidate_emits_direct_field_path_risk_signal() -> None:
+    source = "return string.match(req.params.username, '^a')"
+    candidate = CandidateCase(
+        case_id="case_direct_field_path_risk",
+        file="demo.lua",
+        line=1,
+        column=21,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="req.params.username",
+        symbol="req.params.username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
+    assert result.risk_signals
+    assert result.risk_signals[0].kind == "direct_sink_field_path"
+    assert result.risk_signals[0].summary == "req.params.username reaches string.match directly"
+
+
 def test_analyze_candidate_proves_local_from_guarded_field_origin_safe() -> None:
     source = "\n".join(
         [
@@ -2580,3 +2639,33 @@ def test_analyze_candidate_proves_local_from_guarded_field_origin_safe() -> None
     assert result.state == "safe_static"
     assert result.observed_guards == ("username inherits non-nil from req.params.username",)
     assert any(proof.kind == "guarded_field_origin" for proof in result.proofs)
+
+
+def test_analyze_candidate_emits_unguarded_field_origin_risk_signal() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "return string.find(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_unguarded_field_origin_risk",
+        file="demo.lua",
+        line=2,
+        column=20,
+        sink_rule_id="string.find.arg1",
+        sink_name="string.find",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
+    assert result.risk_signals
+    assert result.risk_signals[0].kind == "unguarded_field_origin"
+    assert result.risk_signals[0].summary == "username may inherit nil from req.params.username"

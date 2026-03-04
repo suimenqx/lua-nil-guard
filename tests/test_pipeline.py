@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lua_nil_review_agent.models import CandidateCase, ConfidencePolicy, StaticProof, Verdict
+from lua_nil_review_agent.models import CandidateCase, ConfidencePolicy, StaticProof, StaticRiskSignal, Verdict
 from lua_nil_review_agent.pipeline import build_evidence_packet, should_report
 
 
@@ -41,6 +41,13 @@ def test_build_evidence_packet_preserves_core_case_data() -> None:
                 provenance=("an active positive branch requires `username` to be truthy",),
             ),
         ),
+        static_risk_signals=(
+            StaticRiskSignal(
+                kind="direct_sink_field_path",
+                summary="req.params.username reaches string.match directly",
+                subject="req.params.username",
+            ),
+        ),
     )
 
     assert packet.case_id == "case_001"
@@ -55,7 +62,10 @@ def test_build_evidence_packet_preserves_core_case_data() -> None:
     assert packet.static_reasoning["origin_unknown_reason"] == "no_bounded_ast_origin"
     assert packet.static_reasoning["proof_kinds"] == ("direct_guard",)
     assert packet.static_reasoning["proof_summaries"] == ("if username then",)
+    assert packet.static_reasoning["risk_kinds"] == ("direct_sink_field_path",)
+    assert packet.static_reasoning["risk_summaries"] == ("req.params.username reaches string.match directly",)
     assert packet.static_proofs[0].subject == "username"
+    assert packet.static_risk_signals[0].subject == "req.params.username"
     assert packet.knowledge_facts == (
         "normalize_name always returns string",
         "req.params may be nil",

@@ -724,10 +724,14 @@ def test_cli_proposal_analytics_renders_aggregate_summary(
         lambda snapshot, backend: ImprovementAnalytics(
             total_proposals=3,
             unique_cases=2,
+            unresolved_proposals=2,
+            medium_reportable_proposals=1,
             by_kind=(("ast_pattern", 2), ("function_contract", 1)),
             by_reason=(("no_bounded_ast_proof", 2), ("normalize_name", 1)),
             by_pattern=(("no_bounded_ast_proof", 2),),
             by_contract=(("normalize_name", 1),),
+            unresolved_by_kind=(("ast_pattern", 2),),
+            medium_reportable_by_kind=(("function_contract", 1),),
         ),
     )
 
@@ -736,6 +740,8 @@ def test_cli_proposal_analytics_renders_aggregate_summary(
     assert exit_code == 0
     assert "# Lua Nil Review Improvement Analytics" in output
     assert "total_proposals: 3" in output
+    assert "unresolved_proposals: 2" in output
+    assert "medium_reportable_proposals: 1" in output
     assert "ast_pattern: 2" in output
     assert "normalize_name: 1" in output
 

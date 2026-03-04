@@ -75,6 +75,7 @@ from .models import (
     RoleOpinion,
     SinkRule,
     StaticProof,
+    StaticRiskSignal,
     StaticAnalysisResult,
     Verdict,
     VerificationSummary,
@@ -119,7 +120,7 @@ from .service import (
 )
 from .summaries import SummaryStore, summarize_source
 from .static_analysis import analyze_candidate
-from .verification import preview_static_verification, verify_verdict
+from .verification import preview_static_risk, preview_static_verification, verify_verdict
 
 __all__ = [
     "AdjudicationRecord",
@@ -170,6 +171,7 @@ __all__ = [
     "SummaryStore",
     "StaticAnalysisResult",
     "StaticProof",
+    "StaticRiskSignal",
     "Verdict",
     "VerificationSummary",
     "with_candidate_state",
@@ -218,6 +220,7 @@ __all__ = [
     "get_parser_backend_info",
     "summarize_source",
     "prepare_evidence_packet",
+    "preview_static_risk",
     "preview_static_verification",
     "refresh_knowledge_base",
     "refresh_summary_cache",

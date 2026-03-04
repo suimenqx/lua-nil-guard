@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from .models import CandidateCase, ConfidencePolicy, EvidencePacket, EvidenceTarget, StaticProof, Verdict
+from .models import (
+    CandidateCase,
+    ConfidencePolicy,
+    EvidencePacket,
+    EvidenceTarget,
+    StaticProof,
+    StaticRiskSignal,
+    Verdict,
+)
 
 
 def build_evidence_packet(
@@ -20,6 +28,7 @@ def build_evidence_packet(
     origin_unknown_reason: str | None = None,
     related_function_contexts: tuple[str, ...] = (),
     static_proofs: tuple[StaticProof, ...] = (),
+    static_risk_signals: tuple[StaticRiskSignal, ...] = (),
 ) -> EvidencePacket:
     """Assemble the normalized context bundle for agent adjudication."""
 
@@ -45,6 +54,8 @@ def build_evidence_packet(
             "observed_guards": tuple(observed_guards),
             "proof_kinds": tuple(proof.kind for proof in static_proofs),
             "proof_summaries": tuple(proof.summary for proof in static_proofs),
+            "risk_kinds": tuple(signal.kind for signal in static_risk_signals),
+            "risk_summaries": tuple(signal.summary for signal in static_risk_signals),
             "analysis_mode": analysis_mode,
             "unknown_reason": unknown_reason or "",
             "origin_analysis_mode": origin_analysis_mode,
@@ -52,6 +63,7 @@ def build_evidence_packet(
         },
         related_function_contexts=tuple(related_function_contexts),
         static_proofs=tuple(static_proofs),
+        static_risk_signals=tuple(static_risk_signals),
     )
 
 

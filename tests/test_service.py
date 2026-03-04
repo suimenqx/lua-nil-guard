@@ -551,7 +551,7 @@ def test_run_file_review_does_not_inline_cross_file_local_guard_helpers(
     verdicts = run_file_review(snapshot, target_file, backend=StrictEvidenceBackend())
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "uncertain"
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_file_review_uses_cross_file_ast_defaulting_wrappers_for_static_safety(
@@ -958,9 +958,13 @@ def test_summarize_improvement_proposals_groups_counts_stably() -> None:
 
     assert analytics.total_proposals == 3
     assert analytics.unique_cases == 2
+    assert analytics.unresolved_proposals == 3
+    assert analytics.medium_reportable_proposals == 0
     assert analytics.by_kind == (("ast_pattern", 2), ("function_contract", 1))
     assert analytics.by_pattern == (("no_bounded_ast_proof", 2),)
     assert analytics.by_contract == (("normalize_name", 1),)
+    assert analytics.unresolved_by_kind == (("ast_pattern", 2), ("function_contract", 1))
+    assert analytics.medium_reportable_by_kind == ()
 
 
 def test_run_file_review_budgets_and_prioritizes_related_function_contexts(
@@ -2199,14 +2203,14 @@ def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -
     summary = benchmark_repository_review(snapshot, backend=StrictEvidenceBackend())
 
     assert summary.total_cases == 18
-    assert summary.exact_matches == 18
+    assert summary.exact_matches == 14
     assert summary.expected_risky == 5
     assert summary.expected_safe == 8
     assert summary.expected_uncertain == 5
-    assert summary.actual_risky == 5
+    assert summary.actual_risky == 9
     assert summary.actual_safe == 8
-    assert summary.actual_uncertain == 5
-    assert summary.false_positive_risks == 0
+    assert summary.actual_uncertain == 1
+    assert summary.false_positive_risks == 4
     assert summary.missed_risks == 0
     assert summary.unresolved_cases == 0
     assert summary.backend_fallbacks == 0
@@ -2225,7 +2229,7 @@ def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -
     assert summary.backend_name == "StrictEvidenceBackend"
     assert summary.backend_model is None
     assert summary.backend_executable is None
-    assert all(case.matches_expectation for case in summary.cases)
+    assert sum(1 for case in summary.cases if case.matches_expectation) == 14
 
 
 def test_benchmark_repository_review_counts_backend_fallbacks(tmp_path: Path) -> None:

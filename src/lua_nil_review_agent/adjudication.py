@@ -44,6 +44,7 @@ def attach_autofix_patch(
 def _prosecutor_opinion(packet: EvidencePacket, sink_rule: SinkRule) -> RoleOpinion:
     observed_guards = _tuple_field(packet, "observed_guards")
     origins = _tuple_field(packet, "origin_candidates")
+    risk_signals = packet.static_risk_signals
 
     if observed_guards or _has_explicit_safety_fact(packet):
         return RoleOpinion(
@@ -55,6 +56,19 @@ def _prosecutor_opinion(packet: EvidencePacket, sink_rule: SinkRule) -> RoleOpin
             missing_evidence=("safety evidence blocks a clean risk proof",),
             recommended_next_action="suppress",
             suggested_fix=None,
+        )
+
+    if risk_signals:
+        risk_summaries = tuple(signal.summary for signal in risk_signals)
+        return RoleOpinion(
+            role="prosecutor",
+            status="risky",
+            confidence="high",
+            risk_path=risk_summaries + (f"no guard before {sink_rule.qualified_name}",),
+            safety_evidence=(),
+            missing_evidence=(),
+            recommended_next_action="report",
+            suggested_fix=_suggested_fix(packet, sink_rule),
         )
 
     return RoleOpinion(

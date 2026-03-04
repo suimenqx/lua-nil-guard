@@ -159,10 +159,16 @@ def render_improvement_analytics_markdown(
         "",
         f"- total_proposals: {analytics.total_proposals}",
         f"- unique_cases: {analytics.unique_cases}",
+        f"- unresolved_proposals: {analytics.unresolved_proposals}",
+        f"- medium_reportable_proposals: {analytics.medium_reportable_proposals}",
         "",
         "## By Kind",
     ]
     lines.extend(_render_counter_lines(analytics.by_kind))
+    lines.extend(["", "## Unresolved By Kind"])
+    lines.extend(_render_counter_lines(analytics.unresolved_by_kind))
+    lines.extend(["", "## Medium Reportable By Kind"])
+    lines.extend(_render_counter_lines(analytics.medium_reportable_by_kind))
     lines.extend(["", "## Top Reasons"])
     lines.extend(_render_counter_lines(analytics.by_reason))
     lines.extend(["", "## Top Patterns"])
@@ -180,7 +186,15 @@ def render_improvement_analytics_json(
     payload = {
         "total_proposals": analytics.total_proposals,
         "unique_cases": analytics.unique_cases,
+        "unresolved_proposals": analytics.unresolved_proposals,
+        "medium_reportable_proposals": analytics.medium_reportable_proposals,
         "by_kind": [{"key": key, "count": count} for key, count in analytics.by_kind],
+        "unresolved_by_kind": [
+            {"key": key, "count": count} for key, count in analytics.unresolved_by_kind
+        ],
+        "medium_reportable_by_kind": [
+            {"key": key, "count": count} for key, count in analytics.medium_reportable_by_kind
+        ],
         "by_reason": [{"key": key, "count": count} for key, count in analytics.by_reason],
         "by_pattern": [{"key": key, "count": count} for key, count in analytics.by_pattern],
         "by_contract": [{"key": key, "count": count} for key, count in analytics.by_contract],

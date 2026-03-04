@@ -70,6 +70,7 @@ class EvidencePacket:
     static_reasoning: dict[str, tuple[str, ...] | str]
     related_function_contexts: tuple[str, ...] = ()
     static_proofs: tuple["StaticProof", ...] = ()
+    static_risk_signals: tuple["StaticRiskSignal", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +135,7 @@ class StaticAnalysisResult:
     origin_usage_modes: tuple[str, ...] = ()
     origin_return_slots: tuple[int, ...] = ()
     proofs: tuple["StaticProof", ...] = ()
+    risk_signals: tuple["StaticRiskSignal", ...] = ()
     analysis_mode: str = "legacy_only"
     unknown_reason: str | None = None
     origin_analysis_mode: str = "legacy_origin_only"
@@ -151,6 +153,18 @@ class StaticProof:
     source_call: str | None = None
     source_function: str | None = None
     supporting_summaries: tuple[str, ...] = ()
+    provenance: tuple[str, ...] = ()
+    depth: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class StaticRiskSignal:
+    """A structured explanation for one bounded local risk proof."""
+
+    kind: str
+    summary: str
+    subject: str
+    source_expression: str | None = None
     provenance: tuple[str, ...] = ()
     depth: int = 0
 
@@ -320,10 +334,14 @@ class ImprovementAnalytics:
 
     total_proposals: int
     unique_cases: int
+    unresolved_proposals: int
+    medium_reportable_proposals: int
     by_kind: tuple[tuple[str, int], ...]
     by_reason: tuple[tuple[str, int], ...]
     by_pattern: tuple[tuple[str, int], ...] = ()
     by_contract: tuple[tuple[str, int], ...] = ()
+    unresolved_by_kind: tuple[tuple[str, int], ...] = ()
+    medium_reportable_by_kind: tuple[tuple[str, int], ...] = ()
 
 
 def with_candidate_state(candidate: CandidateCase, state: str) -> CandidateCase:

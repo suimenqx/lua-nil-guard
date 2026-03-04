@@ -1102,6 +1102,8 @@ def _default_runner(
 
 
 def _has_local_risk_proof(packet: EvidencePacket) -> bool:
+    if packet.static_risk_signals:
+        return True
     origins = _tuple_field(packet, "origin_candidates")
     if any(origin.strip() == "nil" for origin in origins):
         return True

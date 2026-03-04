@@ -181,16 +181,24 @@ def test_render_improvement_analytics_outputs_machine_and_markdown_views() -> No
     analytics = ImprovementAnalytics(
         total_proposals=3,
         unique_cases=2,
+        unresolved_proposals=2,
+        medium_reportable_proposals=1,
         by_kind=(("ast_pattern", 2), ("function_contract", 1)),
         by_reason=(("no_bounded_ast_proof", 2), ("normalize_name", 1)),
         by_pattern=(("no_bounded_ast_proof", 2),),
         by_contract=(("normalize_name", 1),),
+        unresolved_by_kind=(("ast_pattern", 2),),
+        medium_reportable_by_kind=(("function_contract", 1),),
     )
 
     markdown = render_improvement_analytics_markdown(analytics)
     payload = json.loads(render_improvement_analytics_json(analytics))
 
     assert "# Lua Nil Review Improvement Analytics" in markdown
+    assert "unresolved_proposals: 2" in markdown
+    assert "medium_reportable_proposals: 1" in markdown
     assert "ast_pattern: 2" in markdown
     assert payload["total_proposals"] == 3
+    assert payload["unresolved_proposals"] == 2
+    assert payload["medium_reportable_proposals"] == 1
     assert payload["by_contract"][0]["key"] == "normalize_name"

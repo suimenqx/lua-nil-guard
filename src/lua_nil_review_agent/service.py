@@ -277,6 +277,7 @@ def prepare_evidence_packet(
         observed_guards=assessment.static_analysis.observed_guards,
         related_function_contexts=related_function_contexts,
         static_proofs=assessment.static_analysis.proofs,
+        static_risk_signals=assessment.static_analysis.risk_signals,
     )
 
 
@@ -815,6 +816,14 @@ def summarize_improvement_proposals(
 
     kind_counts = Counter(proposal.kind for proposal in proposals)
     reason_counts = Counter(proposal.suggested_pattern or proposal.reason for proposal in proposals)
+    unresolved_kind_counts = Counter(
+        proposal.kind for proposal in proposals if proposal.status == "uncertain"
+    )
+    medium_reportable_kind_counts = Counter(
+        proposal.kind
+        for proposal in proposals
+        if proposal.status.startswith("risky") and proposal.confidence == "medium"
+    )
     pattern_counts = Counter(
         proposal.suggested_pattern
         for proposal in proposals
@@ -837,10 +846,18 @@ def summarize_improvement_proposals(
     return ImprovementAnalytics(
         total_proposals=len(proposals),
         unique_cases=len({proposal.case_id for proposal in proposals}),
+        unresolved_proposals=sum(1 for proposal in proposals if proposal.status == "uncertain"),
+        medium_reportable_proposals=sum(
+            1
+            for proposal in proposals
+            if proposal.status.startswith("risky") and proposal.confidence == "medium"
+        ),
         by_kind=_ordered(kind_counts),
         by_reason=_ordered(reason_counts),
         by_pattern=_ordered(pattern_counts),
         by_contract=_ordered(contract_counts),
+        unresolved_by_kind=_ordered(unresolved_kind_counts),
+        medium_reportable_by_kind=_ordered(medium_reportable_kind_counts),
     )
 
 

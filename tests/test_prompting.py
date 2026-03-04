@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from lua_nil_review_agent.models import CandidateCase, SinkRule, StaticProof
+from lua_nil_review_agent.models import CandidateCase, SinkRule, StaticProof, StaticRiskSignal
 from lua_nil_review_agent.pipeline import build_evidence_packet
 from lua_nil_review_agent.prompting import build_adjudication_prompt
 
@@ -51,6 +51,14 @@ def test_build_adjudication_prompt_includes_evidence_and_hard_rules() -> None:
                 provenance=("an active positive branch requires `username` to be truthy",),
             ),
         ),
+        static_risk_signals=(
+            StaticRiskSignal(
+                kind="direct_sink_field_path",
+                summary="req.params.username reaches string.match directly",
+                subject="req.params.username",
+                source_expression="req.params.username",
+            ),
+        ),
     )
     rule = SinkRule(
         id="string.match.arg1",
@@ -75,15 +83,21 @@ def test_build_adjudication_prompt_includes_evidence_and_hard_rules() -> None:
     assert "origin_analysis_mode: ast_origin_fallback_to_legacy" in prompt
     assert "origin_unknown_reason: no_bounded_ast_origin" in prompt
     assert "proof_kinds: direct_guard" in prompt
+    assert "risk_kinds: direct_sink_field_path" in prompt
     assert "Structured static proofs:" in prompt
+    assert "Structured static risk signals:" in prompt
     assert "Static verification preview:" in prompt
     assert "strongest_proof_kind: direct_guard" in prompt
+    assert "strongest_risk_kind: direct_sink_field_path" in prompt
     assert "[direct_guard] if username then" in prompt
+    assert "[direct_sink_field_path] req.params.username reaches string.match directly" in prompt
     assert "Calibration examples:" in prompt
     assert "Example (direct_guard):" in prompt
+    assert "Example (direct_sink_field_path):" in prompt
     assert "Example (unsupported_control_flow):" in prompt
     assert "Example (no_bounded_ast_origin):" in prompt
     assert "Example (verification_summary):" in prompt
+    assert "Example (risk_verification):" in prompt
     assert "Role calibration:" in prompt
     assert "Prosecutor: try to break the current proof chain" in prompt
     assert "Related function contexts:" in prompt

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .models import EvidencePacket, SinkRule, StaticProof
+from .models import EvidencePacket, SinkRule, StaticProof, StaticRiskSignal
 from .skill_runtime import compile_adjudicator_skill_header
-from .verification import preview_static_verification
+from .verification import preview_static_risk, preview_static_verification
 
 
 _PROOF_KIND_CALIBRATIONS = {
@@ -70,6 +70,15 @@ _UNKNOWN_REASON_CALIBRATIONS = {
     ),
 }
 
+_RISK_KIND_CALIBRATIONS = {
+    "direct_sink_field_path": (
+        "Example (direct_sink_field_path): if a sink consumes `req.params.name` directly with no bounded guard, that is strong local risk evidence, not merely missing safety proof."
+    ),
+    "unguarded_field_origin": (
+        "Example (unguarded_field_origin): if `local name = req.params.name` has no bounded guard on that field path, the local inherits the same nil-risk."
+    ),
+}
+
 
 def build_adjudication_prompt(
     *,
@@ -111,9 +120,13 @@ def build_adjudication_prompt(
             f"- origin_unknown_reason: {packet.static_reasoning.get('origin_unknown_reason', '') or '(none)'}",
             f"- observed_guards: {', '.join(packet.static_reasoning['observed_guards']) or '(none)'}",
             f"- proof_kinds: {', '.join(packet.static_reasoning.get('proof_kinds', ())) or '(none)'}",
+            f"- risk_kinds: {', '.join(packet.static_reasoning.get('risk_kinds', ())) or '(none)'}",
             "",
             "Structured static proofs:",
             _render_static_proofs(packet.static_proofs),
+            "",
+            "Structured static risk signals:",
+            _render_static_risk_signals(packet.static_risk_signals),
             "",
             "Static verification preview:",
             _render_verification_preview(packet),
@@ -171,6 +184,7 @@ def _render_calibration_examples(packet: EvidencePacket) -> str:
     examples: list[str] = []
     seen: set[str] = set()
     preview = preview_static_verification(packet.static_proofs)
+    risk_preview = preview_static_risk(packet.static_risk_signals)
     has_deep_proof = any(proof.depth >= 2 for proof in packet.static_proofs)
 
     for proof in packet.static_proofs:
@@ -180,6 +194,15 @@ def _render_calibration_examples(packet: EvidencePacket) -> str:
         examples.append(calibration)
         seen.add(calibration)
         if len(examples) >= 2:
+            break
+
+    for signal in packet.static_risk_signals:
+        calibration = _RISK_KIND_CALIBRATIONS.get(signal.kind)
+        if calibration is None or calibration in seen:
+            continue
+        examples.append(calibration)
+        seen.add(calibration)
+        if len(examples) >= 3:
             break
 
     if has_deep_proof:
@@ -209,6 +232,11 @@ def _render_calibration_examples(packet: EvidencePacket) -> str:
         if verification_calibration is not None and verification_calibration not in seen:
             examples.append(verification_calibration)
             seen.add(verification_calibration)
+    if risk_preview is not None:
+        risk_calibration = _risk_verification_calibration(risk_preview)
+        if risk_calibration is not None and risk_calibration not in seen:
+            examples.append(risk_calibration)
+            seen.add(risk_calibration)
 
     if not examples:
         return "(none)"
@@ -217,18 +245,33 @@ def _render_calibration_examples(packet: EvidencePacket) -> str:
 
 def _render_verification_preview(packet: EvidencePacket) -> str:
     preview = preview_static_verification(packet.static_proofs)
-    if preview is None:
+    risk_preview = preview_static_risk(packet.static_risk_signals)
+    if preview is None and risk_preview is None:
         return "(none)"
-    evidence = ", ".join(preview.evidence) if preview.evidence else "(none)"
-    return "\n".join(
-        [
-            f"- mode: {preview.mode}",
-            f"- strongest_proof_kind: {preview.strongest_proof_kind or '(none)'}",
-            f"- strongest_proof_depth: {preview.strongest_proof_depth if preview.strongest_proof_depth is not None else '(none)'}",
-            f"- verification_score: {preview.verification_score if preview.verification_score is not None else '(none)'}",
-            f"- evidence: {evidence}",
-        ]
-    )
+    chunks: list[str] = []
+    if preview is not None:
+        evidence = ", ".join(preview.evidence) if preview.evidence else "(none)"
+        chunks.extend(
+            [
+                f"- mode: {preview.mode}",
+                f"- strongest_proof_kind: {preview.strongest_proof_kind or '(none)'}",
+                f"- strongest_proof_depth: {preview.strongest_proof_depth if preview.strongest_proof_depth is not None else '(none)'}",
+                f"- verification_score: {preview.verification_score if preview.verification_score is not None else '(none)'}",
+                f"- evidence: {evidence}",
+            ]
+        )
+    if risk_preview is not None:
+        evidence = ", ".join(risk_preview.evidence) if risk_preview.evidence else "(none)"
+        chunks.extend(
+            [
+                f"- risk_mode: {risk_preview.mode}",
+                f"- strongest_risk_kind: {risk_preview.strongest_proof_kind or '(none)'}",
+                f"- strongest_risk_depth: {risk_preview.strongest_proof_depth if risk_preview.strongest_proof_depth is not None else '(none)'}",
+                f"- risk_score: {risk_preview.verification_score if risk_preview.verification_score is not None else '(none)'}",
+                f"- risk_evidence: {evidence}",
+            ]
+        )
+    return "\n".join(chunks)
 
 
 def _render_role_calibration() -> str:
@@ -236,7 +279,7 @@ def _render_role_calibration() -> str:
         [
             "- Prosecutor: try to break the current proof chain, not speculate about unseen code.",
             "- Defender: argue only from structured static proofs, matched contracts, wrapper evidence, and knowledge facts already in the packet.",
-            "- Judge: decide whether the present proof is sufficient; unresolved gaps should remain `uncertain`, not auto-upgrade to `risky`.",
+            "- Judge: treat strong structured risk signals as real local evidence, but do not promote weak absence-of-proof into `risky`.",
         ]
     )
 
@@ -256,4 +299,36 @@ def _verification_calibration(preview) -> str | None:
         )
     return (
         "Example (verification_summary): medium-strength static proof should shape the review, but it does not by itself resolve missing control-flow evidence."
+    )
+
+
+def _render_static_risk_signals(signals: tuple[StaticRiskSignal, ...]) -> str:
+    if not signals:
+        return "(none)"
+
+    chunks: list[str] = []
+    for signal in signals:
+        lines = [
+            f"- [{signal.kind}] {signal.summary}",
+            f"  subject: {signal.subject}",
+        ]
+        if signal.source_expression:
+            lines.append(f"  source_expression: {signal.source_expression}")
+        if signal.provenance:
+            lines.append(f"  provenance: {' | '.join(signal.provenance)}")
+        lines.append(f"  depth: {signal.depth}")
+        chunks.append("\n".join(lines))
+    return "\n\n".join(chunks)
+
+
+def _risk_verification_calibration(preview) -> str | None:
+    score = preview.verification_score
+    if score is None:
+        return None
+    if score >= 85:
+        return (
+            "Example (risk_verification): a high-score direct field-path risk signal can justify `risky` even when no explicit nil literal appears locally."
+        )
+    return (
+        "Example (risk_verification): weaker local risk signals should inform the review, but keep the verdict conservative if a concrete nil path is still missing."
     )
