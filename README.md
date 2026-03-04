@@ -176,6 +176,7 @@ Target repositories are expected to contain:
 
 - This release is intended for developer trial use. Start with a few real files or one small module before using it across a large repository.
 - Tree-sitter is required for formal analysis commands (`scan`, `report`, `report-file`, `benchmark`, and proposal commands). If `doctor` reports that Tree-sitter is unavailable, fix the parser environment first instead of relying on a degraded mode.
+- LuaNilGuard only uses the vendored Lua grammar compiled locally through `cc`, `gcc`, or `clang`. It does not fall back to an externally installed `tree_sitter_lua` package, so parser behavior stays reproducible across machines.
 - Lua source files are expected to be UTF-8. Use `encoding-audit` to find non-UTF-8 `.lua` files and `normalize-encoding --write` to convert supported legacy files (`utf-8-sig`, `gb18030`) before review.
 - Single-file review works best when important helper functions are either present in the same repository or represented in `config/function_contracts.json`.
 - Missing helper definitions do not block review, but they reduce cross-file proof strength and can increase `uncertain` results.

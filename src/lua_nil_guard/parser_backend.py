@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import ctypes
 from dataclasses import dataclass
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,6 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VENDOR_LUA_SRC_DIR = PROJECT_ROOT / "vendor" / "tree-sitter-lua" / "src"
 TREE_SITTER_BUILD_DIR = Path.home() / ".cache" / "lua-nil-guard" / "tree_sitter"
 TREE_SITTER_LUA_LIBRARY = TREE_SITTER_BUILD_DIR / "tree_sitter_lua.so"
+TREE_SITTER_LUA_BUILD_INFO = TREE_SITTER_BUILD_DIR / "tree_sitter_lua.json"
 COMPILER_CANDIDATES = ("cc", "gcc", "clang")
 
 _LANGUAGE_CACHE = None
@@ -169,43 +172,18 @@ def _load_lua_language():
         )
         return _LANGUAGE_CACHE
 
-    try:
-        from tree_sitter import Language
-        import tree_sitter_lua
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            language = Language(tree_sitter_lua.language())
-    except Exception as exc:
-        reason = local_reason or "local tree-sitter grammar unavailable"
-        reason = f"{reason}; tree_sitter_lua package import failed: {exc}"
-        _set_backend_info(
-            ParserBackendInfo(
-                name="unavailable",
-                tree_sitter_available=False,
-                reason=reason,
-                selected_compiler=selected_compiler,
-                local_library_path=str(library_path) if library_path is not None else None,
-                tree_sitter_python_available=True,
-            )
-        )
-        return None
-
-    _LANGUAGE_CACHE = language
-    fallback_reason = "using installed tree_sitter_lua package"
-    if local_reason:
-        fallback_reason = f"{fallback_reason}; local build unavailable: {local_reason}"
+    reason = local_reason or "local tree-sitter grammar unavailable"
     _set_backend_info(
         ParserBackendInfo(
-            name="tree_sitter_local",
-            tree_sitter_available=True,
-            reason=fallback_reason,
+            name="unavailable",
+            tree_sitter_available=False,
+            reason=reason,
             selected_compiler=selected_compiler,
             local_library_path=str(library_path) if library_path is not None else None,
             tree_sitter_python_available=True,
         )
     )
-    return _LANGUAGE_CACHE
+    return None
 
 
 def _load_local_compiled_language(
@@ -258,10 +236,9 @@ def _ensure_local_language_library(compiler_name: str | None) -> tuple[Path | No
         return None, "vendored tree-sitter-lua grammar sources not found"
 
     source_paths = (parser_c, scanner_c) + header_paths
+    source_signature = _tree_sitter_source_signature(source_paths)
     if TREE_SITTER_LUA_LIBRARY.exists():
-        built_mtime = TREE_SITTER_LUA_LIBRARY.stat().st_mtime
-        source_mtime = max(path.stat().st_mtime for path in source_paths)
-        if built_mtime >= source_mtime:
+        if _tree_sitter_build_info_matches(compiler_name, source_signature):
             return TREE_SITTER_LUA_LIBRARY, None
 
     if compiler_name is None:
@@ -289,6 +266,7 @@ def _ensure_local_language_library(compiler_name: str | None) -> tuple[Path | No
         stderr = (exc.stderr or exc.stdout or "").strip()
         detail = stderr.splitlines()[0] if stderr else f"exit code {exc.returncode}"
         return None, f"failed to build local tree-sitter grammar with {compiler_name}: {detail}"
+    _write_tree_sitter_build_info(compiler_name, source_signature)
     return TREE_SITTER_LUA_LIBRARY, None
 
 
@@ -303,6 +281,45 @@ def _find_available_c_compiler() -> tuple[str | None, str | None]:
 def _set_backend_info(info: ParserBackendInfo) -> None:
     global _BACKEND_INFO_CACHE
     _BACKEND_INFO_CACHE = info
+
+
+def _tree_sitter_source_signature(source_paths: tuple[Path, ...]) -> str:
+    digest = hashlib.sha256()
+    for path in source_paths:
+        digest.update(path.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _tree_sitter_build_info_matches(
+    compiler_name: str | None,
+    source_signature: str,
+) -> bool:
+    if compiler_name is None:
+        return False
+    if not TREE_SITTER_LUA_BUILD_INFO.exists():
+        return False
+    try:
+        payload = json.loads(TREE_SITTER_LUA_BUILD_INFO.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return (
+        payload.get("compiler") == compiler_name
+        and payload.get("source_signature") == source_signature
+    )
+
+
+def _write_tree_sitter_build_info(compiler_name: str, source_signature: str) -> None:
+    payload = {
+        "compiler": compiler_name,
+        "source_signature": source_signature,
+    }
+    TREE_SITTER_LUA_BUILD_INFO.write_text(
+        json.dumps(payload, sort_keys=True),
+        encoding="utf-8",
+    )
 
 
 def _collect_call_sites_tree_sitter(

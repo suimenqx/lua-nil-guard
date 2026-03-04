@@ -214,6 +214,7 @@ lua-nil-guard generate-backend-manifest my-provider stdout_envelope_cli
 
 - 当前版本面向开发者试用，推荐先从少量真实文件或一个小模块开始。
 - 正式分析命令（如 `scan`、`report`、`report-file`、`benchmark`、`proposal-*`）要求 Tree-sitter 可用。如果 `doctor` 显示不可用，请先修复解析环境，而不是继续依赖降级模式。
+- LuaNilGuard 只使用仓库内自带的 Lua grammar，并通过本地 `cc`、`gcc` 或 `clang` 编译生成解析库；不会再回退到外部安装的 `tree_sitter_lua` Python 包，这样不同机器上的解析行为更一致、更可复现。
 - 当前要求 Lua 源文件使用 UTF-8。你可以先用 `encoding-audit` 找出非 UTF-8 的 `.lua` 文件，再用 `normalize-encoding --write` 将受支持的历史编码文件（`utf-8-sig`、`gb18030`）统一转为 UTF-8。
 - 单文件审查在“重要 helper 源码位于同一仓库”或“这些 helper 已通过 `function_contracts.json` 声明契约”时效果最好。
 - 缺少 helper 定义不会阻止审查，但会削弱跨文件证明能力，并增加 `uncertain` 的概率。
