@@ -1,4 +1,6 @@
-# Lua Nil Review Agent
+# LuaNilGuard
+
+`LuaNilGuard` is the project name. The current CLI command remains `lua-nil-review-agent`.
 
 `lua-nil-review-agent` is a developer-facing CLI for reviewing Lua code for likely nil-related runtime faults. The supported operating model is source-tree usage: keep this repository intact, run from the checkout, and point the tool at Lua repositories you want to inspect.
 

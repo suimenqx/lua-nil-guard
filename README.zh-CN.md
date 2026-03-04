@@ -1,4 +1,6 @@
-# Lua Nil Review Agent（中文说明）
+# LuaNilGuard（中文说明）
+
+`LuaNilGuard` 是项目名称，当前 CLI 命令仍然保持为 `lua-nil-review-agent`。
 
 `lua-nil-review-agent` 是一个面向开发者的 CLI 工具，用于审查 Lua 代码中潜在的 nil 相关运行时风险。
 
