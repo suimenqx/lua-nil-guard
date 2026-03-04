@@ -3092,3 +3092,292 @@ def test_run_repository_review_marks_module_style_numeric_binary_risks(
     assert len(verdicts) == 2
     assert all(verdict.status.startswith("risky") for verdict in verdicts)
     assert all(any("may return nil" in part for part in verdict.risk_path) for verdict in verdicts)
+
+
+def test_run_repository_review_marks_concat_right_hazard_as_risky(tmp_path: Path) -> None:
+    _write_review_config(
+        tmp_path,
+        [
+            {
+                "id": "concat.right",
+                "kind": "binary_operand",
+                "qualified_name": "..",
+                "arg_index": 2,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or ''"],
+            },
+        ],
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local suffix = nil",
+                "local label = 'x' .. suffix",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status.startswith("risky")
+
+
+def test_run_repository_review_marks_remaining_ordered_comparisons_as_risky(tmp_path: Path) -> None:
+    _write_review_config(
+        tmp_path,
+        [
+            {
+                "id": "compare.lt.left",
+                "kind": "binary_operand",
+                "qualified_name": "<",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+            {
+                "id": "compare.lte.left",
+                "kind": "binary_operand",
+                "qualified_name": "<=",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+            {
+                "id": "compare.gt.left",
+                "kind": "binary_operand",
+                "qualified_name": ">",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+        ],
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local score_lt = nil",
+                "local score_lte = nil",
+                "local score_gt = nil",
+                "local is_low = score_lt < limit",
+                "local is_low_or_equal = score_lte <= limit",
+                "local is_high = score_gt > limit",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 3
+    assert all(verdict.status.startswith("risky") for verdict in verdicts)
+
+
+def test_run_repository_review_ignores_equality_comparisons(tmp_path: Path) -> None:
+    _write_review_config(
+        tmp_path,
+        [
+            {
+                "id": "compare.lt.left",
+                "kind": "binary_operand",
+                "qualified_name": "<",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+            {
+                "id": "compare.lte.left",
+                "kind": "binary_operand",
+                "qualified_name": "<=",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+            {
+                "id": "compare.gt.left",
+                "kind": "binary_operand",
+                "qualified_name": ">",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+            {
+                "id": "compare.gte.left",
+                "kind": "binary_operand",
+                "qualified_name": ">=",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+        ],
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local score = nil",
+                "local same = score == limit",
+                "local changed = score ~= limit",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert verdicts == ()
+
+
+def test_run_repository_review_marks_remaining_arithmetic_hazards_as_risky(tmp_path: Path) -> None:
+    _write_review_config(
+        tmp_path,
+        [
+            {
+                "id": "arithmetic.sub.left",
+                "kind": "binary_operand",
+                "qualified_name": "-",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+            {
+                "id": "arithmetic.mul.left",
+                "kind": "binary_operand",
+                "qualified_name": "*",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+            {
+                "id": "arithmetic.div.left",
+                "kind": "binary_operand",
+                "qualified_name": "/",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+            {
+                "id": "arithmetic.mod.left",
+                "kind": "binary_operand",
+                "qualified_name": "%",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+            {
+                "id": "arithmetic.pow.left",
+                "kind": "binary_operand",
+                "qualified_name": "^",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+        ],
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local delta = nil",
+                "local factor = nil",
+                "local ratio = nil",
+                "local remainder = nil",
+                "local exponent = nil",
+                "local diff = delta - base",
+                "local scaled = factor * base",
+                "local share = ratio / base",
+                "local modded = remainder % base",
+                "local power = exponent ^ base",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 5
+    assert all(verdict.status.startswith("risky") for verdict in verdicts)
+
+
+def test_run_repository_review_supports_remaining_extended_string_api_sinks(tmp_path: Path) -> None:
+    _write_review_config(
+        tmp_path,
+        [
+            {
+                "id": "string.sub.arg1",
+                "kind": "function_arg",
+                "qualified_name": "string.sub",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or ''"],
+            },
+            {
+                "id": "string.byte.arg1",
+                "kind": "function_arg",
+                "qualified_name": "string.byte",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or ''"],
+            },
+            {
+                "id": "string.upper.arg1",
+                "kind": "function_arg",
+                "qualified_name": "string.upper",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or ''"],
+            },
+        ],
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local raw = nil",
+                "local sliced = string.sub(raw, 1, 2)",
+                "local code = string.byte(raw)",
+                "local loud = string.upper(raw)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 3
+    assert all(verdict.status.startswith("risky") for verdict in verdicts)

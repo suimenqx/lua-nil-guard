@@ -290,3 +290,27 @@ def test_collect_candidates_skips_non_nil_literal_binary_operands() -> None:
 
     assert len(candidates) == 1
     assert candidates[0].expression == "suffix"
+
+
+def test_collect_candidates_finds_nested_binary_operand_sinks() -> None:
+    sink_rules = (
+        SinkRule(
+            id="concat.right",
+            kind="binary_operand",
+            qualified_name="..",
+            arg_index=2,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("x or ''",),
+        ),
+    )
+
+    candidates = collect_candidates(
+        Path("foo/nested_concat.lua"),
+        "return (prefix .. suffix) .. tail",
+        sink_rules,
+    )
+
+    assert len(candidates) == 2
+    assert {candidate.expression for candidate in candidates} == {"suffix", "tail"}

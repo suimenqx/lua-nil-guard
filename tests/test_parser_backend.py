@@ -102,6 +102,23 @@ def test_collect_binary_operands_finds_concat_compare_and_arithmetic() -> None:
     assert arithmetic_operands[0].operator == "+"
 
 
+def test_collect_binary_operands_handles_nested_expressions_without_comment_or_string_noise() -> None:
+    source = "\n".join(
+        [
+            "-- ignored .. comment",
+            "local raw = 'ignored .. string'",
+            "local label = (prefix .. suffix) .. tail",
+        ]
+    )
+
+    operands = collect_binary_operands(source, "..")
+
+    assert len(operands) == 2
+    assert any(operand.left == "prefix" and operand.right == "suffix" for operand in operands)
+    assert any(operand.right == "tail" for operand in operands)
+    assert all("ignored" not in operand.expression for operand in operands)
+
+
 def test_collect_call_sites_requires_tree_sitter_backend(
     monkeypatch,
 ) -> None:

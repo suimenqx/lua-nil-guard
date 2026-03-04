@@ -19,6 +19,8 @@ Chinese documentation: [README.zh-CN.md](./README.zh-CN.md)
 pip install -e .
 ```
 
+You only need to run this once per Python environment. Re-run it only after switching environments or after packaging changes such as dependency or CLI-entrypoint updates.
+
 3. Verify Tree-sitter is available before running analysis:
 
 ```sh
@@ -67,12 +69,12 @@ Single-file review keeps repository context, so cross-file function summaries an
 Out of the box, LuaNilGuard prioritizes Lua nil hazards that commonly lead to immediate runtime faults:
 
 - string-library first-argument sinks such as `string.find`, `string.match`, `string.gsub`, `string.sub`, `string.len`, `string.byte`, `string.lower`, and `string.upper`
-- string concatenation with `..`
+- string concatenation with `..` (both operands are checked independently)
 - table iteration via `pairs(...)` and `ipairs(...)`
 - length operator usage with `#value`
 - member access on a possibly nil receiver (`value.name`, `value[key]`)
-- numeric ordering comparisons: `<`, `<=`, `>`, `>=`
-- numeric arithmetic: `+`, `-`, `*`, `/`, `%`, `^`
+- numeric ordering comparisons: `<`, `<=`, `>`, `>=` (`==` and `~=` are intentionally excluded)
+- numeric arithmetic: `+`, `-`, `*`, `/`, `%`, `^` (both operands are checked independently)
 
 These patterns are part of the default `sink_rules.json` template and are intended to be the first customer-visible value surface during trial use.
 

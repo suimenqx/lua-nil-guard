@@ -21,6 +21,8 @@
 pip install -e .
 ```
 
+通常每个 Python 环境只需要执行一次。只有在你切换了环境，或项目的依赖、CLI 入口等安装元数据发生变化时，才需要重新执行。
+
 3. 先确认 Tree-sitter 解析环境可用：
 
 ```sh
@@ -69,12 +71,12 @@ lua-nil-guard report-file-json /path/to/target-repo/src/demo.lua
 LuaNilGuard 开箱即用时，优先覆盖那些最常见、最容易直接引发运行时错误的 nil 高危点：
 
 - `string.find`、`string.match`、`string.gsub`、`string.sub`、`string.len`、`string.byte`、`string.lower`、`string.upper` 等字符串库首参
-- 字符串拼接 `..`
+- 字符串拼接 `..`（左右两侧操作数都会分别检查）
 - `pairs(...)` / `ipairs(...)` 表迭代
 - `#value` 长度操作
 - 可能为 nil 的 receiver 成员访问（如 `value.name`、`value[key]`）
-- 数字顺序比较：`<`、`<=`、`>`、`>=`
-- 数值计算：`+`、`-`、`*`、`/`、`%`、`^`
+- 数字顺序比较：`<`、`<=`、`>`、`>=`（`==` 和 `~=` 不属于这一类高危点）
+- 数值计算：`+`、`-`、`*`、`/`、`%`、`^`（左右两侧操作数都会分别检查）
 
 这些模式已经包含在默认生成的 `sink_rules.json` 中，也是本工具在首次试用时最希望让客户直接感知到的核心价值。
 
