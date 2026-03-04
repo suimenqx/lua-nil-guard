@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from lua_nil_review_agent.adjudication import adjudicate_packet
-from lua_nil_review_agent.models import EvidencePacket, EvidenceTarget, SinkRule
+from lua_nil_guard.adjudication import adjudicate_packet
+from lua_nil_guard.models import EvidencePacket, EvidenceTarget, SinkRule
 
 
 def test_adjudicate_packet_prefers_explicit_safety_evidence() -> None:

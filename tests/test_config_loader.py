@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from lua_nil_review_agent.config_loader import (
+from lua_nil_guard.config_loader import (
     ConfigError,
     load_confidence_policy,
     load_function_contracts,

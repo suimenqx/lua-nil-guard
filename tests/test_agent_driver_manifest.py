@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from lua_nil_review_agent.agent_driver_manifest import (
+from lua_nil_guard.agent_driver_manifest import (
     BUILTIN_AGENT_PROVIDER_MANIFESTS,
     CODEAGENT_PROVIDER_SPEC,
     CLAUDE_PROVIDER_SPEC,

@@ -6,10 +6,10 @@ import shutil
 
 import pytest
 
-import lua_nil_review_agent.cli as cli_module
-from lua_nil_review_agent.agent_backend import BackendError
-from lua_nil_review_agent.cli import run
-from lua_nil_review_agent.models import (
+import lua_nil_guard.cli as cli_module
+from lua_nil_guard.agent_backend import BackendError
+from lua_nil_guard.cli import run
+from lua_nil_guard.models import (
     AdjudicationRecord,
     BenchmarkCacheComparison,
     BenchmarkSummary,
@@ -24,7 +24,7 @@ def test_cli_help_lists_supported_backends() -> None:
     exit_code, output = run(["--help"])
 
     assert exit_code == 0
-    assert "Backend values: heuristic | codex | claude | gemini | codeagent" in output
+    assert "Backend values: heuristic | codex | claude | gemini" in output
     assert "init-config" in output
     assert "generate-backend-manifest" in output
     assert "scan-file" in output
@@ -395,7 +395,7 @@ def test_cli_register_backend_manifest_calls_registry(
         return StubSpec()
 
     monkeypatch.setattr(
-        "lua_nil_review_agent.cli.register_manifest_backed_adjudication_backend",
+        "lua_nil_guard.cli.register_manifest_backed_adjudication_backend",
         fake_register,
     )
 
@@ -436,7 +436,7 @@ def test_cli_register_backend_manifest_json_writes_output_file(
         capabilities = StubCapabilities()
 
     monkeypatch.setattr(
-        "lua_nil_review_agent.cli.register_manifest_backed_adjudication_backend",
+        "lua_nil_guard.cli.register_manifest_backed_adjudication_backend",
         lambda path, *, replace=False: StubSpec(),
     )
 
@@ -1910,9 +1910,9 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
         captured["backend_manifest_path"] = Path(manifest_path_arg)
         captured["backend_manifest_replace"] = replace
 
-    monkeypatch.setattr("lua_nil_review_agent.cli.create_adjudication_backend", fake_factory)
+    monkeypatch.setattr("lua_nil_guard.cli.create_adjudication_backend", fake_factory)
     monkeypatch.setattr(
-        "lua_nil_review_agent.cli.register_manifest_backed_adjudication_backend",
+        "lua_nil_guard.cli.register_manifest_backed_adjudication_backend",
         fake_register,
     )
 
@@ -2034,7 +2034,7 @@ def test_cli_report_file_accepts_lua_file_and_uses_repository_root(
         captured["config_overrides"] = config_overrides
         return None
 
-    monkeypatch.setattr("lua_nil_review_agent.cli.create_adjudication_backend", fake_factory)
+    monkeypatch.setattr("lua_nil_guard.cli.create_adjudication_backend", fake_factory)
 
     exit_code, output = run(["report-file", "--backend", "gemini", str(file_path)])
 
@@ -2097,7 +2097,7 @@ def test_cli_report_surfaces_backend_errors_without_traceback(
     def fake_review(*args, **kwargs):
         raise BackendError("codex backend failed")
 
-    monkeypatch.setattr("lua_nil_review_agent.cli.run_repository_review", fake_review)
+    monkeypatch.setattr("lua_nil_guard.cli.run_repository_review", fake_review)
 
     exit_code, output = run(["report", str(tmp_path)])
 
@@ -2122,7 +2122,7 @@ def test_cli_report_rejects_invalid_backend_config() -> None:
 def test_cli_report_surfaces_unsupported_codeagent_backend_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("lua_nil_review_agent.cli.bootstrap_repository", lambda root: object())
+    monkeypatch.setattr("lua_nil_guard.cli.bootstrap_repository", lambda root: object())
 
     exit_code, output = run(
         [

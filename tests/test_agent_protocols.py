@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from lua_nil_review_agent.agent_protocols import (
+from lua_nil_guard.agent_protocols import (
     CLI_PROTOCOL_BUILDERS,
     SchemaFileCliProtocol,
     StdoutEnvelopeCliProtocol,

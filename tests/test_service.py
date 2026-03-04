@@ -6,10 +6,10 @@ import shutil
 
 import pytest
 
-from lua_nil_review_agent.agent_backend import BackendError, CliAgentBackend, CodexCliBackend
-from lua_nil_review_agent.models import AdjudicationRecord, AutofixPatch, RoleOpinion, Verdict
-from lua_nil_review_agent.models import FunctionContract, ImprovementProposal
-from lua_nil_review_agent.service import (
+from lua_nil_guard.agent_backend import BackendError, CliAgentBackend, CodexCliBackend
+from lua_nil_guard.models import AdjudicationRecord, AutofixPatch, RoleOpinion, Verdict
+from lua_nil_guard.models import FunctionContract, ImprovementProposal
+from lua_nil_guard.service import (
     apply_autofix_manifest,
     benchmark_cache_compare,
     benchmark_repository_review,

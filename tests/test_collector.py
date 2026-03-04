@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lua_nil_review_agent.collector import collect_candidates
-from lua_nil_review_agent.models import SinkRule
+from lua_nil_guard.collector import collect_candidates
+from lua_nil_guard.models import SinkRule
 
 
 def test_collect_candidates_finds_configured_function_sinks() -> None:

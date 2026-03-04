@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lua_nil_review_agent.service import prepare_evidence_packet, review_source
-from lua_nil_review_agent.models import SinkRule
+from lua_nil_guard.service import prepare_evidence_packet, review_source
+from lua_nil_guard.models import SinkRule
 
 
 def test_prepare_evidence_packet_uses_static_assessment_context() -> None:

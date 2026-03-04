@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lua_nil_review_agent.summaries import SummaryStore, summarize_source
+from lua_nil_guard.summaries import SummaryStore, summarize_source
 
 
 def test_summarize_source_extracts_basic_function_contracts() -> None:

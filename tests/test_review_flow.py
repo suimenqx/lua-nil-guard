@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lua_nil_review_agent.models import SinkRule
-from lua_nil_review_agent.service import review_source
+from lua_nil_guard.models import SinkRule
+from lua_nil_guard.service import review_source
 
 
 def test_review_source_combines_collection_and_static_analysis() -> None:

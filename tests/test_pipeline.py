@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from lua_nil_review_agent.models import CandidateCase, ConfidencePolicy, StaticProof, StaticRiskSignal, Verdict
-from lua_nil_review_agent.pipeline import build_evidence_packet, should_report
+from lua_nil_guard.models import CandidateCase, ConfidencePolicy, StaticProof, StaticRiskSignal, Verdict
+from lua_nil_guard.pipeline import build_evidence_packet, should_report
 
 
 def test_build_evidence_packet_preserves_core_case_data() -> None:

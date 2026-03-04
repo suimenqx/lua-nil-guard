@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from lua_nil_review_agent.knowledge import KnowledgeBase
-from lua_nil_review_agent.service import bootstrap_repository, refresh_knowledge_base
+from lua_nil_guard.knowledge import KnowledgeBase
+from lua_nil_guard.service import bootstrap_repository, refresh_knowledge_base
 
 
 def test_refresh_knowledge_base_derives_non_nil_return_facts(tmp_path: Path) -> None:

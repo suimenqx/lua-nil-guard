@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from lua_nil_review_agent.models import (
+from lua_nil_guard.models import (
     EvidencePacket,
     EvidenceTarget,
     StaticProof,
     StaticRiskSignal,
     Verdict,
 )
-from lua_nil_review_agent.verification import preview_static_risk, preview_static_verification, verify_verdict
+from lua_nil_guard.verification import preview_static_risk, preview_static_verification, verify_verdict
 
 
 def test_verify_verdict_upgrades_clear_risk_to_risky_verified() -> None:

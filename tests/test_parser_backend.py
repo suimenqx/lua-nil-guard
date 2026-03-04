@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lua_nil_review_agent.parser_backend import (
+from lua_nil_guard.parser_backend import (
     collect_call_sites,
     collect_length_operands,
     get_parser_backend_info,

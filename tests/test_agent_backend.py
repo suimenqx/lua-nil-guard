@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from lua_nil_review_agent.models import AdjudicationRecord, RoleOpinion, SinkRule, Verdict
-from lua_nil_review_agent.service import bootstrap_repository, run_repository_review
+from lua_nil_guard.models import AdjudicationRecord, RoleOpinion, SinkRule, Verdict
+from lua_nil_guard.service import bootstrap_repository, run_repository_review
 
 
 class StubBackend:

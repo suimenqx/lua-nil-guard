@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lua_nil_review_agent.repository import discover_lua_files
+from lua_nil_guard.repository import discover_lua_files
 
 
 def test_discover_lua_files_finds_only_lua_sources(tmp_path: Path) -> None:

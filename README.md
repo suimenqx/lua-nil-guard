@@ -120,7 +120,6 @@ This report is most useful after you have already tried a few single-file runs. 
 The default backend is `heuristic`. For LLM-backed adjudication, use `--backend` with one of the supported local CLI integrations:
 
 - `gemini`
-- `codeagent`
 - `claude`
 - `codex`
 
@@ -128,7 +127,7 @@ Examples:
 
 ```sh
 lua-nil-guard report --backend gemini /path/to/target-repo
-lua-nil-guard report-file --backend codeagent /path/to/target-repo/src/demo.lua
+lua-nil-guard report-file --backend gemini /path/to/target-repo/src/demo.lua
 ```
 
 Those backends require the corresponding local CLI tool, credentials, and network access to already be working on the machine. For custom providers, generate a starter manifest with:

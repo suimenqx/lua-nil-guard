@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from lua_nil_review_agent.service import bootstrap_repository, run_repository_review
+from lua_nil_guard.service import bootstrap_repository, run_repository_review
 
 
 def test_run_repository_review_produces_verified_risk_for_locally_proven_nil_sink(tmp_path: Path) -> None:

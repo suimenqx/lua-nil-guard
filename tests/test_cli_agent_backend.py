@@ -5,14 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from lua_nil_review_agent.agent_driver_manifest import (
+from lua_nil_guard.agent_driver_manifest import (
     CODEAGENT_PROVIDER_SPEC,
     CLAUDE_PROVIDER_SPEC,
     CODEX_PROVIDER_SPEC,
     GEMINI_PROVIDER_SPEC,
     get_builtin_agent_provider_spec,
 )
-from lua_nil_review_agent.agent_backend import (
+from lua_nil_guard.agent_backend import (
     DEFAULT_GEMINI_BACKEND_MODEL,
     BackendError,
     build_manifest_backed_backend_factory,
@@ -30,7 +30,7 @@ from lua_nil_review_agent.agent_backend import (
     unregister_adjudication_backend,
     unregister_cli_protocol_backend,
 )
-from lua_nil_review_agent.models import EvidencePacket, EvidenceTarget, SinkRule
+from lua_nil_guard.models import EvidencePacket, EvidenceTarget, SinkRule
 
 
 class DemoCliBackend(CliAgentBackend):

@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 import shutil
 
-from lua_nil_review_agent.models import AdjudicationRecord, RoleOpinion, Verdict
-from lua_nil_review_agent.service import (
+from lua_nil_guard.models import AdjudicationRecord, RoleOpinion, Verdict
+from lua_nil_guard.service import (
     bootstrap_repository,
     export_adjudication_tasks,
     refresh_knowledge_base,

@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from lua_nil_review_agent.models import CandidateCase, SinkRule, StaticProof, StaticRiskSignal
-from lua_nil_review_agent.pipeline import build_evidence_packet
-from lua_nil_review_agent.prompting import build_adjudication_prompt
+from lua_nil_guard.models import CandidateCase, SinkRule, StaticProof, StaticRiskSignal
+from lua_nil_guard.pipeline import build_evidence_packet
+from lua_nil_guard.prompting import build_adjudication_prompt
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -143,7 +143,7 @@ def test_build_adjudication_prompt_uses_compiled_skill_header(monkeypatch: pytes
     )
 
     monkeypatch.setattr(
-        "lua_nil_review_agent.prompting.compile_adjudicator_skill_header",
+        "lua_nil_guard.prompting.compile_adjudicator_skill_header",
         lambda skill_path=None, strict=True: "SKILL HEADER FOR TESTS",
     )
 

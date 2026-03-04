@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from lua_nil_review_agent.models import CandidateCase, FunctionContract
-from lua_nil_review_agent.parser_backend import get_parser_backend_info
-from lua_nil_review_agent.static_analysis import analyze_candidate
+from lua_nil_guard.models import CandidateCase, FunctionContract
+from lua_nil_guard.parser_backend import get_parser_backend_info
+from lua_nil_guard.static_analysis import analyze_candidate
 
 
 def test_analyze_candidate_marks_guarded_symbol_safe() -> None:

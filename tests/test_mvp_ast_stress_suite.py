@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 
-from lua_nil_review_agent.parser_backend import get_parser_backend_info
-from lua_nil_review_agent.service import (
+from lua_nil_guard.parser_backend import get_parser_backend_info
+from lua_nil_guard.service import (
     benchmark_repository_review,
     bootstrap_repository,
     review_repository,

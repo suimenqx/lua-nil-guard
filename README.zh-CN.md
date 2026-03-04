@@ -122,7 +122,6 @@ lua-nil-guard proposal-analytics /path/to/target-repo
 默认 backend 是 `heuristic`。如果需要 LLM 裁决，可以通过 `--backend` 使用本地 CLI 集成：
 
 - `gemini`
-- `codeagent`
 - `claude`
 - `codex`
 
@@ -130,7 +129,7 @@ lua-nil-guard proposal-analytics /path/to/target-repo
 
 ```sh
 lua-nil-guard report --backend gemini /path/to/target-repo
-lua-nil-guard report-file --backend codeagent /path/to/target-repo/src/demo.lua
+lua-nil-guard report-file --backend gemini /path/to/target-repo/src/demo.lua
 ```
 
 这些 backend 依赖对应的本地 CLI 工具、账号凭据以及网络环境都已经在你的机器上正常工作。

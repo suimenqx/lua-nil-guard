@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lua_nil_review_agent.knowledge import (
+from lua_nil_guard.knowledge import (
     KnowledgeBase,
     KnowledgeFact,
     contract_applies_to_call,
@@ -10,8 +10,8 @@ from lua_nil_review_agent.knowledge import (
     derive_facts_from_summaries,
     facts_for_subject,
 )
-from lua_nil_review_agent.models import FunctionContract
-from lua_nil_review_agent.summaries import summarize_source
+from lua_nil_guard.models import FunctionContract
+from lua_nil_guard.summaries import summarize_source
 
 
 def test_knowledge_base_round_trips_json(tmp_path: Path) -> None:

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lua_nil_review_agent.baseline import BaselineStore, build_baseline, filter_new_findings
-from lua_nil_review_agent.models import ConfidencePolicy, Verdict
+from lua_nil_guard.baseline import BaselineStore, build_baseline, filter_new_findings
+from lua_nil_guard.models import ConfidencePolicy, Verdict
 
 
 def test_build_baseline_keeps_only_reportable_findings() -> None:

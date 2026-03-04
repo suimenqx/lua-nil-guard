@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from lua_nil_review_agent.models import (
+from lua_nil_guard.models import (
     AutofixPatch,
     ConfidencePolicy,
     FunctionContract,
@@ -11,7 +11,7 @@ from lua_nil_review_agent.models import (
     VerificationSummary,
     Verdict,
 )
-from lua_nil_review_agent.reporting import (
+from lua_nil_guard.reporting import (
     render_improvement_analytics_json,
     render_improvement_analytics_markdown,
     render_improvement_proposals_json,

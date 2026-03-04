@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from lua_nil_review_agent.skill_runtime import (
+from lua_nil_guard.skill_runtime import (
     ADJUDICATOR_SKILL_CONTRACT,
     SkillRuntimeError,
     compile_adjudicator_skill_header,

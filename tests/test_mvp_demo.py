@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 import shutil
 
-from lua_nil_review_agent.reporting import render_json_report
-from lua_nil_review_agent.service import (
+from lua_nil_guard.reporting import render_json_report
+from lua_nil_guard.service import (
     bootstrap_repository,
     refresh_knowledge_base,
     run_repository_review,

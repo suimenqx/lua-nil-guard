@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from lua_nil_review_agent.cli import run
-from lua_nil_review_agent.service import bootstrap_repository, export_adjudication_tasks
+from lua_nil_guard.cli import run
+from lua_nil_guard.service import bootstrap_repository, export_adjudication_tasks
 
 
 def test_export_adjudication_tasks_builds_prompt_payloads(tmp_path: Path) -> None:
