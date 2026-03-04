@@ -2,6 +2,8 @@
 
 `lua-nil-review-agent` is a developer-facing CLI for reviewing Lua code for likely nil-related runtime faults. The supported operating model is source-tree usage: keep this repository intact, run from the checkout, and point the tool at Lua repositories you want to inspect.
 
+Chinese documentation: [README.zh-CN.md](./README.zh-CN.md)
+
 ## Requirements
 
 - Python 3.12+
@@ -47,6 +49,72 @@ lua-nil-review-agent report-file-json /path/to/target-repo/src/demo.lua
 
 Single-file review keeps repository context, so cross-file function summaries and related function source snippets can still be used during adjudication.
 
+## Recommended First Run
+
+For a first trial, do not start with a full repository scan. Start with one representative Lua file, then tighten configuration only if the result is too uncertain.
+
+1. Initialize the target repository once:
+
+```sh
+lua-nil-review-agent init-config /path/to/target-repo
+```
+
+2. Pick one real file with a known nil-sensitive call and run:
+
+```sh
+lua-nil-review-agent report-file /path/to/target-repo/src/demo.lua
+```
+
+3. If the result is already `risky` or `safe`, keep iterating on small files before moving to a wider scan.
+
+4. If the result is mostly `uncertain`, check whether the file depends on helper functions that are not defined in the current repository checkout. In that case, add a narrow contract to `config/function_contracts.json` instead of widening the scan immediately.
+
+Typical examples:
+
+- A guard helper that proves its arguments are non-nil:
+
+```json
+[
+  {
+    "qualified_name": "assert_present",
+    "ensures_non_nil_args": [1]
+  }
+]
+```
+
+- A normalizer that is only safe when called with a known fallback:
+
+```json
+[
+  {
+    "qualified_name": "normalize_name",
+    "returns_non_nil": true,
+    "applies_with_arg_count": 2,
+    "required_literal_args": {
+      "2": "''"
+    },
+    "applies_to_call_roles": ["assignment_origin", "sink_expression"]
+  }
+]
+```
+
+5. Re-run the same file after updating contracts. Only after a few representative files behave well should you move on to:
+
+```sh
+lua-nil-review-agent report /path/to/target-repo
+```
+
+6. If you want to see what the tool still cannot prove, inspect the proposal backlog:
+
+```sh
+lua-nil-review-agent proposal-analytics /path/to/target-repo
+```
+
+This report is most useful after you have already tried a few single-file runs. It helps separate:
+
+- truly unresolved patterns that may need new bounded recognizers
+- helper functions that may need an explicit contract
+
 ## Backends
 
 The default backend is `heuristic`. For LLM-backed adjudication, use `--backend` with one of the supported local CLI integrations:
@@ -81,5 +149,10 @@ Target repositories are expected to contain:
 
 ## Notes
 
+- This release is intended for developer trial use. Start with a few real files or one small module before using it across a large repository.
+- Single-file review works best when important helper functions are either present in the same repository or represented in `config/function_contracts.json`.
+- Missing helper definitions do not block review, but they reduce cross-file proof strength and can increase `uncertain` results.
+- The current implementation is optimized for precision, not full coverage. It will stay conservative when it cannot prove a bounded safe or risky path.
+- Large-repository performance work such as global AST caching, incremental PR analysis, and concurrency is planned, but not part of this release. For now, module-scale or file-scale trials are the recommended rollout path.
 - Source-tree or editable-install usage is the supported path. The default skill file is loaded from this repository checkout.
 - The built-in docs under `docs/` cover prompt structure and sink rule semantics in more detail.

@@ -455,3 +455,138 @@ The recommended immediate execution order is:
 4. Connect `medium` / `uncertain` review output to draft proposal generation.
 
 This is the current highest-value continuation path from the present codebase state.
+
+## 15. Current Status Snapshot
+
+The work defined in Sections 13 and 14 has now been completed.
+
+Completed outcomes:
+
+1. Structured AST fallback coverage is now substantially closed:
+   - `upvalue_capture`
+   - `no_bounded_ast_proof`
+   - `no_bounded_ast_origin`
+   - existing reasons such as `unsupported_control_flow`, `dynamic_metatable`, `dynamic_index_expression`, and `unresolved_ast_node`
+2. Bounded AST origin/source positioning is now part of the static pipeline:
+   - `origin_analysis_mode`
+   - `origin_unknown_reason`
+   - `ast_origin_primary`
+   - `ast_origin_fallback_to_legacy`
+3. Proof-aware adjudication calibration now explicitly incorporates:
+   - `StaticProof.kind`
+   - `StaticProof.depth`
+   - `VerificationSummary` preview
+   - role-specific prompt guidance
+4. The draft-only feedback loop is active:
+   - unresolved `medium` / `uncertain` cases can now produce `ImprovementProposal`
+   - proposal aggregation can now produce `ImprovementAnalytics`
+5. The codebase has moved beyond “bootstrap AST migration” and into a precision-optimization phase.
+
+Operational note:
+
+- The current full test baseline is `361 passed`.
+
+## 16. New Execution Baseline: Proposal-Driven Precision Loop
+
+The project is now transitioning from “syntax-driven AST expansion” to a tighter, evidence-led refinement loop.
+
+The new primary work program is:
+
+1. export unresolved-case improvement proposals
+2. aggregate proposal analytics
+3. select the highest-frequency unresolved topology
+4. implement one bounded static recognizer that directly addresses that topology
+5. re-measure and repeat only if precision holds
+
+This loop replaces ad hoc horizontal AST growth as the default strategy.
+
+### Phase N1: Proposal Export
+
+Status: completed
+
+Deliverables now in place:
+
+1. draft-only proposal generation from unresolved review outcomes
+2. markdown export
+3. JSON export
+4. proposal kinds:
+   - `ast_pattern`
+   - `function_contract`
+   - `wrapper_recognizer`
+
+Expected ongoing use:
+
+- Turn each unresolved case into a reviewable follow-up artifact instead of leaving it as a dead-end verdict.
+
+### Phase N2: Proposal Analytics
+
+Status: completed
+
+Deliverables now in place:
+
+1. aggregate proposal counts by:
+   - kind
+   - reason
+   - pattern
+   - contract
+2. markdown analytics output
+3. JSON analytics output
+
+Expected ongoing use:
+
+- Use unresolved-case distributions to decide the next bounded precision improvement, instead of choosing the next rule by intuition alone.
+
+### Phase N3: Proposal-Driven Bounded Recognition
+
+Status: active
+
+Rule:
+
+1. Identify the highest-value unresolved pattern from proposal analytics.
+2. Implement exactly one bounded recognizer that directly targets that pattern.
+3. Re-run stress + full tests.
+4. Re-check proposal analytics to confirm that the targeted hotspot actually shrank.
+
+The first completed N3 iteration has already been executed:
+
+1. hotspot identified: `unsupported_control_flow`
+2. targeted enhancement added:
+   - bounded `while` support for the explicit pattern `if not x then break end` before a same-body sink
+3. stress-suite result:
+   - the former loop-break unresolved case is now statically provable
+   - proposal analytics for `ast_stress_suite` now returns zero proposals
+
+Current boundary:
+
+- Only explicit, local, same-loop-body break guards are recognized.
+- Other loop topologies remain conservative unless a future hotspot justifies a bounded expansion.
+
+### Phase N4: Proof-Aware Adjudication Tightening
+
+Status: active
+
+Goal:
+
+1. keep LLMs strictly in a proof-auditing role
+2. further reduce speculative reasoning in borderline cases
+3. use proof strength to shape model behavior without broad prompt inflation
+
+Next expected refinements:
+
+1. strengthen role-specific constraints even further
+2. keep calibration sparse and tied to real unresolved classes
+3. avoid adding wide few-shot bundles unless analytics shows a concrete need
+
+## 17. Current Recommended Next Actions
+
+The next concrete work sequence should be:
+
+1. run `proposal-analytics` on larger real repositories, not just fixture suites
+2. identify the next highest-frequency unresolved topology after the loop-break hotspot
+3. implement exactly one new bounded recognizer or wrapper/contract inference rule for that topology
+4. verify that:
+   - full tests still pass
+   - proposal counts for the targeted hotspot decrease
+   - no new deterministic false positives appear
+
+This is the current execution baseline for future implementation and expert review.

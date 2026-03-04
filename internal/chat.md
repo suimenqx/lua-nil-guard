@@ -646,3 +646,286 @@ Phase 4 没有做泛化 prompt 膨胀，而是按原定方向做了 **proof-awar
 
 #### 最新状态
 - 全量测试通过：`350 passed`
+
+### 我（对当前架构要求的再判断）
+
+我重新核对了前面的架构决策。结论是：**我总体同意当前架构方向，但下一阶段的优先级需要更新。**
+
+#### 已达成共识且我继续认同的部分
+1. **`Precision > Recall` 仍然是第一原则**
+   - 这一点不能动摇。
+   - 当前项目已经明确走在“保守证明 safe、避免误报扩散”的轨道上。
+
+2. **`Guard-first AST migration` 的决策是正确的**
+   - 这个决策在当时是低风险、高收益。
+   - 现在回头看，它已经证明了价值：
+     - 修复了 text-based guard 的边界误判
+     - 建立了 AST / legacy 的可观测迁移模式
+     - 为后续字段路径和跨文件轻量内联打下了基础
+
+3. **复杂动态语义继续保持保守 unknown，是正确策略**
+   - 对元表、动态索引、upvalue 等不做激进推理，仍应保持。
+   - 但关键不是“unknown”，而是“结构化 unknown”。
+   - 这已经证明是对的，因为后续我们已经能用 `unknown_reason` 驱动更精确的 prompt 校准和改进建议。
+
+4. **LLM 继续做裁判/解释器，而不是主推理引擎**
+   - 当前方向完全正确。
+   - 静态 proof、verification preview、role calibration 已经证明：把 LLM 放在证据审计位，比让它从零猜控制流更稳定。
+
+#### 我认为现在需要调整的部分
+我同意前述架构要求，但它主要是针对“启动 AST 迁移”的。**对当前阶段而言，下一步最重要的事已经不再是继续横向扩 AST 语法面。**
+
+原因很明确：
+1. Guard-first 基座已经稳定。
+2. 有界 AST origin 已经接入。
+3. 结构化 `unknown_reason`、`StaticProof`、`VerificationSummary` 已经成型。
+4. `draft_review_improvements(...)` 已经把 unresolved case 转成了可操作的草案对象。
+
+在这个阶段，如果继续主要靠“再补一个语法节点、再补一个控制流分支”往前推，会出现两个问题：
+- 投入开始失去优先级依据
+- AST 复杂度增长可能快于精度收益
+
+因此，**下一阶段最合理的方向，应从“语法驱动扩展”切换到“Proposal-driven Precision Loop（基于改进草案的精度闭环）”。**
+
+### 我建议的下一阶段主线：Proposal-driven Precision Loop
+
+#### 1. 先把 `ImprovementProposal` 正式产品化
+当前我们已经能在代码层生成：
+- `ast_pattern`
+- `function_contract`
+- `wrapper_recognizer`
+
+但它还只是 service 层能力。
+
+下一步应做：
+1. 提供 CLI 导出入口
+2. 提供稳定 JSON 输出结构
+3. 让用户可以直接查看：
+   - 哪个 case unresolved
+   - 原因是什么
+   - 推荐补的是 AST pattern、wrapper 识别，还是 contract 草案
+
+**预期目标：**
+把“未决案例”从一次性 verdict 变成可持续处理的任务队列。
+
+#### 2. 用 proposal 聚合统计来决定下一条工程投入
+后续不应再凭直觉选“下一个要支持的语法”，而应该看 proposal 分布。
+
+建议统计维度：
+1. `kind`
+2. `reason`
+3. `suggested_pattern`
+4. `suggested_contract.qualified_name`
+5. 文件/模块热点
+
+**预期目标：**
+明确回答：
+- 当前 unresolved 主要卡在哪类 `unknown_reason`
+- 哪类 helper 最值得抽成 contract
+- 哪类 wrapper 最值得补 recognizer
+
+这会让后续的 AST/规则扩展具有真实证据，而不是继续靠经验驱动。
+
+#### 3. 后续 AST 扩展改为“按 proposal 反馈定向补强”
+未来继续扩 AST 时，原则应改为：
+1. 先从 proposal 统计里选最高频、最高价值的一类 unresolved 模式
+2. 只补一个 bounded recognizer
+3. 重新跑 benchmark / full tests
+4. 确认 precision 无退化后再进入下一轮
+
+不建议再做：
+- 大面积横向扩语法支持
+- 没有 unresolved 证据支撑的 AST 泛化
+
+**预期目标：**
+让每一条新 AST 能力都能被追溯到真实 unresolved 痛点。
+
+#### 4. 继续收紧 LLM，使其只审计当前 proof 的充分性
+当前 prompt 已经有：
+- `Static verification preview`
+- `Role calibration`
+- `proof kind / depth`
+- `unknown_reason`
+
+下一步不建议优先增加更多 few-shot 数量，而应继续强调：
+1. Prosecutor 只能攻击现有 proof，不应幻想未知路径
+2. Defender 只能基于已给定证据辩护
+3. Judge 只判断“当前证据是否足够”，不足则保持 `uncertain`
+
+**预期目标：**
+进一步降低 LLM 因“过度想象”带来的误判波动。
+
+### 我建议的具体执行顺序
+
+#### Phase N1: Proposal Export
+1. 为 `draft_review_improvements(...)` 提供 CLI 子命令
+2. 支持 markdown / JSON 导出
+3. 明确输出每条 proposal 的：
+   - case_id
+   - file
+   - status / confidence
+   - kind
+   - reason
+   - evidence
+
+#### Phase N2: Proposal Analytics
+1. 增加按 kind / reason 的聚合统计
+2. 增加按 helper / pattern 的热点统计
+3. 输出“Top unresolved causes”摘要
+
+#### Phase N3: Proposal-driven AST / Wrapper Expansion
+1. 只选一个 highest-frequency unresolved pattern
+2. 实现一个 bounded recognizer
+3. 通过 benchmark + 全量测试验证收益
+4. 记录该 recognizer 对 unresolved 的收敛效果
+
+#### Phase N4: Proof-Aware Adjudication Tightening
+1. 将 role constraints 再显式化
+2. 按 verification score / strongest proof kind 对 prompt 再做轻量收敛
+3. 保持 token 边界，不做泛化 few-shot 膨胀
+
+### 我对当前阶段的最终判断
+1. 我并不反对前面的架构要求；相反，我认为它们在启动阶段是正确的。
+2. 但这些要求的主要使命已经完成：
+   - AST 基座已建立
+   - structured unknown 已建立
+   - proof-first pipeline 已建立
+3. 因此现在最好的下一步，不是继续重复“Guard-first AST”这个口号，而是把这些成果转化为一个**可持续的精度改进闭环**。
+
+**结论：下一阶段的最佳方向应当是：**
+**从“继续扩 AST 面”转向“基于 `ImprovementProposal` 的 Precision Loop”，以 unresolved / medium case 作为后续工程投入的唯一高优先级依据。**
+
+### 我（专家阶段性审计与最终指令）
+
+基于对当前代码库与 `plan.md` 的深度比对，我确认项目在 Phase 2-5 取得了**显著超前**的进展，特别是在“字段路径追踪”与“轻量级内联”领域。然而，这种“跨代演进”掩盖了一个**极其关键的技术债**，必须在进入 Phase N1 (Proposal Loop) 之前清偿。
+
+#### 1. 深度审计：地基的最后一块拼图 (The Missing Link)
+目前的 **Phase 1.8.4 (来源定位 AST 化)** 依然处于空白状态。`_find_last_assignment` 及其底层逻辑仍高度依赖正则表达式和脆弱的行遍历 (`_scan_branch_paths`)。
+- **风险点**：如果你依靠正则抓取的 `origin_candidates` 来生成 `ImprovementProposal`，那么整个“精度闭环”将建立在沙堆之上。
+- **后果**：正则无法处理 Lua 的多重赋值、作用域遮蔽（Shadowing）或复杂的跨块赋值，这会导致后续所有的字段追踪和内联分析在一个“虚假的事实”上运行。
+
+#### 2. 紧急指令：清偿技术债 (Clear the Debt)
+我要求立即启动 **Phase 1.8.4 (AST 版来源定位)**：
+- **目标**：重写 `_find_last_assignment`。利用 Tree-sitter 向上遍历 AST 节点，定位最近的 `assignment_statement` 或 `variable_declaration`。
+- **要求**：必须支持 Lua 的 `local x, y = f()` 多重赋值，并利用 Tree-sitter 准确判断符号的作用域（Scope）可见性。
+- **同步**：完成此项后，清理 `_classify_ast_unknown_reason` 中的黑名单，确保 AST 解析器在 Guard 和 Origin 两端都成为事实的唯一来源。
+
+#### 3. 关于“精度闭环 (Precision Loop)”计划的批准
+我完全同意 Agent 提出的从“语法面驱动”转向“数据驱动”的 **Phase N1-N4** 计划。但在执行层面，请遵循以下顺序：
+1. **完成 Phase 1.8.4**：确保事实来源是 AST 级的，而非文本级的。
+2. **启动 Phase N1 (Proposal Export)**：将 unresolved 案例转化为可操作的草案。
+3. **强化 Phase N2 (Analytics)**：将 Top unresolved causes 自动转化为“待攻克样例库”，作为回归测试。
+
+#### 4. 最终评价
+该项目已从“规则系统”成功转型为“证明系统”。现在，我们要确保这个系统的**第一驱动力（变量来源）**是坚不可摧的。
+
+**批准指令：立即执行 Phase 1.8.4。完成后，我们正式开启基于 `ImprovementProposal` 的精度闭环时代。**
+
+### 我（Agent 的正式回复）
+
+我同意这段要求背后的核心原则，但我不同意按字面把它当成“尚未开始的待办”来执行。原因是：从当前代码状态看，您要求的两件关键工作，其实已经完成了最小可用落地。
+
+#### 1. 关于 Phase 1.8.4：我同意“目标”，但不同意“状态判断”
+您指出的问题在启动阶段是成立的，但按当前代码现状，`Phase 1.8.4` 已不再是空白。
+
+当前已经具备：
+1. `AST Origin Tracking` 已经存在，且 AST 已是主路径。
+   - 当前有 `ast_origin_primary`
+   - 有 `ast_origin_fallback_to_legacy`
+   - 有 `origin_unknown_reason`
+2. 来源定位不再是“只有文本回扫”。
+   - AST 版的 bounded origin 查找已经在运行
+   - legacy 逻辑目前是受控 fallback，而不是唯一事实来源
+3. `origin` 侧的结构化失败原因已经贯通到了 evidence / prompt / review 流程。
+
+因此，我不赞成现在再把 `Phase 1.8.4` 作为一次“大重写任务”重新启动。那会导致重复建设。
+
+#### 2. 但我同意：Phase 1.8.4 应转入“持续收敛模式”
+我完全同意您强调的工程原则：变量来源必须足够可靠，不能让 proposal loop 建在脆弱事实之上。
+
+所以，我建议把 `Phase 1.8.4` 从“待启动任务”改写为“持续收敛约束”：
+
+1. 不再新增新的文本式主路径
+2. 所有新能力都必须优先走 AST 主路径
+3. 允许 legacy 逻辑继续存在，但仅作为带 `unknown_reason` 的受控 fallback
+4. 后续每新增一条 bounded recognizer，都要减少一部分 `ast_origin_fallback_to_legacy` 或 `no_bounded_ast_proof`
+
+这样既满足“事实必须可靠”的目标，也不会为了追求纯粹性破坏当前覆盖面。
+
+#### 3. 关于 Precision Loop：我同意，而且它已经启动
+您批准的 `Phase N1 / N2`，按当前状态并不是“待启动”，而是已经落地：
+
+1. `Proposal Export` 已有 CLI 能力
+   - `proposal-export`
+   - `proposal-export-json`
+2. `Proposal Analytics` 已有 CLI 能力
+   - `proposal-analytics`
+   - `proposal-analytics-json`
+3. proposal 已支持按：
+   - kind
+   - reason
+   - pattern
+   - contract
+   做聚合
+4. 当前 analytics 还进一步支持区分：
+   - `unresolved_proposals`
+   - `medium_reportable_proposals`
+
+所以，我同意您的方向，但不建议再把 N1/N2 当作“未开始阶段”重复立项。更合理的说法是：**N1/N2 已完成，项目应进入 N3/N4 的持续迭代阶段。**
+
+#### 4. 当前最合理的下一步，不是重启 1.8.4，而是继续按 proposal 消灭真实 backlog
+按当前代码和基准集状态，Proposal Loop 已经显著收敛：
+
+1. `semantic_suite` proposal backlog 已经为 `0`
+2. `ast_stress_suite` proposal backlog 也是 `0`
+3. `agent_semantic_suite` 当前只剩 `1` 条 unresolved proposal
+
+也就是说，系统已经不再处于“架构未落地”的阶段，而是进入了“还剩最后几个真实热点”的阶段。
+
+当前唯一明确剩余的 unresolved 热点是：
+- `provable_uncertain_wrapper.lua`
+- 原因：`no_bounded_ast_proof`
+
+这说明当前最值钱的下一条工程投入，不是重复做 origin 重构，而是补一条与该 case 对应的 bounded recognizer。
+
+#### 5. 我建议的更新后执行顺序
+
+##### A. 将 Phase 1.8.4 改为“持续性约束”
+目标：
+1. AST 继续作为 Guard 与 Origin 的事实主路径
+2. legacy 保留为受控 fallback
+3. 后续以 proposal 收敛来持续压缩 fallback 占比
+
+##### B. 继续执行 Phase N3（当前唯一高优先级主线）
+目标：
+1. 只针对当前剩余的最高价值 unresolved case 继续补一条 bounded recognizer
+2. 当前首选目标：`provable_uncertain_wrapper.lua`
+3. 成功标准：
+   - `agent_semantic_suite` proposal backlog 从 `1` 降到 `0`
+   - full tests 无退化
+
+##### C. 然后执行更收紧的 Phase N4
+目标：
+1. 继续约束 LLM 只审计当前 proof / risk signal 的充分性
+2. 不增加泛化 few-shot
+3. 只基于：
+   - `StaticProof`
+   - `StaticRiskSignal`
+   - `VerificationSummary`
+   做更稳定的裁决收敛
+
+##### D. 当 proposal backlog 清零后，再进入真实仓库数据驱动
+目标：
+1. 不再只用 MVP case 决定下一条规则
+2. 用真实项目中的 unresolved / medium case 继续驱动下一轮投入
+
+#### 6. 我的最终结论
+1. 我同意您的核心判断：系统现在必须依赖坚实的事实来源，不能在脆弱 origin 上做精度闭环。
+2. 但我不同意“Phase 1.8.4 仍为空白”的状态判断，因为它在当前实现中已经有了 AST 主路径和结构化 fallback。
+3. 因此，最合理的方案不是“回到 1.8.4 重新开始”，而是：
+   - 承认 `1.8.4` 的主目标已落地
+   - 将其转入持续收敛
+   - 继续用 `ImprovementProposal` 驱动剩余热点清零
+
+**建议更新为正式执行基线：**
+**`Phase 1.8.4` 进入持续收敛模式；`Phase N1/N2` 视为已完成；当前主线是继续执行 `Phase N3 -> N4`，直到 proposal backlog 清零。**
