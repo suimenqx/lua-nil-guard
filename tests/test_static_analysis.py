@@ -2669,3 +2669,37 @@ def test_analyze_candidate_emits_unguarded_field_origin_risk_signal() -> None:
     assert result.risk_signals
     assert result.risk_signals[0].kind == "unguarded_field_origin"
     assert result.risk_signals[0].summary == "username may inherit nil from req.params.username"
+
+
+def test_analyze_candidate_emits_wrapper_field_path_risk_signal() -> None:
+    source = "\n".join(
+        [
+            "local function passthrough_name(value)",
+            "  return value",
+            "end",
+            "",
+            "local display_name = passthrough_name(req.params.display_name)",
+            "return string.match(display_name, '^guest')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_wrapper_field_path_risk",
+        file="demo.lua",
+        line=6,
+        column=21,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="display_name",
+        symbol="display_name",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "unknown_static"
+    assert result.observed_guards == ()
+    assert result.risk_signals
+    assert result.risk_signals[0].kind == "wrapper_field_path_risk"
+    assert result.risk_signals[0].summary == "display_name may inherit nil via passthrough_name(...)"

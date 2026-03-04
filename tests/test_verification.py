@@ -349,6 +349,57 @@ def test_verify_verdict_overrides_uncertain_with_strong_static_risk_signal() -> 
     assert result.verification_summary.verification_score == 95
 
 
+def test_verify_verdict_uses_wrapper_field_path_risk_signal_for_override() -> None:
+    verdict = Verdict(
+        case_id="case_uncertain_wrapper_risk_structured",
+        status="uncertain",
+        confidence="medium",
+        risk_path=(),
+        safety_evidence=(),
+        counterarguments_considered=("backend requested more context",),
+        suggested_fix="display_name = display_name or ''",
+        needs_human=True,
+    )
+    packet = EvidencePacket(
+        case_id="case_uncertain_wrapper_risk_structured",
+        target=EvidenceTarget(
+            file="demo.lua",
+            line=15,
+            column=1,
+            sink="string.match",
+            arg_index=1,
+            expression="display_name",
+        ),
+        local_context="local display_name = passthrough_name(req.params.display_name)\nreturn string.match(display_name, '^a')",
+        related_functions=(),
+        function_summaries=(),
+        knowledge_facts=(),
+        static_reasoning={
+            "state": "unknown_static",
+            "origin_candidates": ("passthrough_name(req.params.display_name)",),
+            "observed_guards": (),
+        },
+        static_risk_signals=(
+            StaticRiskSignal(
+                kind="wrapper_field_path_risk",
+                summary="display_name may inherit nil via passthrough_name(...)",
+                subject="display_name",
+                source_expression="passthrough_name(req.params.display_name)",
+                depth=1,
+            ),
+        ),
+    )
+
+    result = verify_verdict(verdict, packet)
+
+    assert result.status == "risky_verified"
+    assert result.confidence == "high"
+    assert result.verification_summary is not None
+    assert result.verification_summary.mode == "structured_static_risk_override"
+    assert result.verification_summary.strongest_proof_kind == "wrapper_field_path_risk"
+    assert result.verification_summary.verification_score == 85
+
+
 def test_verify_verdict_does_not_let_legacy_guards_override_weak_structured_proof() -> None:
     verdict = Verdict(
         case_id="case_safe_weak_structured",

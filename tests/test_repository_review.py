@@ -332,7 +332,7 @@ def test_run_repository_review_limits_contracts_to_configured_modules(
     }
 
     assert verdict_by_file["user.lua"].status.startswith("safe")
-    assert verdict_by_file["admin.lua"].status == "uncertain"
+    assert verdict_by_file["admin.lua"].status.startswith("risky")
 
 
 def test_run_repository_review_limits_contracts_to_configured_sinks(
@@ -416,7 +416,7 @@ def test_run_repository_review_limits_contracts_to_configured_sinks(
     assert any(
         "returns non-nil" in fact for fact in verdict_by_sink["string.match.arg1"].safety_evidence
     )
-    assert verdict_by_sink["string.find.arg1"].status == "uncertain"
+    assert verdict_by_sink["string.find.arg1"].status.startswith("risky")
 
 
 def test_run_repository_review_skips_call_shaped_return_contracts_without_matching_call(
@@ -615,7 +615,7 @@ def test_run_repository_review_skips_literal_scoped_return_contract_when_call_di
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "uncertain"
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_repository_review_uses_shape_scoped_return_contract_when_call_matches(
@@ -801,7 +801,7 @@ def test_run_repository_review_skips_shape_scoped_return_contract_when_call_diff
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "uncertain"
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_repository_review_uses_root_scoped_return_contract_when_call_matches(
@@ -932,7 +932,7 @@ def test_run_repository_review_skips_root_scoped_return_contract_when_call_diffe
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "uncertain"
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_repository_review_uses_prefix_scoped_return_contract_when_call_matches(
@@ -1063,7 +1063,7 @@ def test_run_repository_review_skips_prefix_scoped_return_contract_when_call_dif
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "uncertain"
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_repository_review_uses_access_path_scoped_return_contract_when_call_matches(
@@ -1459,7 +1459,7 @@ def test_run_repository_review_skips_return_slot_when_slot_specific_args_do_not_
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "uncertain"
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_repository_review_combines_guard_contract_with_return_normalizer(
@@ -2237,7 +2237,7 @@ def test_run_repository_review_limits_transparent_wrapper_chain_depth(
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "uncertain"
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_repository_review_uses_sink_expression_role_scoped_contracts(
@@ -2498,7 +2498,7 @@ def test_run_repository_review_skips_single_assignment_contracts_for_multi_assig
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "uncertain"
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_repository_review_limits_contracts_to_configured_function_scopes(
@@ -2571,7 +2571,7 @@ def test_run_repository_review_limits_contracts_to_configured_function_scopes(
     verdict_by_line = {int(verdict.case_id.split(":")[1]): verdict for verdict in verdicts}
 
     assert verdict_by_line[7].status == "safe"
-    assert verdict_by_line[12].status == "uncertain"
+    assert verdict_by_line[12].status.startswith("risky")
 
 
 def test_run_repository_review_limits_contracts_to_scope_kinds(
@@ -2641,7 +2641,7 @@ def test_run_repository_review_limits_contracts_to_scope_kinds(
     verdicts = run_repository_review(snapshot)
     verdict_by_line = {int(verdict.case_id.split(":")[1]): verdict for verdict in verdicts}
 
-    assert verdict_by_line[6].status == "uncertain"
+    assert verdict_by_line[6].status.startswith("risky")
     assert verdict_by_line[10].status == "safe"
 
 

@@ -175,6 +175,16 @@ def analyze_candidate(
                 unknown_reason=unknown_reason,
             )
         )
+        risk_signals.extend(
+            _wrapper_field_path_risk_signals(
+                prior_lines,
+                origin_detail,
+                subject=candidate.symbol,
+                current_module=current_module,
+                transparent_return_wrappers=effective_transparent_return_wrappers,
+                unknown_reason=unknown_reason,
+            )
+        )
     deduped_risk_signals = _dedupe_risk_signals(tuple(risk_signals))
     observed_guards = tuple(proof.summary for proof in deduped_proofs)
     state = "safe_static" if deduped_proofs else "unknown_static"
@@ -1317,6 +1327,65 @@ def _field_path_risk_signals(
             source_expression=origin,
             provenance=(
                 f"`{candidate.symbol}` is assigned from unguarded field path `{origin}` before the sink",
+            ),
+            depth=1,
+        ),
+    )
+
+
+def _wrapper_field_path_risk_signals(
+    lines: list[str],
+    origin_detail: tuple[str, str, int, int] | None,
+    *,
+    subject: str,
+    current_module: str | None,
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]],
+    unknown_reason: str | None,
+) -> tuple[StaticRiskSignal, ...]:
+    supported_unknown_reasons = {None, "", "no_bounded_ast_proof", "unsupported_control_flow"}
+    if unknown_reason not in supported_unknown_reasons:
+        return ()
+    if origin_detail is None:
+        return ()
+
+    origin, _usage_mode, return_slot, assignment_line_index = origin_detail
+    parsed_call = _parse_simple_call(_strip_lua_comment(origin).strip())
+    if parsed_call is None:
+        return ()
+
+    raw_name, args = parsed_call
+    resolved_name = _resolve_contract_name(
+        raw_name,
+        current_module=current_module,
+        known_contract_names=frozenset(transparent_return_wrappers),
+    )
+    passthrough_index = _transparent_wrapper_arg_for_slot(
+        transparent_return_wrappers.get(resolved_name),
+        return_slot,
+    )
+    if passthrough_index is None or passthrough_index <= 0 or passthrough_index > len(args):
+        return ()
+
+    passthrough_value = args[passthrough_index - 1].strip()
+    if extract_access_path(passthrough_value) is None:
+        return ()
+
+    assignment_prefix = lines[:assignment_line_index]
+    if (
+        _has_active_positive_guard(assignment_prefix, passthrough_value)
+        or _has_early_exit_guard(assignment_prefix, passthrough_value)
+        or _has_active_assert(assignment_prefix, passthrough_value)
+    ):
+        return ()
+
+    return (
+        StaticRiskSignal(
+            kind="wrapper_field_path_risk",
+            summary=f"{subject} may inherit nil via {resolved_name}(...)",
+            subject=subject,
+            source_expression=origin,
+            provenance=(
+                f"`{resolved_name}` transparently forwards unguarded field path `{passthrough_value}`",
             ),
             depth=1,
         ),

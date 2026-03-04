@@ -2203,14 +2203,14 @@ def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -
     summary = benchmark_repository_review(snapshot, backend=StrictEvidenceBackend())
 
     assert summary.total_cases == 18
-    assert summary.exact_matches == 14
+    assert summary.exact_matches == 13
     assert summary.expected_risky == 5
     assert summary.expected_safe == 8
     assert summary.expected_uncertain == 5
-    assert summary.actual_risky == 9
+    assert summary.actual_risky == 10
     assert summary.actual_safe == 8
-    assert summary.actual_uncertain == 1
-    assert summary.false_positive_risks == 4
+    assert summary.actual_uncertain == 0
+    assert summary.false_positive_risks == 5
     assert summary.missed_risks == 0
     assert summary.unresolved_cases == 0
     assert summary.backend_fallbacks == 0
@@ -2229,7 +2229,7 @@ def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -
     assert summary.backend_name == "StrictEvidenceBackend"
     assert summary.backend_model is None
     assert summary.backend_executable is None
-    assert sum(1 for case in summary.cases if case.matches_expectation) == 14
+    assert sum(1 for case in summary.cases if case.matches_expectation) == 13
 
 
 def test_benchmark_repository_review_counts_backend_fallbacks(tmp_path: Path) -> None:

@@ -77,6 +77,9 @@ _RISK_KIND_CALIBRATIONS = {
     "unguarded_field_origin": (
         "Example (unguarded_field_origin): if `local name = req.params.name` has no bounded guard on that field path, the local inherits the same nil-risk."
     ),
+    "wrapper_field_path_risk": (
+        "Example (wrapper_field_path_risk): if a tiny transparent wrapper only forwards `req.params.name`, the wrapped local inherits the same field-path risk unless a bounded guard exists before the wrapper call."
+    ),
 }
 
 

@@ -273,6 +273,7 @@ def _safe_risk_signal_score(signal: StaticRiskSignal) -> int:
     base_scores = {
         "direct_sink_field_path": 95,
         "unguarded_field_origin": 90,
+        "wrapper_field_path_risk": 90,
     }
     base = base_scores.get(signal.kind, 70)
     penalty = 5 * max(0, signal.depth)
