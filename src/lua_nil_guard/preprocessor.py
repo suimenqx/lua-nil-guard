@@ -19,6 +19,7 @@ _ASSIGNMENT_RE = re.compile(
     r"^\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*=\s*(.+?)\s*$"
 )
 _NUMBER_LITERAL_RE = re.compile(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
+_HEX_NUMBER_LITERAL_RE = re.compile(r"^-?0[xX][0-9A-Fa-f]+$")
 _IDENT_OR_PATH_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 _MAX_ALIAS_DEPTH = 8
 _MACRO_CACHE_SCHEMA_VERSION = 1
@@ -279,8 +280,9 @@ def parse_macro_file(
         if root_path is not None and file_path.is_absolute() and file_path.is_relative_to(root_path)
         else str(file_path)
     )
-    facts: list[MacroFact] = []
+    explicit_facts: list[MacroFact] = []
     unresolved: list[MacroUnresolvedLine] = []
+    inferred_parent_lines: dict[str, int] = {}
 
     for line_no, raw_line in enumerate(source.splitlines(), start=1):
         line = _strip_comment(raw_line).strip()
@@ -315,7 +317,7 @@ def parse_macro_file(
         kind, value, alias_target = parsed
         resolved_kind = kind if kind != "alias" else None
         resolved_value = value if kind != "alias" else None
-        facts.append(
+        explicit_facts.append(
             MacroFact(
                 key=key,
                 kind=kind,
@@ -328,8 +330,32 @@ def parse_macro_file(
                 alias_target=alias_target,
             )
         )
+        _collect_inferred_parent_table_lines(
+            inferred_parent_lines,
+            key,
+            line_no,
+        )
 
-    return tuple(facts), tuple(unresolved)
+    explicit_keys = {fact.key for fact in explicit_facts}
+    inferred_facts: list[MacroFact] = []
+    for parent_key, parent_line in sorted(inferred_parent_lines.items(), key=lambda item: item[1]):
+        if parent_key in explicit_keys:
+            continue
+        inferred_facts.append(
+            MacroFact(
+                key=parent_key,
+                kind="inferred_table",
+                value=None,
+                provably_non_nil=True,
+                file=display_path,
+                line=parent_line,
+                resolved_kind="inferred_table",
+                resolved_value=None,
+                alias_target=None,
+            )
+        )
+
+    return tuple(explicit_facts + inferred_facts), tuple(unresolved)
 
 
 def resolve_macro_facts(facts: tuple[MacroFact, ...]) -> tuple[MacroFact, ...]:
@@ -413,15 +439,22 @@ def _resolve_fact_value(
 
 
 def _parse_macro_value(value: str) -> tuple[str, str | None, str | None] | None:
-    stripped = value.strip()
+    stripped = _unwrap_outer_parentheses(value.strip())
     if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {"'", '"'}:
         return "string_literal", stripped[1:-1], None
+    if _HEX_NUMBER_LITERAL_RE.match(stripped):
+        try:
+            return "number_literal", str(int(stripped, 0)), None
+        except ValueError:
+            return None
     if _NUMBER_LITERAL_RE.match(stripped):
         return "number_literal", stripped, None
     if stripped in {"true", "false"}:
         return "boolean_literal", stripped, None
     if stripped == "{}":
         return "empty_table", stripped, None
+    if len(stripped) >= 2 and stripped[0] == "{" and stripped[-1] == "}":
+        return "table_literal", stripped, None
     if _IDENT_OR_PATH_RE.match(stripped):
         return "alias", None, stripped
     return None
@@ -432,6 +465,64 @@ def _strip_comment(line: str) -> str:
     if comment_index == -1:
         return line
     return line[:comment_index]
+
+
+def _unwrap_outer_parentheses(value: str) -> str:
+    current = value.strip()
+    while _is_wrapped_by_outer_parentheses(current):
+        inner = current[1:-1].strip()
+        if not inner:
+            break
+        current = inner
+    return current
+
+
+def _is_wrapped_by_outer_parentheses(value: str) -> bool:
+    if len(value) < 2 or value[0] != "(" or value[-1] != ")":
+        return False
+
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    last_index = len(value) - 1
+    for index, char in enumerate(value):
+        if quote is not None:
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char == quote:
+                quote = None
+            continue
+
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char == "(":
+            depth += 1
+            continue
+        if char == ")":
+            depth -= 1
+            if depth < 0:
+                return False
+            if depth == 0 and index != last_index:
+                return False
+    return depth == 0 and quote is None
+
+
+def _collect_inferred_parent_table_lines(
+    inferred_lines: dict[str, int],
+    key: str,
+    line_no: int,
+) -> None:
+    if "." not in key:
+        return
+    parts = key.split(".")
+    for index in range(1, len(parts)):
+        parent_key = ".".join(parts[:index])
+        inferred_lines.setdefault(parent_key, line_no)
 
 
 _FACTS_SELECT_ALL_SQL = """

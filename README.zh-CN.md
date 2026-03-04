@@ -258,10 +258,12 @@ lua-nil-guard generate-backend-manifest my-provider stdout_envelope_cli
 
 - `NAME = ""`
 - `COUNT = 0`
+- `AAA = 0x100`（会规范化为十进制数值语义）
 - `Defaults.Name = ""`
+- `cmd_id.dis = {0x14, "display"}`（会识别为非 nil 的表字面量）
 - `ALIAS = NAME`
 
-然后在正式扫描原始源码时，把这些事实作为额外的非 nil 证据来减少误报，同时保持报告仍然指向开发者真正维护的原始源码。
+对于点号路径赋值（例如 `a.b = 1`），LuaNilGuard 还会推导父级表存在性（`a`）并作为非 nil 表事实。然后在正式扫描原始源码时，把这些事实作为额外的非 nil 证据来减少误报，同时保持报告仍然指向开发者真正维护的原始源码。
 
 ## 已知边界
 

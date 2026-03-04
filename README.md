@@ -220,10 +220,12 @@ Target repositories are expected to contain:
 
 - `NAME = ""`
 - `COUNT = 0`
+- `AAA = 0x100` (normalized to decimal for numeric checks)
 - `Defaults.Name = ""`
+- `cmd_id.dis = {0x14, "display"}` (recognized as a non-nil table literal)
 - `ALIAS = NAME`
 
-Those facts are then used to suppress false positives in high-value nil hazard checks while keeping reports anchored to the original source file the developer edits.
+For dotted assignments (for example `a.b = 1`), LuaNilGuard also infers parent table presence (`a`) as a non-nil table fact. These facts are then used to suppress false positives in high-value nil hazard checks while keeping reports anchored to the original source file the developer edits.
 
 ## Notes
 

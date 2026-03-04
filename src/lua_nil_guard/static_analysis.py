@@ -1713,7 +1713,7 @@ def _macro_fact_matches_sink(kind: str, candidate: CandidateCase) -> bool:
             candidate.sink_rule_id.startswith("compare.")
             or candidate.sink_rule_id.startswith("arithmetic.")
         )
-    if kind == "empty_table":
+    if kind in {"empty_table", "table_literal", "inferred_table"}:
         return candidate.sink_rule_id in {"pairs.arg1", "ipairs.arg1", "length.operand"}
     return False
 

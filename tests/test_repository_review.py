@@ -237,6 +237,69 @@ def test_run_repository_review_uses_default_id_macro_facts_to_suppress_member_ac
     assert all(verdict.status.startswith("safe") for verdict in verdicts)
 
 
+def test_run_repository_review_infers_parent_table_from_dot_assignments_in_id_file(
+    tmp_path: Path,
+) -> None:
+    _write_review_config(
+        tmp_path,
+        [
+            {
+                "id": "member_access.receiver",
+                "kind": "receiver",
+                "qualified_name": "member_access",
+                "arg_index": 0,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["assert(x)", "if x then ... end"],
+            },
+            {
+                "id": "compare.gte.left",
+                "kind": "binary_operand",
+                "qualified_name": "binary.gte",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x ~= nil"],
+            },
+        ],
+    )
+    (tmp_path / "config" / "function_contracts.json").write_text("[]\n", encoding="utf-8")
+
+    (tmp_path / "src" / "id.lua").write_text(
+        "\n".join(
+            [
+                "AAA = 0x100",
+                "a.b = 1",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "consumer.lua").write_text(
+        "\n".join(
+            [
+                "function show()",
+                "  print(a.b)",
+                "  if AAA >= 1 then",
+                "    return true",
+                "  end",
+                "  return false",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert snapshot.preprocessor_files == (tmp_path / "src" / "id.lua",)
+    assert snapshot.lua_files == (tmp_path / "src" / "consumer.lua",)
+    assert verdicts
+    assert all(verdict.status.startswith("safe") for verdict in verdicts)
+
+
 def test_run_repository_review_uses_function_contracts_to_suppress_false_positive(
     tmp_path: Path,
 ) -> None:

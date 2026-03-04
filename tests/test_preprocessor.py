@@ -39,6 +39,7 @@ def test_parse_macro_file_reads_literals_aliases_and_unresolved_lines(tmp_path: 
         "DEFAULTS",
         "NAME_ALIAS",
         "Defaults.Name",
+        "Defaults",
     )
     assert facts[0].kind == "string_literal"
     assert facts[1].kind == "number_literal"
@@ -46,6 +47,56 @@ def test_parse_macro_file_reads_literals_aliases_and_unresolved_lines(tmp_path: 
     assert facts[3].kind == "alias"
     assert facts[3].alias_target == "USER_NAME"
     assert facts[4].key == "Defaults.Name"
+    assert facts[5].key == "Defaults"
+    assert facts[5].resolved_kind == "inferred_table"
+    assert len(unresolved) == 1
+    assert unresolved[0].reason == "unsupported_value_syntax"
+
+
+def test_parse_macro_file_supports_hex_numbers_table_literals_and_parent_inference(
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "id.lua"
+    source = "\n".join(
+        [
+            "AAA = 0x100",
+            "BBB = (0x10)",
+            "CCC = ((0x20))",
+            "cmd_id.dis = {0x14, \"display\"}",
+            "a.b = 1",
+        ]
+    )
+
+    facts, unresolved = parse_macro_file(file_path, source, root=tmp_path)
+    by_key = {fact.key: fact for fact in facts}
+
+    assert unresolved == ()
+    assert by_key["AAA"].resolved_kind == "number_literal"
+    assert by_key["AAA"].resolved_value == "256"
+    assert by_key["BBB"].resolved_kind == "number_literal"
+    assert by_key["BBB"].resolved_value == "16"
+    assert by_key["CCC"].resolved_kind == "number_literal"
+    assert by_key["CCC"].resolved_value == "32"
+    assert by_key["cmd_id.dis"].resolved_kind == "table_literal"
+    assert by_key["cmd_id"].resolved_kind == "inferred_table"
+    assert by_key["a.b"].resolved_kind == "number_literal"
+    assert by_key["a"].resolved_kind == "inferred_table"
+
+
+def test_parse_macro_file_keeps_parenthesized_expressions_bounded(tmp_path: Path) -> None:
+    file_path = tmp_path / "id.lua"
+    source = "\n".join(
+        [
+            "OK_NUM = (123)",
+            "BROKEN_EXPR = (foo() + 1)",
+        ]
+    )
+
+    facts, unresolved = parse_macro_file(file_path, source, root=tmp_path)
+    by_key = {fact.key: fact for fact in facts}
+
+    assert by_key["OK_NUM"].resolved_kind == "number_literal"
+    assert by_key["OK_NUM"].resolved_value == "123"
     assert len(unresolved) == 1
     assert unresolved[0].reason == "unsupported_value_syntax"
 
