@@ -43,7 +43,7 @@ from .models import (
 )
 from .pipeline import build_evidence_packet, should_report
 from .prompting import build_adjudication_prompt
-from .repository import discover_lua_files
+from .repository import discover_lua_files, read_lua_source_text
 from .summaries import SummaryStore, detect_module_name, summarize_source
 from .static_analysis import (
     analyze_candidate,
@@ -114,6 +114,16 @@ def bootstrap_repository(root: str | Path) -> RepositorySnapshot:
     """Load the current repository's core review inputs."""
 
     root_path = Path(root)
+    if root_path.suffix.lower() == ".lua" and not root_path.is_dir():
+        raise ValueError(
+            "Repository commands require a repository root directory, not a Lua file. "
+            "Use scan-file, report-file, or report-file-json for a single Lua file."
+        )
+    if not root_path.exists():
+        raise FileNotFoundError(f"Repository root not found: {root_path}")
+    if not root_path.is_dir():
+        raise NotADirectoryError(f"Repository root is not a directory: {root_path}")
+
     sink_rules = tuple(load_sink_rules(root_path / "config" / "sink_rules.json"))
     confidence_policy = load_confidence_policy(root_path / "config" / "confidence_policy.json")
     lua_files = tuple(discover_lua_files(root_path))
@@ -210,7 +220,7 @@ def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment
     inline_guard_contracts = _collect_snapshot_inline_guard_contracts(snapshot)
     assessments: list[CandidateAssessment] = []
     for file_path in snapshot.lua_files:
-        source = file_path.read_text(encoding="utf-8")
+        source = read_lua_source_text(file_path)
         assessments.extend(
             review_source(
                 file_path,
@@ -231,7 +241,7 @@ def review_repository_file(
     """Run the current static first-pass review for one Lua file in a repository snapshot."""
 
     resolved_file = _resolve_snapshot_lua_file(snapshot, file_path)
-    source = resolved_file.read_text(encoding="utf-8")
+    source = read_lua_source_text(resolved_file)
     transparent_return_wrappers = _collect_snapshot_transparent_return_wrappers(snapshot)
     inline_guard_contracts = _collect_snapshot_inline_guard_contracts(snapshot)
     return review_source(
@@ -532,7 +542,7 @@ def _run_review_from_assessments(
 
     verdicts: list[Verdict] = []
     for file_path in snapshot.lua_files:
-        source = file_path.read_text(encoding="utf-8")
+        source = read_lua_source_text(file_path)
         for assessment in assessments_by_file.get(str(file_path), ()):
             related_evidence = _build_related_evidence(
                 assessment,
@@ -648,7 +658,7 @@ def draft_function_contracts(
 ) -> tuple[FunctionContract, ...]:
     """Generate review-only contract drafts inferred from current AST-safe helpers."""
 
-    source_texts = tuple(file_path.read_text(encoding="utf-8") for file_path in snapshot.lua_files)
+    source_texts = tuple(read_lua_source_text(file_path) for file_path in snapshot.lua_files)
     existing_names = {contract.qualified_name for contract in snapshot.function_contracts}
     drafts: list[FunctionContract] = []
     seen: set[str] = set()
@@ -898,7 +908,7 @@ def export_adjudication_tasks(
     tasks: list[dict[str, object]] = []
 
     for file_path in snapshot.lua_files:
-        source = file_path.read_text(encoding="utf-8")
+        source = read_lua_source_text(file_path)
         for assessment in review_source(
             file_path,
             source,
@@ -1088,7 +1098,7 @@ def export_autofix_unified_diff(
 def _collect_repository_summaries(snapshot: RepositorySnapshot) -> tuple[object, ...]:
     summaries: list[object] = []
     for file_path in snapshot.lua_files:
-        source = file_path.read_text(encoding="utf-8")
+        source = read_lua_source_text(file_path)
         summaries.extend(summarize_source(file_path, source))
     return tuple(summaries)
 
@@ -1097,7 +1107,7 @@ def _collect_snapshot_transparent_return_wrappers(
     snapshot: RepositorySnapshot,
 ) -> dict[str, tuple[tuple[int, int], ...]]:
     return collect_transparent_return_wrappers(
-        tuple(file_path.read_text(encoding="utf-8") for file_path in snapshot.lua_files),
+        tuple(read_lua_source_text(file_path) for file_path in snapshot.lua_files),
         allow_local=False,
     )
 
@@ -1106,7 +1116,7 @@ def _collect_snapshot_inline_guard_contracts(
     snapshot: RepositorySnapshot,
 ) -> tuple[object, ...]:
     return collect_inline_guard_contracts(
-        tuple(file_path.read_text(encoding="utf-8") for file_path in snapshot.lua_files),
+        tuple(read_lua_source_text(file_path) for file_path in snapshot.lua_files),
         allow_local=False,
     )
 
@@ -1124,7 +1134,7 @@ def _local_recognized_helper_names(
 ) -> dict[str, frozenset[str]]:
     helper_names_by_file: dict[str, frozenset[str]] = {}
     for file_path in snapshot.lua_files:
-        source = file_path.read_text(encoding="utf-8")
+        source = read_lua_source_text(file_path)
         helper_names = set(collect_transparent_return_wrappers((source,), allow_local=True))
         helper_names.update(
             contract.qualified_name
@@ -1260,7 +1270,7 @@ def _build_function_context_index(
         file_path = path_lookup.get(path_key, Path(path_key))
         if path_key not in source_lookup:
             try:
-                source_lookup[path_key] = file_path.read_text(encoding="utf-8")
+                source_lookup[path_key] = read_lua_source_text(file_path)
             except OSError:
                 continue
         snippet, callees = _extract_function_context_snippet(
@@ -1766,7 +1776,7 @@ def _simulate_autofix_group(
         conflicts = tuple(f"{patch.case_id}: target file not found: {file_path}" for patch in patches)
         return "", "", (), conflicts
 
-    original_text = file_path.read_text(encoding="utf-8")
+    original_text = read_lua_source_text(file_path)
     trailing_newline = original_text.endswith("\n")
     trial_lines = original_text.splitlines()
     applied: list[AutofixPatch] = []
@@ -2070,7 +2080,7 @@ def _build_file_module_index(snapshot: RepositorySnapshot) -> dict[str, str | No
     index: dict[str, str | None] = {}
     for file_path in snapshot.lua_files:
         try:
-            source = file_path.read_text(encoding="utf-8")
+            source = read_lua_source_text(file_path)
         except OSError:
             continue
         index[_normalize_path_key(file_path)] = detect_module_name(source)

@@ -25,13 +25,20 @@ pip install -e .
 lua-nil-guard init-config /path/to/target-repo
 ```
 
-4. Run a static scan:
+4. If the repository may contain legacy-encoded Lua files, audit and normalize them first:
+
+```sh
+lua-nil-guard encoding-audit /path/to/target-repo
+lua-nil-guard normalize-encoding --write /path/to/target-repo
+```
+
+5. Run a static scan:
 
 ```sh
 lua-nil-guard scan /path/to/target-repo
 ```
 
-5. Run a full report:
+6. Run a full report:
 
 ```sh
 lua-nil-guard report /path/to/target-repo
@@ -59,15 +66,22 @@ For a first trial, do not start with a full repository scan. Start with one repr
 lua-nil-guard init-config /path/to/target-repo
 ```
 
-2. Pick one real file with a known nil-sensitive call and run:
+2. If the repository was edited by older Windows tools, run an encoding check first:
+
+```sh
+lua-nil-guard encoding-audit /path/to/target-repo
+lua-nil-guard normalize-encoding --write /path/to/target-repo
+```
+
+3. Pick one real file with a known nil-sensitive call and run:
 
 ```sh
 lua-nil-guard report-file /path/to/target-repo/src/demo.lua
 ```
 
-3. If the result is already `risky` or `safe`, keep iterating on small files before moving to a wider scan.
+4. If the result is already `risky` or `safe`, keep iterating on small files before moving to a wider scan.
 
-4. If the result is mostly `uncertain`, check whether the file depends on helper functions that are not defined in the current repository checkout. In that case, add a narrow contract to `config/function_contracts.json` instead of widening the scan immediately.
+5. If the result is mostly `uncertain`, check whether the file depends on helper functions that are not defined in the current repository checkout. In that case, add a narrow contract to `config/function_contracts.json` instead of widening the scan immediately.
 
 Typical examples:
 
@@ -98,13 +112,13 @@ Typical examples:
 ]
 ```
 
-5. Re-run the same file after updating contracts. Only after a few representative files behave well should you move on to:
+6. Re-run the same file after updating contracts. Only after a few representative files behave well should you move on to:
 
 ```sh
 lua-nil-guard report /path/to/target-repo
 ```
 
-6. If you want to see what the tool still cannot prove, inspect the proposal backlog:
+7. If you want to see what the tool still cannot prove, inspect the proposal backlog:
 
 ```sh
 lua-nil-guard proposal-analytics /path/to/target-repo
@@ -149,6 +163,7 @@ Target repositories are expected to contain:
 ## Notes
 
 - This release is intended for developer trial use. Start with a few real files or one small module before using it across a large repository.
+- Lua source files are expected to be UTF-8. Use `encoding-audit` to find non-UTF-8 `.lua` files and `normalize-encoding --write` to convert supported legacy files (`utf-8-sig`, `gb18030`) before review.
 - Single-file review works best when important helper functions are either present in the same repository or represented in `config/function_contracts.json`.
 - Missing helper definitions do not block review, but they reduce cross-file proof strength and can increase `uncertain` results.
 - The current implementation is optimized for precision, not full coverage. It will stay conservative when it cannot prove a bounded safe or risky path.

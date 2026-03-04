@@ -38,6 +38,8 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "--expanded-evidence-retry MODE" in output
     assert "--backend-cache PATH" in output
     assert "--backend-config KEY=VALUE" in output
+    assert "encoding-audit" in output
+    assert "normalize-encoding" in output
     assert "benchmark" in output
     assert "export-autofix" in output
     assert "apply-autofix" in output
@@ -106,6 +108,67 @@ def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
     assert "Parser backend: tree_sitter_local" in output
     assert "Total candidates: 1" in output
     assert "safe_static: 1" in output
+
+
+def test_cli_report_rejects_lua_file_path_with_single_file_hint(tmp_path: Path) -> None:
+    file_path = tmp_path / "demo.lua"
+    file_path.write_text("return string.match(name, '^a')\n", encoding="utf-8")
+
+    exit_code, output = run(["report", str(file_path)])
+
+    assert exit_code == 2
+    assert "repository root directory" in output
+    assert "report-file" in output
+
+
+def test_cli_report_file_names_non_utf8_dependency_file(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    target_file = tmp_path / "src" / "demo.lua"
+    target_file.write_text(
+        "\n".join(
+            [
+                "local username = req.params.username",
+                "return string.match(username, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    bad_file = tmp_path / "src" / "legacy.lua"
+    bad_file.write_bytes(b"local value = '\xbd'\n")
+
+    exit_code, output = run(["report-file", str(target_file)])
+
+    assert exit_code == 2
+    assert str(bad_file) in output
+    assert "not valid UTF-8" in output
 
 
 def test_cli_scan_file_reports_static_summary(tmp_path: Path) -> None:
@@ -214,6 +277,47 @@ def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None
     assert any(rule["id"] == "string.match.arg1" for rule in sink_payload)
     assert policy_payload["default_report_min_confidence"] == "high"
     assert contracts_payload == []
+
+
+def test_cli_encoding_audit_reports_convertible_and_unsupported_files(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    utf8_file = tmp_path / "src" / "utf8.lua"
+    gb_file = tmp_path / "src" / "legacy.lua"
+    bad_file = tmp_path / "src" / "broken.lua"
+    utf8_file.write_text("return 'ok'\n", encoding="utf-8")
+    gb_file.write_bytes("return '中文'\n".encode("gb18030"))
+    bad_file.write_bytes(b"return '\xbd'\n")
+
+    exit_code, output = run(["encoding-audit", str(tmp_path)])
+
+    assert exit_code == 0
+    assert "Lua Source Encoding Audit" in output
+    assert "UTF-8 compliant: 1" in output
+    assert "Needs normalization: 1" in output
+    assert "Unsupported encoding: 1" in output
+    assert f"{gb_file} (gb18030)" in output
+    assert str(bad_file) in output
+
+
+def test_cli_normalize_encoding_dry_run_and_write(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    gb_file = tmp_path / "src" / "legacy.lua"
+    gb_file.write_bytes("return '中文'\n".encode("gb18030"))
+
+    exit_code, output = run(["normalize-encoding", str(tmp_path)])
+
+    assert exit_code == 0
+    assert "Mode: dry-run" in output
+    assert "Would convert: 1" in output
+    assert f"{gb_file} (gb18030 -> utf-8)" in output
+    assert gb_file.read_bytes() == "return '中文'\n".encode("gb18030")
+
+    exit_code, output = run(["normalize-encoding", "--write", str(tmp_path)])
+
+    assert exit_code == 0
+    assert "Mode: write" in output
+    assert "Converted: 1" in output
+    assert gb_file.read_text(encoding="utf-8") == "return '中文'\n"
 
 
 def test_cli_clear_backend_cache_removes_cache_file(tmp_path: Path) -> None:

@@ -27,13 +27,20 @@ pip install -e .
 lua-nil-guard init-config /path/to/target-repo
 ```
 
-4. 运行静态扫描：
+4. 如果仓库里可能有历史编码的 Lua 文件，先做编码审计和转码：
+
+```sh
+lua-nil-guard encoding-audit /path/to/target-repo
+lua-nil-guard normalize-encoding --write /path/to/target-repo
+```
+
+5. 运行静态扫描：
 
 ```sh
 lua-nil-guard scan /path/to/target-repo
 ```
 
-5. 运行完整报告：
+6. 运行完整报告：
 
 ```sh
 lua-nil-guard report /path/to/target-repo
@@ -61,15 +68,22 @@ lua-nil-guard report-file-json /path/to/target-repo/src/demo.lua
 lua-nil-guard init-config /path/to/target-repo
 ```
 
-2. 选一个存在 nil 敏感调用的真实文件，先跑：
+2. 如果目标仓库可能由旧版 Windows 工具维护过，先做编码检查：
+
+```sh
+lua-nil-guard encoding-audit /path/to/target-repo
+lua-nil-guard normalize-encoding --write /path/to/target-repo
+```
+
+3. 选一个存在 nil 敏感调用的真实文件，先跑：
 
 ```sh
 lua-nil-guard report-file /path/to/target-repo/src/demo.lua
 ```
 
-3. 如果结果已经比较明确（例如 `risky` 或 `safe`），先继续在少量文件上验证，再考虑扩大到模块级或仓库级。
+4. 如果结果已经比较明确（例如 `risky` 或 `safe`），先继续在少量文件上验证，再考虑扩大到模块级或仓库级。
 
-4. 如果结果里大量出现 `uncertain`，优先检查该文件是否依赖了当前仓库中不存在的 helper 函数。如果是，先为这些 helper 在 `config/function_contracts.json` 中补最小契约，而不是立刻扩大扫描范围。
+5. 如果结果里大量出现 `uncertain`，优先检查该文件是否依赖了当前仓库中不存在的 helper 函数。如果是，先为这些 helper 在 `config/function_contracts.json` 中补最小契约，而不是立刻扩大扫描范围。
 
 常见契约示例：
 
@@ -100,13 +114,13 @@ lua-nil-guard report-file /path/to/target-repo/src/demo.lua
 ]
 ```
 
-5. 修改契约后，先重新运行同一个文件，确认效果稳定，再扩大到：
+6. 修改契约后，先重新运行同一个文件，确认效果稳定，再扩大到：
 
 ```sh
 lua-nil-guard report /path/to/target-repo
 ```
 
-6. 如果你想看工具当前还无法证明的模式，可以查看 proposal backlog：
+7. 如果你想看工具当前还无法证明的模式，可以查看 proposal backlog：
 
 ```sh
 lua-nil-guard proposal-analytics /path/to/target-repo
@@ -187,6 +201,7 @@ lua-nil-guard generate-backend-manifest my-provider stdout_envelope_cli
 ## 已知边界
 
 - 当前版本面向开发者试用，推荐先从少量真实文件或一个小模块开始。
+- 当前要求 Lua 源文件使用 UTF-8。你可以先用 `encoding-audit` 找出非 UTF-8 的 `.lua` 文件，再用 `normalize-encoding --write` 将受支持的历史编码文件（`utf-8-sig`、`gb18030`）统一转为 UTF-8。
 - 单文件审查在“重要 helper 源码位于同一仓库”或“这些 helper 已通过 `function_contracts.json` 声明契约”时效果最好。
 - 缺少 helper 定义不会阻止审查，但会削弱跨文件证明能力，并增加 `uncertain` 的概率。
 - 当前实现是“精度优先”而不是“覆盖优先”。当工具无法做出有界证明时，会保守回退，而不是强行给出确定结论。

@@ -18,6 +18,7 @@ from .agent_driver_manifest import (
 from .baseline import BaselineStore, build_baseline, filter_new_findings
 from .config_loader import ConfigError, initialize_repository_config
 from .parser_backend import get_parser_backend_info
+from .repository import audit_lua_source_encodings, normalize_lua_source_encodings
 from .reporting import (
     render_improvement_analytics_json,
     render_improvement_analytics_markdown,
@@ -60,7 +61,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         if len(args) != 2:
             return 2, "scan requires exactly one repository path"
         root = Path(args[1])
-        snapshot = bootstrap_repository(root)
+        snapshot, error = _load_repository_snapshot(root)
+        if error is not None:
+            return 2, error
         assessments = review_repository(snapshot)
         return 0, _render_scan_summary(snapshot.root, assessments)
 
@@ -98,6 +101,55 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 f"Sink rules: {sink_path}",
                 f"Confidence policy: {policy_path}",
                 f"Function contracts: {contracts_path}",
+            ]
+        )
+
+    if command == "encoding-audit":
+        if len(args) not in {2, 3}:
+            return 2, "encoding-audit requires a repository path and optional output path"
+        root = Path(args[1])
+        output_path = Path(args[2]) if len(args) == 3 else None
+        try:
+            records = audit_lua_source_encodings(root)
+        except (OSError, ValueError) as exc:
+            return 2, str(exc)
+        rendered = _render_encoding_audit(records, root)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Encoding audit complete.",
+                f"Output: {output_path}",
+            ]
+        )
+
+    if command == "normalize-encoding":
+        write = False
+        positional: list[str] = []
+        for token in args[1:]:
+            if token == "--write":
+                write = True
+            else:
+                positional.append(token)
+        if len(positional) not in {1, 2}:
+            return 2, "normalize-encoding requires a repository path and optional output path"
+        root = Path(positional[0])
+        output_path = Path(positional[1]) if len(positional) == 2 else None
+        try:
+            results = normalize_lua_source_encodings(root, write=write)
+        except (OSError, ValueError) as exc:
+            return 2, str(exc)
+        rendered = _render_encoding_normalization(results, root, write=write)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Encoding normalization complete.",
+                f"Output: {output_path}",
             ]
         )
 
@@ -283,7 +335,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         if len(positional) != 1:
             return 2, "report requires exactly one repository path"
         root = Path(positional[0])
-        snapshot = bootstrap_repository(root)
+        snapshot, error = _load_repository_snapshot(root)
+        if error is not None:
+            return 2, error
         try:
             verdicts = run_repository_review(
                 snapshot,
@@ -373,7 +427,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         if len(positional) != 1:
             return 2, "report-json requires exactly one repository path"
         root = Path(positional[0])
-        snapshot = bootstrap_repository(root)
+        snapshot, error = _load_repository_snapshot(root)
+        if error is not None:
+            return 2, error
         try:
             verdicts = run_repository_review(
                 snapshot,
@@ -1341,9 +1397,22 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     import sys
 
-    exit_code, output = run(sys.argv[1:] if argv is None else argv)
+    try:
+        exit_code, output = run(sys.argv[1:] if argv is None else argv)
+    except (OSError, ValueError, ConfigError) as exc:
+        print(str(exc))
+        return 2
     print(output)
     return exit_code
+
+
+def _load_repository_snapshot(root: Path) -> tuple[object | None, str | None]:
+    """Load a repository snapshot and render failures as user-facing strings."""
+
+    try:
+        return bootstrap_repository(root), None
+    except (OSError, ValueError, ConfigError) as exc:
+        return None, str(exc)
 
 
 def _render_scan_summary(
@@ -1857,6 +1926,91 @@ def _format_float_change(label: str, before: float, after: float, *, suffix: str
     )
 
 
+def _render_encoding_audit(records: tuple[object, ...], root: Path) -> str:
+    total = len(records)
+    already_utf8 = sum(1 for record in records if record.encoding == "utf-8")
+    needs_normalization = sum(1 for record in records if record.needs_normalization)
+    unsupported = sum(1 for record in records if not record.convertible)
+
+    lines = [
+        "# Lua Source Encoding Audit",
+        "",
+        f"Repository: {root}",
+        f"Total Lua files: {total}",
+        f"UTF-8 compliant: {already_utf8}",
+        f"Needs normalization: {needs_normalization}",
+        f"Unsupported encoding: {unsupported}",
+        "",
+    ]
+
+    if needs_normalization:
+        lines.append("## Convertible Non-UTF-8 Files")
+        for record in records:
+            if record.needs_normalization:
+                lines.append(f"- {record.path} ({record.encoding})")
+        lines.append("")
+
+    if unsupported:
+        lines.append("## Unsupported Files")
+        for record in records:
+            if not record.convertible:
+                lines.append(f"- {record.path}: {record.reason}")
+        lines.append("")
+
+    if not needs_normalization and not unsupported:
+        lines.append("All Lua source files are valid UTF-8.")
+
+    return "\n".join(lines).rstrip()
+
+
+def _render_encoding_normalization(
+    results: tuple[object, ...],
+    root: Path,
+    *,
+    write: bool,
+) -> str:
+    already_utf8 = sum(1 for result in results if result.action == "already_utf8")
+    converted = sum(1 for result in results if result.action == "converted")
+    would_convert = sum(1 for result in results if result.action == "would_convert")
+    skipped = sum(1 for result in results if result.action == "skipped")
+
+    lines = [
+        "# Lua Source Encoding Normalization",
+        "",
+        f"Repository: {root}",
+        f"Mode: {'write' if write else 'dry-run'}",
+        f"Total Lua files: {len(results)}",
+        f"Already UTF-8: {already_utf8}",
+        f"{'Converted' if write else 'Would convert'}: {converted if write else would_convert}",
+        f"Skipped: {skipped}",
+        "",
+    ]
+
+    changed_actions = {"converted"} if write else {"would_convert"}
+    changed_label = "## Converted Files" if write else "## Files To Convert"
+    changed = [result for result in results if result.action in changed_actions]
+    if changed:
+        lines.append(changed_label)
+        for result in changed:
+            lines.append(f"- {result.path} ({result.previous_encoding} -> utf-8)")
+        lines.append("")
+
+    skipped_results = [result for result in results if result.action == "skipped"]
+    if skipped_results:
+        lines.append("## Skipped Files")
+        for result in skipped_results:
+            lines.append(f"- {result.path}: {result.reason}")
+        lines.append("")
+
+    if not changed and not skipped_results:
+        lines.append("No encoding changes needed.")
+
+    if not write:
+        lines.append("Run again with --write to apply the conversion.")
+
+    return "\n".join(lines).rstrip()
+
+
 def _usage() -> str:
     cli_name = "lua-nil-guard"
     return "\n".join(
@@ -1865,6 +2019,8 @@ def _usage() -> str:
             "Usage:",
             "  {cli} scan <repository>",
             "  {cli} init-config [--force] <repository>",
+            "  {cli} encoding-audit <repository> [output]",
+            "  {cli} normalize-encoding [--write] <repository> [output]",
             "  {cli} clear-backend-cache <cache-file>",
             "  {cli} generate-backend-manifest <name> <protocol> [output]",
             "  {cli} validate-backend-manifest <manifest-path>",
