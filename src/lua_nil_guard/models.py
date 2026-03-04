@@ -122,7 +122,59 @@ class RepositorySnapshot:
     sink_rules: tuple[SinkRule, ...]
     confidence_policy: ConfidencePolicy
     lua_files: tuple[Path, ...]
+    preprocessor_files: tuple[Path, ...] = ()
+    macro_index: "MacroIndex | None" = None
     function_contracts: tuple["FunctionContract", ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PreprocessorConfig:
+    """Repository-level configuration for preprocessor dictionary files."""
+
+    preprocessor_files: tuple[str, ...] = ()
+    preprocessor_globs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class MacroFact:
+    """One parsed and optionally resolved compile-time macro fact."""
+
+    key: str
+    kind: str
+    value: str | None
+    provably_non_nil: bool
+    file: str
+    line: int
+    resolved_kind: str | None = None
+    resolved_value: str | None = None
+    alias_target: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MacroUnresolvedLine:
+    """One macro dictionary line that could not be safely interpreted."""
+
+    file: str
+    line: int
+    content: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class MacroIndex:
+    """Structured compile-time macro facts available to static analysis."""
+
+    facts: tuple[MacroFact, ...] = ()
+    unresolved_lines: tuple[MacroUnresolvedLine, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class MacroAuditResult:
+    """Operator-facing summary of macro dictionary ingestion."""
+
+    files: tuple[str, ...]
+    facts: tuple[MacroFact, ...]
+    unresolved_lines: tuple[MacroUnresolvedLine, ...]
 
 
 @dataclass(frozen=True, slots=True)

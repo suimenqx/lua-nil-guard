@@ -28,6 +28,8 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "doctor" in output
     assert "Backend values: heuristic | codex | claude | gemini" in output
     assert "init-config" in output
+    assert "macro-audit" in output
+    assert "macro-audit-json" in output
     assert "generate-backend-manifest" in output
     assert "scan-file" in output
     assert "report-file" in output
@@ -279,18 +281,22 @@ def test_cli_init_config_writes_default_templates(tmp_path: Path) -> None:
     sink_path = tmp_path / "config" / "sink_rules.json"
     policy_path = tmp_path / "config" / "confidence_policy.json"
     contracts_path = tmp_path / "config" / "function_contracts.json"
+    preprocessor_path = tmp_path / "config" / "preprocessor_files.json"
     sink_payload = json.loads(sink_path.read_text(encoding="utf-8"))
     policy_payload = json.loads(policy_path.read_text(encoding="utf-8"))
     contracts_payload = json.loads(contracts_path.read_text(encoding="utf-8"))
+    preprocessor_payload = json.loads(preprocessor_path.read_text(encoding="utf-8"))
 
     assert exit_code == 0
     assert "Repository config initialized." in output
     assert f"Sink rules: {sink_path}" in output
     assert f"Confidence policy: {policy_path}" in output
     assert f"Function contracts: {contracts_path}" in output
+    assert f"Preprocessor config: {preprocessor_path}" in output
     assert any(rule["id"] == "string.match.arg1" for rule in sink_payload)
     assert policy_payload["default_report_min_confidence"] == "high"
     assert contracts_payload == []
+    assert preprocessor_payload == {"preprocessor_files": [], "preprocessor_globs": []}
 
 
 def test_cli_init_config_rejects_existing_files_without_force(tmp_path: Path) -> None:
@@ -347,6 +353,76 @@ def test_cli_encoding_audit_reports_convertible_and_unsupported_files(tmp_path: 
     assert "Unsupported encoding: 1" in output
     assert f"{gb_file} (gb18030)" in output
     assert str(bad_file) in output
+
+
+def test_cli_macro_audit_reports_resolved_and_unresolved_macro_lines(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "preprocessor_files.json").write_text(
+        json.dumps({"preprocessor_files": ["src/macros.lua"], "preprocessor_globs": []}),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "macros.lua").write_text(
+        "\n".join(
+            [
+                "USER_NAME = \"guest\"",
+                "BROKEN = some_call()",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text("return nil\n", encoding="utf-8")
+
+    exit_code, output = run(["macro-audit", str(tmp_path)])
+
+    assert exit_code == 0
+    assert "Preprocessor Macro Audit" in output
+    assert "Configured macro files: 1" in output
+    assert "Resolved macro facts: 1" in output
+    assert "Unresolved lines: 1" in output
+    assert "USER_NAME" in output
+    assert "unsupported_value_syntax" in output
+
+
+def test_cli_macro_audit_json_renders_structured_payload(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "preprocessor_files.json").write_text(
+        json.dumps({"preprocessor_files": ["src/macros.lua"], "preprocessor_globs": []}),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "macros.lua").write_text("MAX_LEVEL = 100\n", encoding="utf-8")
+    (tmp_path / "src" / "demo.lua").write_text("return nil\n", encoding="utf-8")
+
+    exit_code, output = run(["macro-audit-json", str(tmp_path)])
+
+    payload = json.loads(output)
+    assert exit_code == 0
+    assert payload["total_files"] == 1
+    assert payload["total_facts"] == 1
+    assert payload["facts"][0]["key"] == "MAX_LEVEL"
 
 
 def test_cli_normalize_encoding_dry_run_and_write(tmp_path: Path) -> None:

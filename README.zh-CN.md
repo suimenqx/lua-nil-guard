@@ -35,20 +35,28 @@ lua-nil-guard doctor
 lua-nil-guard init-config /path/to/target-repo
 ```
 
-5. 如果仓库里可能有历史编码的 Lua 文件，先做编码审计和转码：
+5. 如果仓库里存在超大的“编译前宏字典”文件，请先在 `config/preprocessor_files.json` 中列出它们，再查看工具能从这些文件中提取哪些事实：
+
+```sh
+lua-nil-guard macro-audit /path/to/target-repo
+```
+
+这类文件只会被当作预处理输入：它们提供编译期非 nil 事实，但不会被当作普通业务 Lua 文件参与候选扫描。
+
+6. 如果仓库里可能有历史编码的 Lua 文件，先做编码审计和转码：
 
 ```sh
 lua-nil-guard encoding-audit /path/to/target-repo
 lua-nil-guard normalize-encoding --write /path/to/target-repo
 ```
 
-6. 运行静态扫描：
+7. 运行静态扫描：
 
 ```sh
 lua-nil-guard scan /path/to/target-repo
 ```
 
-7. 运行完整报告：
+8. 运行完整报告：
 
 ```sh
 lua-nil-guard report /path/to/target-repo
@@ -159,6 +167,18 @@ lua-nil-guard proposal-analytics /path/to/target-repo
 - 真正尚未支持的代码模式
 - 需要补充 helper 契约的场景
 
+如果你的仓库里有超大的“宏定义/默认值”文件（例如每行都是 `NAME = ""` 或 `Defaults.Name = 0`，并在编译阶段做替换），请把它们加入 `config/preprocessor_files.json`，然后运行：
+
+```sh
+lua-nil-guard macro-audit /path/to/target-repo
+```
+
+`macro-audit` 会告诉你：
+
+- 哪些宏文件被加载了
+- 哪些宏行被识别成可用的编译期事实
+- 哪些行因为超出当前有界语法而被保守地标记为 unresolved
+
 ## Backend
 
 默认 backend 是 `heuristic`。如果需要 LLM 裁决，可以通过 `--backend` 使用本地 CLI 集成：
@@ -189,8 +209,9 @@ lua-nil-guard generate-backend-manifest my-provider stdout_envelope_cli
 - `config/sink_rules.json`
 - `config/confidence_policy.json`
 - `config/function_contracts.json`
+- `config/preprocessor_files.json`
 
-`init-config` 会自动写入这三份默认文件。
+`init-config` 会自动写入这四份默认文件。
 
 其中 `function_contracts.json` 用于声明高置信度 helper 的语义，例如：
 
@@ -225,6 +246,15 @@ lua-nil-guard generate-backend-manifest my-provider stdout_envelope_cli
 - 动态索引如 `req.params[token]` 不会被视为精确路径匹配
 
 这套机制的目标是：在不依赖 prompt 猜测的前提下，尽量降低误报。
+
+`preprocessor_files.json` 用于声明那类“编译阶段宏字典”文件。它们不是普通业务 Lua 文件，因此不会参与常规候选扫描；LuaNilGuard 只会从中提取有界、确定的编译期事实，例如：
+
+- `NAME = ""`
+- `COUNT = 0`
+- `Defaults.Name = ""`
+- `ALIAS = NAME`
+
+然后在正式扫描原始源码时，把这些事实作为额外的非 nil 证据来减少误报，同时保持报告仍然指向开发者真正维护的原始源码。
 
 ## 已知边界
 

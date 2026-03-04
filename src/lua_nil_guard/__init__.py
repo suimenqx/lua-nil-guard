@@ -48,7 +48,13 @@ from .adjudication import adjudicate_packet
 from .baseline import BaselineStore, build_baseline, filter_new_findings
 from .cli import main, run
 from .collector import collect_candidates
-from .config_loader import ConfigError, load_confidence_policy, load_function_contracts, load_sink_rules
+from .config_loader import (
+    ConfigError,
+    load_confidence_policy,
+    load_function_contracts,
+    load_preprocessor_config,
+    load_sink_rules,
+)
 from .knowledge import (
     KnowledgeBase,
     derive_facts_from_contracts,
@@ -72,6 +78,11 @@ from .models import (
     FunctionSummary,
     ImprovementProposal,
     KnowledgeFact,
+    MacroAuditResult,
+    MacroFact,
+    MacroIndex,
+    MacroUnresolvedLine,
+    PreprocessorConfig,
     RoleOpinion,
     SinkRule,
     StaticProof,
@@ -106,6 +117,7 @@ from .service import (
     export_autofix_patches,
     export_autofix_unified_diff,
     find_repository_root_for_file,
+    macro_audit_repository,
     refresh_knowledge_base,
     prepare_evidence_packet,
     refresh_summary_cache,
@@ -158,7 +170,12 @@ __all__ = [
     "ImprovementProposal",
     "KnowledgeBase",
     "KnowledgeFact",
+    "MacroAuditResult",
+    "MacroFact",
+    "MacroIndex",
+    "MacroUnresolvedLine",
     "CodexCliBackend",
+    "PreprocessorConfig",
     "HeuristicAdjudicationBackend",
     "RoleOpinion",
     "RepositorySnapshot",
@@ -210,10 +227,12 @@ __all__ = [
     "get_cli_protocol_builder",
     "load_confidence_policy",
     "load_function_contracts",
+    "load_preprocessor_config",
     "load_adjudicator_skill",
     "load_sink_rules",
     "load_skill_definition",
     "main",
+    "macro_audit_repository",
     "load_agent_provider_spec_manifest",
     "load_agent_provider_spec_manifest_file",
     "analyze_candidate",

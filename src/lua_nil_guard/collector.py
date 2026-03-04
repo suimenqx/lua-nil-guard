@@ -21,6 +21,19 @@ _MODULE_DECLARATION_RE = re.compile(
     r"^\s*module\s*\(\s*(['\"])([^'\"]+)\1(?:\s*,\s*package\.seeall)?\s*\)\s*$",
 )
 _NUMBER_LITERAL_RE = re.compile(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
+_BINARY_OPERATOR_BY_NAME = {
+    "concat": "..",
+    "compare.lt": "<",
+    "compare.lte": "<=",
+    "compare.gt": ">",
+    "compare.gte": ">=",
+    "arithmetic.add": "+",
+    "arithmetic.sub": "-",
+    "arithmetic.mul": "*",
+    "arithmetic.div": "/",
+    "arithmetic.mod": "%",
+    "arithmetic.pow": "^",
+}
 
 
 def collect_candidates(
@@ -32,6 +45,7 @@ def collect_candidates(
 
     path_text = str(file_path)
     candidates: list[CandidateCase] = []
+    source_lines = source.splitlines()
 
     for sink_rule in sink_rules:
         if sink_rule.kind == "function_arg":
@@ -66,7 +80,10 @@ def collect_candidates(
             if sink_rule.kind == "binary_operand":
                 if sink_rule.arg_index not in {1, 2}:
                     continue
-                for operand in collect_binary_operands(source, sink_rule.qualified_name):
+                operator = _binary_operator_for_sink(sink_rule.qualified_name)
+                if operator is None:
+                    continue
+                for operand in collect_binary_operands(source, operator):
                     if sink_rule.arg_index == 1:
                         expression = operand.left
                         line, column = operand.left_line, operand.left_column
@@ -127,6 +144,8 @@ def collect_candidates(
         for access in collect_receiver_accesses(source):
             expression = access.receiver
             line, column = access.line, access.column
+            if _is_module_package_seeall_receiver(expression, line, source_lines):
+                continue
             function_scope, _ = _scan_enclosing_context(source[: access.offset])
             symbol = expression if _IDENTIFIER_RE.match(expression) else expression
             case_id = f"{path_text}:{line}:{column}:{sink_rule.id}"
@@ -250,3 +269,23 @@ def _is_obviously_non_nil_literal(expression: str) -> bool:
     if _NUMBER_LITERAL_RE.match(stripped):
         return True
     return stripped.startswith("{") and stripped.endswith("}")
+
+
+def _binary_operator_for_sink(qualified_name: str) -> str | None:
+    if qualified_name in _BINARY_OPERATOR_BY_NAME:
+        return _BINARY_OPERATOR_BY_NAME[qualified_name]
+    if qualified_name in _BINARY_OPERATOR_BY_NAME.values():
+        return qualified_name
+    return None
+
+
+def _is_module_package_seeall_receiver(
+    expression: str,
+    line: int,
+    source_lines: list[str],
+) -> bool:
+    if expression != "package":
+        return False
+    if line < 1 or line > len(source_lines):
+        return False
+    return _MODULE_DECLARATION_RE.match(source_lines[line - 1].strip()) is not None

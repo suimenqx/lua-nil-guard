@@ -175,6 +175,32 @@ def test_collect_candidates_skips_member_access_used_as_direct_call_callee() -> 
     assert candidates == ()
 
 
+def test_collect_candidates_skips_package_seeall_in_module_declaration() -> None:
+    sink_rules = (
+        SinkRule(
+            id="member_access.receiver",
+            kind="receiver",
+            qualified_name="member_access",
+            arg_index=0,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("if x then ... end",),
+        ),
+    )
+    source = "\n".join(
+        [
+            "module(\"account.profile\", package.seeall)",
+            "return profile.name",
+        ]
+    )
+
+    candidates = collect_candidates(Path("foo/module.lua"), source, sink_rules)
+
+    assert len(candidates) == 1
+    assert candidates[0].expression == "profile"
+
+
 def test_collect_candidates_finds_configured_length_operator_sinks() -> None:
     sink_rules = (
         SinkRule(

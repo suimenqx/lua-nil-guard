@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .models import ConfidencePolicy, FunctionContract, SinkRule
+from .models import ConfidencePolicy, FunctionContract, PreprocessorConfig, SinkRule
 
 
 class ConfigError(ValueError):
@@ -24,7 +24,7 @@ def initialize_repository_config(
     root: str | Path,
     *,
     force: bool = False,
-) -> tuple[Path, Path, Path]:
+) -> tuple[Path, Path, Path, Path]:
     """Write the default review config into a target repository root."""
 
     root_path = Path(root)
@@ -32,8 +32,9 @@ def initialize_repository_config(
     sink_source = template_root / "sink_rules.json"
     policy_source = template_root / "confidence_policy.json"
     contracts_source = template_root / "function_contracts.json"
+    preprocessor_source = template_root / "preprocessor_files.json"
 
-    for source_path in (sink_source, policy_source, contracts_source):
+    for source_path in (sink_source, policy_source, contracts_source, preprocessor_source):
         if not source_path.is_file():
             raise ConfigError(f"Default config template not found: {source_path}")
 
@@ -41,8 +42,9 @@ def initialize_repository_config(
     sink_target = config_dir / "sink_rules.json"
     policy_target = config_dir / "confidence_policy.json"
     contracts_target = config_dir / "function_contracts.json"
+    preprocessor_target = config_dir / "preprocessor_files.json"
 
-    for target_path in (sink_target, policy_target, contracts_target):
+    for target_path in (sink_target, policy_target, contracts_target, preprocessor_target):
         if target_path.exists() and not force:
             raise ConfigError(
                 f"Config file already exists: {target_path} (use --force to overwrite)"
@@ -52,7 +54,11 @@ def initialize_repository_config(
     sink_target.write_text(sink_source.read_text(encoding="utf-8"), encoding="utf-8")
     policy_target.write_text(policy_source.read_text(encoding="utf-8"), encoding="utf-8")
     contracts_target.write_text(contracts_source.read_text(encoding="utf-8"), encoding="utf-8")
-    return sink_target, policy_target, contracts_target
+    preprocessor_target.write_text(
+        preprocessor_source.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return sink_target, policy_target, contracts_target, preprocessor_target
 
 
 def load_sink_rules(path: str | Path) -> list[SinkRule]:
@@ -114,6 +120,22 @@ def load_function_contracts(path: str | Path) -> list[FunctionContract]:
         seen_names.add(contract.qualified_name)
         contracts.append(contract)
     return contracts
+
+
+def load_preprocessor_config(path: str | Path) -> PreprocessorConfig:
+    """Load optional preprocessor dictionary file classification config."""
+
+    data = _read_json(path)
+    if not isinstance(data, dict):
+        raise ConfigError("Preprocessor config must be a JSON object")
+
+    explicit_files = _optional_str_list(data, "preprocessor_files")
+    globs = _optional_str_list(data, "preprocessor_globs")
+
+    return PreprocessorConfig(
+        preprocessor_files=tuple(dict.fromkeys(explicit_files)),
+        preprocessor_globs=tuple(dict.fromkeys(globs)),
+    )
 
 
 def _parse_sink_rule(data: Any) -> SinkRule:

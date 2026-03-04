@@ -17,10 +17,12 @@ from .knowledge import (
 from .models import (
     CandidateCase,
     FunctionContract,
+    MacroIndex,
     StaticAnalysisResult,
     StaticProof,
     StaticRiskSignal,
 )
+from .preprocessor import lookup_macro_fact
 from .parser_backend import _load_lua_language
 from .summaries import detect_module_name
 
@@ -64,6 +66,7 @@ def analyze_candidate(
     maybe_nil_return_helpers: dict[str, tuple[tuple[int, int], ...]] | None = None,
     coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]] | None = None,
     inline_guard_contracts: tuple[FunctionContract, ...] | None = None,
+    macro_index: MacroIndex | None = None,
 ) -> StaticAnalysisResult:
     """Apply bounded local heuristics before escalating to agent review."""
 
@@ -168,6 +171,13 @@ def analyze_candidate(
     )
     if contract_guard is not None:
         proofs.append(contract_guard)
+    macro_fact_guard = _macro_fact_guard(
+        candidate,
+        origin_detail,
+        macro_index=macro_index,
+    )
+    if macro_fact_guard is not None:
+        proofs.append(macro_fact_guard)
     guarded_field_origin_proof = _guarded_field_origin_proof(
         prior_lines,
         origin_detail,
@@ -1644,6 +1654,64 @@ def _guarded_field_origin_proof(
         provenance=(f"`{subject}` is assigned from guarded field path `{origin}`",),
         depth=1,
     )
+
+
+def _macro_fact_guard(
+    candidate: CandidateCase,
+    origin_detail: tuple[str, str, int, int] | None,
+    *,
+    macro_index: MacroIndex | None,
+) -> StaticProof | None:
+    expressions: list[tuple[str, str]] = []
+    if origin_detail is not None:
+        expressions.append((origin_detail[0], candidate.symbol))
+    expressions.append((candidate.expression, candidate.expression))
+
+    for expression, subject in expressions:
+        key = _macro_lookup_key(expression)
+        if key is None:
+            continue
+        fact = lookup_macro_fact(macro_index, key)
+        if fact is None or not fact.provably_non_nil:
+            continue
+        if not _macro_fact_matches_sink(fact.resolved_kind or fact.kind, candidate):
+            continue
+        return StaticProof(
+            kind="macro_fact_guard",
+            summary=f"{subject} resolves to non-nil via macro `{fact.key}`",
+            subject=candidate.symbol,
+            source_symbol=fact.key,
+            supporting_summaries=(),
+            provenance=(
+                f"`{fact.key}` is defined in {fact.file}:{fact.line} as a non-nil {fact.resolved_kind or fact.kind}",
+            ),
+            depth=1,
+        )
+    return None
+
+
+def _macro_lookup_key(expression: str) -> str | None:
+    stripped = expression.strip()
+    if _IDENTIFIER_RE.match(stripped):
+        return stripped
+    return extract_access_path(stripped)
+
+
+def _macro_fact_matches_sink(kind: str, candidate: CandidateCase) -> bool:
+    if kind == "string_literal":
+        return (
+            candidate.sink_name.startswith("string.")
+            or candidate.sink_rule_id.startswith("string.")
+            or candidate.sink_rule_id.startswith("concat.")
+        )
+    if kind == "number_literal":
+        return (
+            candidate.sink_rule_id.startswith("compare.")
+            or candidate.sink_rule_id.startswith("arithmetic.")
+        )
+    if kind == "empty_table":
+        return candidate.sink_rule_id in {"pairs.arg1", "ipairs.arg1", "length.operand"}
+    return False
 
 
 def _dedupe_proofs(proofs: tuple[StaticProof, ...]) -> tuple[StaticProof, ...]:

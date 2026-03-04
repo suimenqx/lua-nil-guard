@@ -9,6 +9,7 @@ from lua_nil_guard.config_loader import (
     ConfigError,
     load_confidence_policy,
     load_function_contracts,
+    load_preprocessor_config,
     load_sink_rules,
 )
 
@@ -70,6 +71,31 @@ def test_load_function_contracts_reads_defaults() -> None:
     contracts = load_function_contracts(ROOT / "config" / "function_contracts.json")
 
     assert contracts == []
+
+
+def test_load_preprocessor_config_reads_defaults() -> None:
+    config = load_preprocessor_config(ROOT / "config" / "preprocessor_files.json")
+
+    assert config.preprocessor_files == ()
+    assert config.preprocessor_globs == ()
+
+
+def test_load_preprocessor_config_reads_explicit_files_and_globs(tmp_path: Path) -> None:
+    config_path = tmp_path / "preprocessor_files.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "preprocessor_files": ["src/macros.lua", "src/macros.lua"],
+                "preprocessor_globs": ["legacy/*.lua"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_preprocessor_config(config_path)
+
+    assert config.preprocessor_files == ("src/macros.lua",)
+    assert config.preprocessor_globs == ("legacy/*.lua",)
 
 
 def test_load_function_contracts_rejects_duplicate_names(tmp_path: Path) -> None:

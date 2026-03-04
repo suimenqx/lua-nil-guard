@@ -73,6 +73,119 @@ def test_run_repository_review_produces_verified_risk_for_locally_proven_nil_sin
     assert verdicts[0].confidence == "high"
 
 
+def test_run_repository_review_uses_preprocessor_macro_facts_without_scanning_macro_file(
+    tmp_path: Path,
+) -> None:
+    _write_review_config(
+        tmp_path,
+        [
+            {
+                "id": "string.find.arg1",
+                "kind": "function_arg",
+                "qualified_name": "string.find",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or ''"],
+            },
+            {
+                "id": "concat.right",
+                "kind": "binary_operand",
+                "qualified_name": "concat",
+                "arg_index": 2,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or ''"],
+            },
+            {
+                "id": "pairs.arg1",
+                "kind": "function_arg",
+                "qualified_name": "pairs",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or {}"],
+            },
+            {
+                "id": "length.operand",
+                "kind": "unary_operand",
+                "qualified_name": "length",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or {}"],
+            },
+            {
+                "id": "compare.gte.left",
+                "kind": "binary_operand",
+                "qualified_name": "compare.gte",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x ~= nil"],
+            },
+            {
+                "id": "arithmetic.add.left",
+                "kind": "binary_operand",
+                "qualified_name": "arithmetic.add",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x ~= nil"],
+            },
+        ],
+    )
+    (tmp_path / "config" / "preprocessor_files.json").write_text(
+        json.dumps({"preprocessor_files": ["src/macros.lua"], "preprocessor_globs": []}),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "macros.lua").write_text(
+        "\n".join(
+            [
+                "USER_NAME = \"guest\"",
+                "SUFFIX = \"!\"",
+                "DEFAULT_TABLE = {}",
+                "MAX_LEVEL = 0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "consumer.lua").write_text(
+        "\n".join(
+            [
+                "local prefix = 'hi'",
+                "local limit = req.limit",
+                "local bonus = req.bonus",
+                "local _ = string.find(USER_NAME, '^g')",
+                "local __ = prefix .. SUFFIX",
+                "for _, item in pairs(DEFAULT_TABLE) do",
+                "  local noop = item",
+                "end",
+                "local size = #DEFAULT_TABLE",
+                "local allowed = MAX_LEVEL >= limit",
+                "local score = MAX_LEVEL + bonus",
+                "return _, __, size, allowed, score",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert snapshot.preprocessor_files == (tmp_path / "src" / "macros.lua",)
+    assert snapshot.lua_files == (tmp_path / "src" / "consumer.lua",)
+    assert all("macros.lua" not in verdict.case_id for verdict in verdicts)
+    assert len(verdicts) == 6
+    assert all(verdict.status.startswith("safe") for verdict in verdicts)
+
+
 def test_run_repository_review_uses_function_contracts_to_suppress_false_positive(
     tmp_path: Path,
 ) -> None:

@@ -40,6 +40,7 @@ from .service import (
     export_autofix_patches,
     export_autofix_unified_diff,
     find_repository_root_for_file,
+    macro_audit_repository,
     refresh_knowledge_base,
     refresh_summary_cache,
     review_repository_file,
@@ -102,7 +103,10 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "init-config requires exactly one repository path"
         root = Path(positional[0])
         try:
-            sink_path, policy_path, contracts_path = initialize_repository_config(root, force=force)
+            sink_path, policy_path, contracts_path, preprocessor_path = initialize_repository_config(
+                root,
+                force=force,
+            )
         except (ConfigError, OSError) as exc:
             return 2, str(exc)
         return 0, "\n".join(
@@ -112,6 +116,49 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 f"Sink rules: {sink_path}",
                 f"Confidence policy: {policy_path}",
                 f"Function contracts: {contracts_path}",
+                f"Preprocessor config: {preprocessor_path}",
+            ]
+        )
+
+    if command == "macro-audit":
+        if len(args) not in {2, 3}:
+            return 2, "macro-audit requires a repository path and optional output path"
+        root = Path(args[1])
+        output_path = Path(args[2]) if len(args) == 3 else None
+        snapshot, error = _load_repository_snapshot(root)
+        if error is not None:
+            return 2, error
+        audit = macro_audit_repository(snapshot)
+        rendered = _render_macro_audit_markdown(snapshot.root, audit)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Macro audit complete.",
+                f"Output: {output_path}",
+            ]
+        )
+
+    if command == "macro-audit-json":
+        if len(args) not in {2, 3}:
+            return 2, "macro-audit-json requires a repository path and optional output path"
+        root = Path(args[1])
+        output_path = Path(args[2]) if len(args) == 3 else None
+        snapshot, error = _load_repository_snapshot(root)
+        if error is not None:
+            return 2, error
+        audit = macro_audit_repository(snapshot)
+        rendered = json.dumps(_serialize_macro_audit(snapshot.root, audit), indent=2, sort_keys=True)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Macro audit JSON export complete.",
+                f"Output: {output_path}",
             ]
         )
 
@@ -2076,6 +2123,85 @@ def _render_encoding_audit(records: tuple[object, ...], root: Path) -> str:
     return "\n".join(lines).rstrip()
 
 
+def _serialize_macro_audit(root: Path, audit: object) -> dict[str, object]:
+    return {
+        "repository": str(root),
+        "files": list(audit.files),
+        "total_files": len(audit.files),
+        "total_facts": len(audit.facts),
+        "total_unresolved_lines": len(audit.unresolved_lines),
+        "facts": [
+            {
+                "key": fact.key,
+                "kind": fact.kind,
+                "value": fact.value,
+                "provably_non_nil": fact.provably_non_nil,
+                "file": fact.file,
+                "line": fact.line,
+                "resolved_kind": fact.resolved_kind,
+                "resolved_value": fact.resolved_value,
+                "alias_target": fact.alias_target,
+            }
+            for fact in audit.facts
+        ],
+        "unresolved_lines": [
+            {
+                "file": item.file,
+                "line": item.line,
+                "content": item.content,
+                "reason": item.reason,
+            }
+            for item in audit.unresolved_lines
+        ],
+    }
+
+
+def _render_macro_audit_markdown(root: Path, audit: object) -> str:
+    lines = [
+        "# Preprocessor Macro Audit",
+        "",
+        f"Repository: {root}",
+        f"Configured macro files: {len(audit.files)}",
+        f"Resolved macro facts: {len(audit.facts)}",
+        f"Unresolved lines: {len(audit.unresolved_lines)}",
+        "",
+    ]
+
+    if audit.files:
+        lines.append("## Macro Files")
+        for file in audit.files:
+            lines.append(f"- {file}")
+        lines.append("")
+
+    if audit.facts:
+        lines.append("## Resolved Macro Facts")
+        for fact in audit.facts:
+            resolved_kind = fact.resolved_kind or fact.kind
+            resolved_value = fact.resolved_value if fact.resolved_value is not None else fact.value
+            suffix = (
+                f" -> {resolved_kind} {resolved_value!r}"
+                if resolved_value is not None
+                else f" -> {resolved_kind}"
+            )
+            lines.append(
+                f"- {fact.key} ({fact.file}:{fact.line}){suffix}"
+            )
+        lines.append("")
+
+    if audit.unresolved_lines:
+        lines.append("## Unresolved Macro Lines")
+        for item in audit.unresolved_lines:
+            lines.append(
+                f"- {item.file}:{item.line} [{item.reason}] {item.content}"
+            )
+        lines.append("")
+
+    if not audit.facts and not audit.unresolved_lines:
+        lines.append("No configured macro dictionary files were found or no macro lines were parsed.")
+
+    return "\n".join(lines).rstrip()
+
+
 def _render_encoding_normalization(
     results: tuple[object, ...],
     root: Path,
@@ -2133,6 +2259,8 @@ def _usage() -> str:
             "  {cli} scan <repository>",
             "  {cli} doctor",
             "  {cli} init-config [--force] <repository>",
+            "  {cli} macro-audit <repository> [output]",
+            "  {cli} macro-audit-json <repository> [output]",
             "  {cli} encoding-audit <repository> [output]",
             "  {cli} normalize-encoding [--write] <repository> [output]",
             "  {cli} clear-backend-cache <cache-file>",

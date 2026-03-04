@@ -12,7 +12,12 @@ from .adjudication import attach_autofix_patch
 from .agent_driver_models import AgentProviderSpec
 from .agent_backend import AdjudicationBackend, CliAgentBackend, HeuristicAdjudicationBackend
 from .collector import collect_candidates, top_level_phase_for_prefix
-from .config_loader import load_confidence_policy, load_function_contracts, load_sink_rules
+from .config_loader import (
+    load_confidence_policy,
+    load_function_contracts,
+    load_preprocessor_config,
+    load_sink_rules,
+)
 from .knowledge import (
     KnowledgeBase,
     contract_applies_in_function_scope,
@@ -36,12 +41,14 @@ from .models import (
     FunctionContract,
     ImprovementAnalytics,
     ImprovementProposal,
+    MacroAuditResult,
     RepositorySnapshot,
     SinkRule,
     Verdict,
     with_candidate_state,
 )
 from .pipeline import build_evidence_packet, should_report
+from .preprocessor import build_macro_audit, build_macro_index, split_preprocessor_files
 from .prompting import build_adjudication_prompt
 from .repository import discover_lua_files, read_lua_source_text
 from .summaries import (
@@ -133,19 +140,37 @@ def bootstrap_repository(root: str | Path) -> RepositorySnapshot:
 
     sink_rules = tuple(load_sink_rules(root_path / "config" / "sink_rules.json"))
     confidence_policy = load_confidence_policy(root_path / "config" / "confidence_policy.json")
-    lua_files = tuple(discover_lua_files(root_path))
+    all_lua_files = tuple(discover_lua_files(root_path))
     contracts_path = root_path / "config" / "function_contracts.json"
     function_contracts = (
         tuple(load_function_contracts(contracts_path))
         if contracts_path.is_file()
         else ()
     )
+    preprocessor_config_path = root_path / "config" / "preprocessor_files.json"
+    preprocessor_config = (
+        load_preprocessor_config(preprocessor_config_path)
+        if preprocessor_config_path.is_file()
+        else None
+    )
+    review_lua_files, preprocessor_files = (
+        split_preprocessor_files(root_path, all_lua_files, preprocessor_config)
+        if preprocessor_config is not None
+        else (all_lua_files, ())
+    )
+    macro_index = build_macro_index(
+        root_path,
+        preprocessor_files,
+        source_loader=read_lua_source_text,
+    )
 
     return RepositorySnapshot(
         root=root_path,
         sink_rules=sink_rules,
         confidence_policy=confidence_policy,
-        lua_files=lua_files,
+        lua_files=review_lua_files,
+        preprocessor_files=preprocessor_files,
+        macro_index=macro_index,
         function_contracts=function_contracts,
     )
 
@@ -184,6 +209,7 @@ def review_source(
     maybe_nil_return_helpers: dict[str, tuple[tuple[int, int], ...]] | None = None,
     coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]] | None = None,
     inline_guard_contracts: tuple[object, ...] | None = None,
+    macro_index=None,
 ) -> tuple[CandidateAssessment, ...]:
     """Collect candidates from one source file and attach local static analysis."""
 
@@ -230,6 +256,7 @@ def review_source(
             maybe_nil_return_helpers=effective_maybe_nil_return_helpers,
             coalescing_return_helpers=effective_coalescing_return_helpers,
             inline_guard_contracts=effective_inline_guard_contracts,
+            macro_index=macro_index,
         )
         assessments.append(
             CandidateAssessment(
@@ -260,6 +287,7 @@ def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment
                 maybe_nil_return_helpers=maybe_nil_return_helpers,
                 coalescing_return_helpers=coalescing_return_helpers,
                 inline_guard_contracts=inline_guard_contracts,
+                macro_index=snapshot.macro_index,
             )
         )
     return tuple(assessments)
@@ -286,6 +314,17 @@ def review_repository_file(
         maybe_nil_return_helpers=maybe_nil_return_helpers,
         coalescing_return_helpers=coalescing_return_helpers,
         inline_guard_contracts=inline_guard_contracts,
+        macro_index=snapshot.macro_index,
+    )
+
+
+def macro_audit_repository(snapshot: RepositorySnapshot) -> MacroAuditResult:
+    """Return operator-facing macro dictionary ingestion details for a snapshot."""
+
+    return build_macro_audit(
+        snapshot.root,
+        snapshot.preprocessor_files,
+        source_loader=read_lua_source_text,
     )
 
 

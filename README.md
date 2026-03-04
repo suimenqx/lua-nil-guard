@@ -33,20 +33,28 @@ lua-nil-guard doctor
 lua-nil-guard init-config /path/to/target-repo
 ```
 
-5. If the repository may contain legacy-encoded Lua files, audit and normalize them first:
+5. If the repository contains giant compile-time macro dictionary files, list them in `config/preprocessor_files.json` first, then audit what the tool can ingest from them:
+
+```sh
+lua-nil-guard macro-audit /path/to/target-repo
+```
+
+Those files are treated as preprocessor inputs only: they provide compile-time non-nil facts, but they are not scanned as ordinary business Lua review targets.
+
+6. If the repository may contain legacy-encoded Lua files, audit and normalize them first:
 
 ```sh
 lua-nil-guard encoding-audit /path/to/target-repo
 lua-nil-guard normalize-encoding --write /path/to/target-repo
 ```
 
-6. Run a static scan:
+7. Run a static scan:
 
 ```sh
 lua-nil-guard scan /path/to/target-repo
 ```
 
-7. Run a full report:
+8. Run a full report:
 
 ```sh
 lua-nil-guard report /path/to/target-repo
@@ -157,6 +165,18 @@ This report is most useful after you have already tried a few single-file runs. 
 - truly unresolved patterns that may need new bounded recognizers
 - helper functions that may need an explicit contract
 
+If your repository uses giant preprocessor-style macro dictionary files (for example `NAME = ""` or `Defaults.Name = 0` files that are consumed at build time), add them to `config/preprocessor_files.json` and run:
+
+```sh
+lua-nil-guard macro-audit /path/to/target-repo
+```
+
+`macro-audit` shows:
+
+- which configured macro files were loaded
+- which macro lines were converted into compile-time facts
+- which lines were left unresolved because they were outside the bounded supported syntax
+
 ## Backends
 
 The default backend is `heuristic`. For LLM-backed adjudication, use `--backend` with one of the supported local CLI integrations:
@@ -185,8 +205,18 @@ Target repositories are expected to contain:
 - `config/sink_rules.json`
 - `config/confidence_policy.json`
 - `config/function_contracts.json`
+- `config/preprocessor_files.json`
 
-`init-config` writes the default versions of all three files into the target repository. `function_contracts.json` lets you declare high-confidence wrapper functions such as `normalize_name` that always return a non-nil value, helper guards such as `assert_profile(profile)` via `ensures_non_nil_args`, and normalizers that return a defaulted non-nil value from specific arguments via `returns_non_nil_from_args`. For multi-return helpers you can further split those argument requirements by consumed return slot with `returns_non_nil_from_args_by_return_slot`, so slot `1` and slot `2` do not have to share the same safety preconditions. You can also require that certain input arguments have already been guarded before trusting a specific return slot by using `requires_guarded_args_by_return_slot`, which lets a guard helper contract and a later normalizer contract work together in one proof chain. You can also restrict a contract to specific caller modules with `applies_in_modules`, to specific caller function scopes with `applies_in_function_scopes`, to scope kinds with `applies_to_scope_kinds` (`top_level`, `function_body`), to top-level phases with `applies_to_top_level_phases` (`init`, `post_definitions`), to specific sink rules or sink names with `applies_to_sinks`, to specific call positions with `applies_to_call_roles` (`assignment_origin`, `sink_expression`, `guard_call`), to specific return-value usage modes with `applies_to_usage_modes` (`single_assignment`, `multi_assignment`, `direct_sink`), to specific selected return slots with `applies_to_return_slots` (for example only return slot `1` in a multi-return helper), to a specific call arity with `applies_with_arg_count`, to exact literal arguments with `required_literal_args`, to argument-source shapes with `required_arg_shapes` (`identifier`, `member_access`, `indexed_access`, `literal`, `call`, `expression`), to argument root symbols with `required_arg_roots` (for example `req`, `ngx`, or `fallbacks`), to dotted access-path prefixes with `required_arg_prefixes` (for example `req.params` or `ngx.var`), and to exact normalized access chains with `required_arg_access_paths` (for example `req.params.user` or `req.params[1]`) when a helper is only trustworthy for one exact lookup path. Quoted literal table keys such as `req.params["user"]` normalize to the same `req.params.user` path, while dynamic indexes such as `req.params[token]` do not count as an exact match. This helps suppress false positives without relying on prompt-only inference.
+`init-config` writes the default versions of all four files into the target repository. `function_contracts.json` lets you declare high-confidence wrapper functions such as `normalize_name` that always return a non-nil value, helper guards such as `assert_profile(profile)` via `ensures_non_nil_args`, and normalizers that return a defaulted non-nil value from specific arguments via `returns_non_nil_from_args`. For multi-return helpers you can further split those argument requirements by consumed return slot with `returns_non_nil_from_args_by_return_slot`, so slot `1` and slot `2` do not have to share the same safety preconditions. You can also require that certain input arguments have already been guarded before trusting a specific return slot by using `requires_guarded_args_by_return_slot`, which lets a guard helper contract and a later normalizer contract work together in one proof chain. You can also restrict a contract to specific caller modules with `applies_in_modules`, to specific caller function scopes with `applies_in_function_scopes`, to scope kinds with `applies_to_scope_kinds` (`top_level`, `function_body`), to top-level phases with `applies_to_top_level_phases` (`init`, `post_definitions`), to specific sink rules or sink names with `applies_to_sinks`, to specific call positions with `applies_to_call_roles` (`assignment_origin`, `sink_expression`, `guard_call`), to specific return-value usage modes with `applies_to_usage_modes` (`single_assignment`, `multi_assignment`, `direct_sink`), to specific selected return slots with `applies_to_return_slots` (for example only return slot `1` in a multi-return helper), to a specific call arity with `applies_with_arg_count`, to exact literal arguments with `required_literal_args`, to argument-source shapes with `required_arg_shapes` (`identifier`, `member_access`, `indexed_access`, `literal`, `call`, `expression`), to argument root symbols with `required_arg_roots` (for example `req`, `ngx`, or `fallbacks`), to dotted access-path prefixes with `required_arg_prefixes` (for example `req.params` or `ngx.var`), and to exact normalized access chains with `required_arg_access_paths` (for example `req.params.user` or `req.params[1]`) when a helper is only trustworthy for one exact lookup path. Quoted literal table keys such as `req.params["user"]` normalize to the same `req.params.user` path, while dynamic indexes such as `req.params[token]` do not count as an exact match. This helps suppress false positives without relying on prompt-only inference.
+
+`preprocessor_files.json` is for giant compile-time macro dictionary files that are not ordinary business Lua. Files listed there are not scanned for ordinary review candidates. Instead, LuaNilGuard ingests bounded facts such as:
+
+- `NAME = ""`
+- `COUNT = 0`
+- `Defaults.Name = ""`
+- `ALIAS = NAME`
+
+Those facts are then used to suppress false positives in high-value nil hazard checks while keeping reports anchored to the original source file the developer edits.
 
 ## Notes
 
