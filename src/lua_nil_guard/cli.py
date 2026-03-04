@@ -61,6 +61,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         if len(args) != 2:
             return 2, "scan requires exactly one repository path"
         root = Path(args[1])
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot, error = _load_repository_snapshot(root)
         if error is not None:
             return 2, error
@@ -71,6 +74,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         if len(args) != 2:
             return 2, "scan-file requires exactly one Lua file path"
         file_path = Path(args[1])
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         try:
             root = find_repository_root_for_file(file_path)
             snapshot = bootstrap_repository(root)
@@ -78,6 +84,11 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         except (OSError, ValueError) as exc:
             return 2, str(exc)
         return 0, _render_scan_summary(snapshot.root, assessments, target_file=file_path)
+
+    if command == "doctor":
+        if len(args) != 1:
+            return 2, "doctor does not accept positional arguments"
+        return 0, _render_doctor_report()
 
     if command == "init-config":
         force = False
@@ -335,6 +346,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         if len(positional) != 1:
             return 2, "report requires exactly one repository path"
         root = Path(positional[0])
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot, error = _load_repository_snapshot(root)
         if error is not None:
             return 2, error
@@ -381,6 +395,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         if len(positional) != 1:
             return 2, "report-file requires exactly one Lua file path"
         file_path = Path(positional[0])
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         try:
             root = find_repository_root_for_file(file_path)
             snapshot = bootstrap_repository(root)
@@ -427,6 +444,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         if len(positional) != 1:
             return 2, "report-json requires exactly one repository path"
         root = Path(positional[0])
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot, error = _load_repository_snapshot(root)
         if error is not None:
             return 2, error
@@ -473,6 +493,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         if len(positional) != 1:
             return 2, "report-file-json requires exactly one Lua file path"
         file_path = Path(positional[0])
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         try:
             root = find_repository_root_for_file(file_path)
             snapshot = bootstrap_repository(root)
@@ -519,6 +542,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         if len(positional) != 1:
             return 2, "benchmark requires exactly one repository path"
         root = Path(positional[0])
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot = bootstrap_repository(root)
         try:
             summary = benchmark_repository_review(
@@ -564,6 +590,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "benchmark-json requires a repository path and optional output path"
         root = Path(positional[0])
         output_path = Path(positional[1]) if len(positional) == 2 else None
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot = bootstrap_repository(root)
         try:
             summary = benchmark_repository_review(
@@ -619,6 +648,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "proposal-export requires a repository path and optional output path"
         root = Path(positional[0])
         output_path = Path(positional[1]) if len(positional) == 2 else None
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot = bootstrap_repository(root)
         try:
             proposals = draft_review_improvements(
@@ -675,6 +707,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "proposal-export-json requires a repository path and optional output path"
         root = Path(positional[0])
         output_path = Path(positional[1]) if len(positional) == 2 else None
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot = bootstrap_repository(root)
         try:
             proposals = draft_review_improvements(
@@ -730,6 +765,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "proposal-analytics requires a repository path and optional output path"
         root = Path(positional[0])
         output_path = Path(positional[1]) if len(positional) == 2 else None
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot = bootstrap_repository(root)
         try:
             analytics = analyze_review_improvements(
@@ -785,6 +823,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "proposal-analytics-json requires a repository path and optional output path"
         root = Path(positional[0])
         output_path = Path(positional[1]) if len(positional) == 2 else None
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot = bootstrap_repository(root)
         try:
             analytics = analyze_review_improvements(
@@ -841,6 +882,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         if backend_cache_path is None:
             return 2, "benchmark-cache-compare requires --backend-cache PATH"
         root = Path(positional[0])
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot = bootstrap_repository(root)
         try:
             comparison = benchmark_cache_compare(
@@ -889,6 +933,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "benchmark-cache-compare-json requires --backend-cache PATH"
         root = Path(positional[0])
         output_path = Path(positional[1]) if len(positional) == 2 else None
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot = bootstrap_repository(root)
         try:
             comparison = benchmark_cache_compare(
@@ -949,6 +996,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "baseline-create requires a repository path and output path"
         root = Path(positional[0])
         baseline_path = Path(positional[1])
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot = bootstrap_repository(root)
         try:
             verdicts = run_repository_review(
@@ -1002,6 +1052,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "report-new requires a repository path and baseline path"
         root = Path(positional[0])
         baseline_path = Path(positional[1])
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot = bootstrap_repository(root)
         try:
             verdicts = run_repository_review(
@@ -1035,6 +1088,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "refresh-summaries requires a repository path and optional output path"
         root = Path(args[1])
         summary_path = Path(args[2]) if len(args) == 3 else None
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot = bootstrap_repository(root)
         summaries = refresh_summary_cache(snapshot, summary_path=summary_path)
         target = summary_path or (snapshot.root / "data" / "function_summaries.json")
@@ -1051,6 +1107,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "refresh-knowledge requires a repository path and optional output path"
         root = Path(args[1])
         knowledge_path = Path(args[2]) if len(args) == 3 else None
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot = bootstrap_repository(root)
         facts = refresh_knowledge_base(snapshot, knowledge_path=knowledge_path)
         target = knowledge_path or (snapshot.root / "data" / "knowledge.json")
@@ -1084,6 +1143,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "ci-check requires a repository path and baseline path"
         root = Path(positional[0])
         baseline_path = Path(positional[1])
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot = bootstrap_repository(root)
         try:
             verdicts = run_repository_review(
@@ -1127,6 +1189,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "export-prompts requires a repository path and optional output path"
         root = Path(positional[0])
         output_path = Path(positional[1]) if len(positional) == 2 else None
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot = bootstrap_repository(root)
         try:
             tasks = export_adjudication_tasks(
@@ -1169,6 +1234,9 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "export-autofix requires a repository path and optional output path"
         root = Path(positional[0])
         output_path = Path(positional[1]) if len(positional) == 2 else None
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
         snapshot = bootstrap_repository(root)
         try:
             patches = export_autofix_patches(
@@ -1415,6 +1483,21 @@ def _load_repository_snapshot(root: Path) -> tuple[object | None, str | None]:
         return None, str(exc)
 
 
+def _require_tree_sitter_backend() -> str | None:
+    backend_info = get_parser_backend_info()
+    if backend_info.tree_sitter_available:
+        return None
+    lines = [
+        "Tree-sitter is required for analysis commands.",
+        f"Parser backend: {backend_info.name}",
+        f"Reason: {backend_info.reason}",
+    ]
+    if backend_info.selected_compiler is not None:
+        lines.append(f"Detected compiler: {backend_info.selected_compiler}")
+    lines.append("Run `lua-nil-guard doctor` to diagnose and fix the environment.")
+    return "\n".join(lines)
+
+
 def _render_scan_summary(
     root: Path,
     assessments: tuple[object, ...],
@@ -1432,14 +1515,44 @@ def _render_scan_summary(
         "",
         f"Repository: {root}",
         f"Parser backend: {backend_info.name}",
+        f"Parser detail: {backend_info.reason}",
         f"Total candidates: {len(assessments)}",
     ]
+    if backend_info.selected_compiler is not None:
+        lines.append(f"Detected compiler: {backend_info.selected_compiler}")
     if target_file is not None:
         lines.insert(3, f"Target file: {target_file}")
 
     for state in ("safe_static", "unknown_static", "risky_static"):
         lines.append(f"{state}: {counts.get(state, 0)}")
 
+    return "\n".join(lines)
+
+
+def _render_doctor_report() -> str:
+    backend_info = get_parser_backend_info()
+
+    lines = [
+        "# Lua Nil Guard Doctor",
+        "",
+        f"Parser backend: {backend_info.name}",
+        f"Tree-sitter available: {'yes' if backend_info.tree_sitter_available else 'no'}",
+        f"Tree-sitter Python package: {'yes' if backend_info.tree_sitter_python_available else 'no'}",
+        f"Status: {backend_info.reason}",
+        "Compiler probe order: cc, gcc, clang",
+        f"Detected compiler: {backend_info.selected_compiler or '(none)'}",
+        f"Local grammar library: {backend_info.local_library_path or '(not available)'}",
+    ]
+    if not backend_info.tree_sitter_available:
+        lines.extend(
+            [
+                "",
+                "Action:",
+                "- Ensure one of cc, gcc, or clang is available.",
+                "- Ensure the Python tree_sitter dependency is installed in the active environment.",
+                "- Re-run `lua-nil-guard doctor` and confirm parser backend is tree_sitter_local.",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -2018,6 +2131,7 @@ def _usage() -> str:
         for line in [
             "Usage:",
             "  {cli} scan <repository>",
+            "  {cli} doctor",
             "  {cli} init-config [--force] <repository>",
             "  {cli} encoding-audit <repository> [output]",
             "  {cli} normalize-encoding [--write] <repository> [output]",

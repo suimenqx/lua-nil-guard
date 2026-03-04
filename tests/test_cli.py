@@ -18,12 +18,14 @@ from lua_nil_guard.models import (
     RoleOpinion,
     Verdict,
 )
+from lua_nil_guard.parser_backend import ParserBackendInfo
 
 
 def test_cli_help_lists_supported_backends() -> None:
     exit_code, output = run(["--help"])
 
     assert exit_code == 0
+    assert "doctor" in output
     assert "Backend values: heuristic | codex | claude | gemini" in output
     assert "init-config" in output
     assert "generate-backend-manifest" in output
@@ -106,8 +108,56 @@ def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
     assert exit_code == 0
     assert "Lua Nil Review Static Summary" in output
     assert "Parser backend: tree_sitter_local" in output
+    assert "Parser detail:" in output
     assert "Total candidates: 1" in output
     assert "safe_static: 1" in output
+
+
+def test_cli_doctor_reports_parser_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "get_parser_backend_info",
+        lambda: ParserBackendInfo(
+            name="unavailable",
+            tree_sitter_available=False,
+            reason="tree_sitter Python package not installed",
+            selected_compiler="gcc (/usr/bin/gcc)",
+            local_library_path=None,
+            tree_sitter_python_available=False,
+        ),
+    )
+
+    exit_code, output = run(["doctor"])
+
+    assert exit_code == 0
+    assert "Lua Nil Guard Doctor" in output
+    assert "Parser backend: unavailable" in output
+    assert "Status: tree_sitter Python package not installed" in output
+    assert "Detected compiler: gcc (/usr/bin/gcc)" in output
+
+
+def test_cli_scan_requires_tree_sitter_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "get_parser_backend_info",
+        lambda: ParserBackendInfo(
+            name="unavailable",
+            tree_sitter_available=False,
+            reason="tree_sitter Python package not installed",
+            selected_compiler="gcc (/usr/bin/gcc)",
+            local_library_path=None,
+            tree_sitter_python_available=False,
+        ),
+    )
+
+    exit_code, output = run(["scan", str(tmp_path)])
+
+    assert exit_code == 2
+    assert "Tree-sitter is required for analysis commands." in output
+    assert "Run `lua-nil-guard doctor`" in output
 
 
 def test_cli_report_rejects_lua_file_path_with_single_file_hint(tmp_path: Path) -> None:

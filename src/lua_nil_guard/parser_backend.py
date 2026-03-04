@@ -4,7 +4,6 @@ import ctypes
 from dataclasses import dataclass
 import importlib.util
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import warnings
@@ -14,9 +13,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VENDOR_LUA_SRC_DIR = PROJECT_ROOT / "vendor" / "tree-sitter-lua" / "src"
 TREE_SITTER_BUILD_DIR = Path.home() / ".cache" / "lua-nil-guard" / "tree_sitter"
 TREE_SITTER_LUA_LIBRARY = TREE_SITTER_BUILD_DIR / "tree_sitter_lua.so"
+COMPILER_CANDIDATES = ("cc", "gcc", "clang")
 
 _LANGUAGE_CACHE = None
 _CDLL_CACHE = None
+_BACKEND_INFO_CACHE = None
+_LANGUAGE_LOAD_ATTEMPTED = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +27,14 @@ class ParserBackendInfo:
 
     name: str
     tree_sitter_available: bool
+    reason: str
+    selected_compiler: str | None = None
+    local_library_path: str | None = None
+    tree_sitter_python_available: bool = False
+
+
+class ParserBackendUnavailableError(ValueError):
+    """Raised when Tree-sitter-backed parsing is required but unavailable."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,55 +72,101 @@ class LengthOperand:
 def get_parser_backend_info() -> ParserBackendInfo:
     """Return the active parser backend description."""
 
-    if _load_lua_language() is not None:
-        return ParserBackendInfo(name="tree_sitter_local", tree_sitter_available=True)
-    return ParserBackendInfo(name="regex_fallback", tree_sitter_available=False)
+    _load_lua_language()
+    if _BACKEND_INFO_CACHE is not None:
+        return _BACKEND_INFO_CACHE
+    return ParserBackendInfo(
+        name="unavailable",
+        tree_sitter_available=False,
+        reason="parser backend state unavailable",
+    )
 
 
 def collect_call_sites(source: str, qualified_name: str) -> tuple[CallSite, ...]:
     """Collect call sites for a qualified name using the active backend."""
 
-    language = _load_lua_language()
-    if language is not None:
-        tree_sitter_calls = _collect_call_sites_tree_sitter(source, qualified_name, language)
-        if tree_sitter_calls is not None:
-            return tree_sitter_calls
-    return _collect_call_sites_fallback(source, qualified_name)
+    language = _require_tree_sitter_language()
+    tree_sitter_calls = _collect_call_sites_tree_sitter(source, qualified_name, language)
+    if tree_sitter_calls is None:
+        raise ParserBackendUnavailableError("tree_sitter Parser unavailable for call-site collection")
+    return tree_sitter_calls
 
 
 def collect_receiver_accesses(source: str) -> tuple[ReceiverAccess, ...]:
     """Collect non-call member access expressions using the active backend."""
 
-    language = _load_lua_language()
-    if language is not None:
-        tree_sitter_accesses = _collect_receiver_accesses_tree_sitter(source, language)
-        if tree_sitter_accesses is not None:
-            return tree_sitter_accesses
-    return _collect_receiver_accesses_fallback(source)
+    language = _require_tree_sitter_language()
+    tree_sitter_accesses = _collect_receiver_accesses_tree_sitter(source, language)
+    if tree_sitter_accesses is None:
+        raise ParserBackendUnavailableError(
+            "tree_sitter Parser unavailable for receiver-access collection"
+        )
+    return tree_sitter_accesses
 
 
 def collect_length_operands(source: str) -> tuple[LengthOperand, ...]:
     """Collect length-operator operands using the active backend."""
 
+    language = _require_tree_sitter_language()
+    tree_sitter_operands = _collect_length_operands_tree_sitter(source, language)
+    if tree_sitter_operands is None:
+        raise ParserBackendUnavailableError(
+            "tree_sitter Parser unavailable for length-operand collection"
+        )
+    return tree_sitter_operands
+
+
+def _require_tree_sitter_language():
     language = _load_lua_language()
     if language is not None:
-        tree_sitter_operands = _collect_length_operands_tree_sitter(source, language)
-        if tree_sitter_operands is not None:
-            return tree_sitter_operands
-    return _collect_length_operands_fallback(source)
+        return language
+    backend_info = get_parser_backend_info()
+    raise ParserBackendUnavailableError(
+        f"Tree-sitter parser backend unavailable: {backend_info.reason}"
+    )
 
 
 def _load_lua_language():
-    global _LANGUAGE_CACHE
-    if _LANGUAGE_CACHE is not None:
+    global _LANGUAGE_CACHE, _LANGUAGE_LOAD_ATTEMPTED
+    if _LANGUAGE_LOAD_ATTEMPTED:
         return _LANGUAGE_CACHE
+    _LANGUAGE_LOAD_ATTEMPTED = True
+
+    compiler_name, compiler_path = _find_available_c_compiler()
+    selected_compiler = (
+        f"{compiler_name} ({compiler_path})"
+        if compiler_name is not None and compiler_path is not None
+        else None
+    )
 
     if importlib.util.find_spec("tree_sitter") is None:
+        _set_backend_info(
+            ParserBackendInfo(
+                name="unavailable",
+                tree_sitter_available=False,
+                reason="tree_sitter Python package not installed",
+                selected_compiler=selected_compiler,
+                tree_sitter_python_available=False,
+            )
+        )
         return None
 
-    language = _load_local_compiled_language()
+    language, local_reason, library_path = _load_local_compiled_language(
+        compiler_name,
+        selected_compiler,
+    )
     if language is not None:
         _LANGUAGE_CACHE = language
+        _set_backend_info(
+            ParserBackendInfo(
+                name="tree_sitter_local",
+                tree_sitter_available=True,
+                reason="using locally built tree-sitter grammar",
+                selected_compiler=selected_compiler,
+                local_library_path=str(library_path) if library_path is not None else None,
+                tree_sitter_python_available=True,
+            )
+        )
         return _LANGUAGE_CACHE
 
     try:
@@ -120,22 +176,54 @@ def _load_lua_language():
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             language = Language(tree_sitter_lua.language())
-    except Exception:
+    except Exception as exc:
+        reason = local_reason or "local tree-sitter grammar unavailable"
+        reason = f"{reason}; tree_sitter_lua package import failed: {exc}"
+        _set_backend_info(
+            ParserBackendInfo(
+                name="unavailable",
+                tree_sitter_available=False,
+                reason=reason,
+                selected_compiler=selected_compiler,
+                local_library_path=str(library_path) if library_path is not None else None,
+                tree_sitter_python_available=True,
+            )
+        )
         return None
 
     _LANGUAGE_CACHE = language
+    fallback_reason = "using installed tree_sitter_lua package"
+    if local_reason:
+        fallback_reason = f"{fallback_reason}; local build unavailable: {local_reason}"
+    _set_backend_info(
+        ParserBackendInfo(
+            name="tree_sitter_local",
+            tree_sitter_available=True,
+            reason=fallback_reason,
+            selected_compiler=selected_compiler,
+            local_library_path=str(library_path) if library_path is not None else None,
+            tree_sitter_python_available=True,
+        )
+    )
     return _LANGUAGE_CACHE
 
 
-def _load_local_compiled_language():
-    library_path = _ensure_local_language_library()
+def _load_local_compiled_language(
+    compiler_name: str | None,
+    selected_compiler: str | None,
+):
+    library_path, reason = _ensure_local_language_library(compiler_name)
     if library_path is None:
-        return None
+        return None, reason, None
 
     try:
         from tree_sitter import Language
-    except Exception:
-        return None
+    except Exception as exc:
+        return (
+            None,
+            f"tree_sitter Python import failed while loading local grammar: {exc}",
+            library_path,
+        )
 
     try:
         global _CDLL_CACHE
@@ -144,15 +232,20 @@ def _load_local_compiled_language():
         language_fn.restype = ctypes.c_void_p
         ptr = language_fn()
         if not ptr:
-            return None
+            return None, "local tree-sitter library returned a null language pointer", library_path
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
-            return Language(ptr)
-    except Exception:
-        return None
+            return Language(ptr), None, library_path
+    except Exception as exc:
+        compiler_hint = f" via {selected_compiler}" if selected_compiler else ""
+        return (
+            None,
+            f"failed to load local tree-sitter library{compiler_hint}: {exc}",
+            library_path,
+        )
 
 
-def _ensure_local_language_library() -> Path | None:
+def _ensure_local_language_library(compiler_name: str | None) -> tuple[Path | None, str | None]:
     parser_c = VENDOR_LUA_SRC_DIR / "parser.c"
     scanner_c = VENDOR_LUA_SRC_DIR / "scanner.c"
     header_dir = VENDOR_LUA_SRC_DIR / "tree_sitter"
@@ -162,20 +255,25 @@ def _ensure_local_language_library() -> Path | None:
         header_dir / "array.h",
     )
     if not parser_c.exists() or not scanner_c.exists() or any(not path.exists() for path in header_paths):
-        return None
-    if shutil.which("cc") is None:
-        return None
+        return None, "vendored tree-sitter-lua grammar sources not found"
 
     source_paths = (parser_c, scanner_c) + header_paths
     if TREE_SITTER_LUA_LIBRARY.exists():
         built_mtime = TREE_SITTER_LUA_LIBRARY.stat().st_mtime
         source_mtime = max(path.stat().st_mtime for path in source_paths)
         if built_mtime >= source_mtime:
-            return TREE_SITTER_LUA_LIBRARY
+            return TREE_SITTER_LUA_LIBRARY, None
+
+    if compiler_name is None:
+        return None, (
+            "no C compiler found (tried: "
+            + ", ".join(COMPILER_CANDIDATES)
+            + ")"
+        )
 
     TREE_SITTER_BUILD_DIR.mkdir(parents=True, exist_ok=True)
     command = [
-        "cc",
+        compiler_name,
         "-shared",
         "-fPIC",
         "-O2",
@@ -187,9 +285,24 @@ def _ensure_local_language_library() -> Path | None:
     ]
     try:
         subprocess.run(command, check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError:
-        return None
-    return TREE_SITTER_LUA_LIBRARY
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or exc.stdout or "").strip()
+        detail = stderr.splitlines()[0] if stderr else f"exit code {exc.returncode}"
+        return None, f"failed to build local tree-sitter grammar with {compiler_name}: {detail}"
+    return TREE_SITTER_LUA_LIBRARY, None
+
+
+def _find_available_c_compiler() -> tuple[str | None, str | None]:
+    for compiler_name in COMPILER_CANDIDATES:
+        compiler_path = shutil.which(compiler_name)
+        if compiler_path:
+            return compiler_name, compiler_path
+    return None, None
+
+
+def _set_backend_info(info: ParserBackendInfo) -> None:
+    global _BACKEND_INFO_CACHE
+    _BACKEND_INFO_CACHE = info
 
 
 def _collect_call_sites_tree_sitter(
@@ -373,310 +486,6 @@ def _decode_bytes(source_bytes: bytes, start: int, end: int) -> str:
     return source_bytes[start:end].decode("utf-8")
 
 
-def _collect_call_sites_fallback(source: str, qualified_name: str) -> tuple[CallSite, ...]:
-    pattern = re.compile(rf"\b{re.escape(qualified_name)}\s*\(")
-    calls: list[CallSite] = []
-
-    for match in pattern.finditer(source):
-        open_paren_index = source.find("(", match.start())
-        close_paren_index = _find_matching_paren(source, open_paren_index)
-        if close_paren_index == -1:
-            continue
-
-        args_text = source[open_paren_index + 1 : close_paren_index]
-        line, column = _line_and_column(source, match.start())
-        calls.append(
-            CallSite(
-                callee=qualified_name,
-                offset=match.start(),
-                line=line,
-                column=column,
-                args=tuple(_split_top_level_args(args_text)),
-            )
-        )
-
-    return tuple(calls)
-
-
-def _collect_receiver_accesses_fallback(source: str) -> tuple[ReceiverAccess, ...]:
-    accesses: list[ReceiverAccess] = []
-    index = 0
-
-    while index < len(source):
-        if not _is_identifier_start(source[index]):
-            index += 1
-            continue
-        if index > 0 and _is_identifier_part(source[index - 1]):
-            index += 1
-            continue
-
-        parsed = _parse_access_chain(source, index)
-        if parsed is None:
-            index += 1
-            continue
-
-        access, next_index = parsed
-        if access is not None:
-            accesses.append(access)
-        index = max(index + 1, next_index)
-
-    return tuple(accesses)
-
-
-def _collect_length_operands_fallback(source: str) -> tuple[LengthOperand, ...]:
-    operands: list[LengthOperand] = []
-    index = 0
-    quote: str | None = None
-    escaped = False
-
-    while index < len(source):
-        char = source[index]
-        if quote is not None:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == quote:
-                quote = None
-            index += 1
-            continue
-
-        if char in {"'", '"'}:
-            quote = char
-            index += 1
-            continue
-
-        if char != "#":
-            index += 1
-            continue
-
-        parsed = _parse_length_operand(source, index)
-        if parsed is None:
-            index += 1
-            continue
-
-        operand, next_index = parsed
-        operands.append(operand)
-        index = max(index + 1, next_index)
-
-    return tuple(operands)
-
-
-def _find_matching_paren(source: str, open_paren_index: int) -> int:
-    depth = 0
-    quote: str | None = None
-    escaped = False
-
-    for index in range(open_paren_index, len(source)):
-        char = source[index]
-        if quote is not None:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == quote:
-                quote = None
-            continue
-
-        if char in {"'", '"'}:
-            quote = char
-            continue
-        if char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-            if depth == 0:
-                return index
-
-    return -1
-
-
-def _split_top_level_args(args_text: str) -> list[str]:
-    args: list[str] = []
-    start = 0
-    depth = 0
-    quote: str | None = None
-    escaped = False
-
-    for index, char in enumerate(args_text):
-        if quote is not None:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == quote:
-                quote = None
-            continue
-
-        if char in {"'", '"'}:
-            quote = char
-            continue
-        if char in "([{":
-            depth += 1
-            continue
-        if char in ")]}":
-            depth = max(0, depth - 1)
-            continue
-        if char == "," and depth == 0:
-            args.append(args_text[start:index].strip())
-            start = index + 1
-
-    tail = args_text[start:].strip()
-    if tail:
-        args.append(tail)
-    return args
-
-
-def _parse_access_chain(source: str, start: int) -> tuple[ReceiverAccess | None, int] | None:
-    identifier, index = _read_identifier(source, start)
-    if identifier is None:
-        return None
-
-    current = identifier
-    chain_start = start
-    last_access: ReceiverAccess | None = None
-
-    while index < len(source):
-        if source[index] == ".":
-            member, next_index = _read_identifier(source, index + 1)
-            if member is None:
-                break
-            expression = f"{current}.{member}"
-            line, column = _line_and_column(source, chain_start)
-            last_access = ReceiverAccess(
-                receiver=current,
-                expression=expression,
-                offset=chain_start,
-                line=line,
-                column=column,
-            )
-            current = expression
-            index = next_index
-            continue
-
-        if source[index] == "[":
-            close_index = _find_matching_bracket(source, index)
-            if close_index == -1:
-                break
-            inner = source[index + 1 : close_index]
-            expression = f"{current}[{inner}]"
-            line, column = _line_and_column(source, chain_start)
-            last_access = ReceiverAccess(
-                receiver=current,
-                expression=expression,
-                offset=chain_start,
-                line=line,
-                column=column,
-            )
-            current = expression
-            index = close_index + 1
-            continue
-
-        break
-
-    if last_access is None:
-        return None
-    if _is_immediately_called_text(source, index):
-        return (None, index)
-    return (last_access, index)
-
-
-def _parse_length_operand(source: str, operator_index: int) -> tuple[LengthOperand, int] | None:
-    index = operator_index + 1
-    while index < len(source) and source[index].isspace():
-        index += 1
-    if index >= len(source):
-        return None
-
-    if source[index] == "(":
-        close_index = _find_matching_paren(source, index)
-        if close_index == -1:
-            return None
-        operand_text = source[index + 1 : close_index].strip()
-        if not operand_text:
-            return None
-        line, column = _line_and_column(source, operator_index)
-        return (
-            LengthOperand(
-                operand=operand_text,
-                offset=operator_index,
-                line=line,
-                column=column,
-            ),
-            close_index + 1,
-        )
-
-    parsed = _parse_access_chain(source, index)
-    if parsed is None:
-        identifier, next_index = _read_identifier(source, index)
-        if identifier is None:
-            return None
-        line, column = _line_and_column(source, operator_index)
-        return (
-            LengthOperand(
-                operand=identifier,
-                offset=operator_index,
-                line=line,
-                column=column,
-            ),
-            next_index,
-        )
-
-    access, next_index = parsed
-    operand_text = access.expression if access is not None else source[index:next_index].strip()
-    if not operand_text:
-        return None
-    line, column = _line_and_column(source, operator_index)
-    return (
-        LengthOperand(
-            operand=operand_text,
-            offset=operator_index,
-            line=line,
-            column=column,
-        ),
-        next_index,
-    )
-
-
-def _read_identifier(source: str, start: int) -> tuple[str | None, int]:
-    if start >= len(source) or not _is_identifier_start(source[start]):
-        return (None, start)
-
-    index = start + 1
-    while index < len(source) and _is_identifier_part(source[index]):
-        index += 1
-    return (source[start:index], index)
-
-
-def _find_matching_bracket(source: str, open_bracket_index: int) -> int:
-    depth = 0
-    quote: str | None = None
-    escaped = False
-
-    for index in range(open_bracket_index, len(source)):
-        char = source[index]
-        if quote is not None:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == quote:
-                quote = None
-            continue
-
-        if char in {"'", '"'}:
-            quote = char
-            continue
-        if char == "[":
-            depth += 1
-        elif char == "]":
-            depth -= 1
-            if depth == 0:
-                return index
-
-    return -1
-
-
 def _is_immediately_called(source_bytes: bytes, end_byte: int) -> bool:
     index = end_byte
     while index < len(source_bytes) and chr(source_bytes[index]).isspace():
@@ -684,26 +493,3 @@ def _is_immediately_called(source_bytes: bytes, end_byte: int) -> bool:
     if index >= len(source_bytes):
         return False
     return chr(source_bytes[index]) in {"(", ":"}
-
-
-def _is_immediately_called_text(source: str, index: int) -> bool:
-    while index < len(source) and source[index].isspace():
-        index += 1
-    if index >= len(source):
-        return False
-    return source[index] in {"(", ":"}
-
-
-def _is_identifier_start(char: str) -> bool:
-    return char == "_" or char.isalpha()
-
-
-def _is_identifier_part(char: str) -> bool:
-    return char == "_" or char.isalnum()
-
-
-def _line_and_column(source: str, offset: int) -> tuple[int, int]:
-    before = source[:offset]
-    line = before.count("\n") + 1
-    column = offset - before.rfind("\n")
-    return line, column
