@@ -712,6 +712,8 @@ def draft_review_improvements(
     draft_contract_by_name = {
         contract.qualified_name: contract for contract in draft_function_contracts(snapshot)
     }
+    recognized_helpers = _recognized_helper_names(snapshot)
+    local_recognized_helpers = _local_recognized_helper_names(snapshot)
 
     proposals: list[ImprovementProposal] = []
     seen: set[tuple[str, str, str]] = set()
@@ -748,10 +750,14 @@ def draft_review_improvements(
                 seen.add(key)
 
         current_module = file_module_by_path.get(_normalize_path_key(assessment.candidate.file))
+        known_helper_names = recognized_helpers | local_recognized_helpers.get(
+            assessment.candidate.file,
+            frozenset(),
+        )
         related_names = _related_functions_from_assessment(
             assessment,
             current_module=current_module,
-            known_function_names=known_draft_names,
+            known_function_names=known_draft_names | known_helper_names,
         )
         for function_name in related_names:
             if function_name in draft_contract_by_name:
@@ -776,6 +782,8 @@ def draft_review_improvements(
                 seen.add(key)
                 continue
 
+            if function_name in known_helper_names:
+                continue
             key = ("wrapper_recognizer", assessment.candidate.case_id, function_name)
             if key in seen:
                 continue
@@ -1084,6 +1092,29 @@ def _collect_snapshot_inline_guard_contracts(
         tuple(file_path.read_text(encoding="utf-8") for file_path in snapshot.lua_files),
         allow_local=False,
     )
+
+
+def _recognized_helper_names(snapshot: RepositorySnapshot) -> frozenset[str]:
+    helper_names = set(_collect_snapshot_transparent_return_wrappers(snapshot))
+    helper_names.update(
+        contract.qualified_name for contract in _collect_snapshot_inline_guard_contracts(snapshot)
+    )
+    return frozenset(helper_names)
+
+
+def _local_recognized_helper_names(
+    snapshot: RepositorySnapshot,
+) -> dict[str, frozenset[str]]:
+    helper_names_by_file: dict[str, frozenset[str]] = {}
+    for file_path in snapshot.lua_files:
+        source = file_path.read_text(encoding="utf-8")
+        helper_names = set(collect_transparent_return_wrappers((source,), allow_local=True))
+        helper_names.update(
+            contract.qualified_name
+            for contract in collect_inline_guard_contracts((source,), allow_local=True)
+        )
+        helper_names_by_file[str(file_path)] = frozenset(helper_names)
+    return helper_names_by_file
 
 
 def _draft_contract_from_wrapper_mapping(

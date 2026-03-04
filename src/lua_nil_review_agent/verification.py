@@ -30,6 +30,7 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
     """Apply a lightweight automatic verification pass to a verdict."""
 
     observed_guards = _tuple_field(packet, "observed_guards")
+    proofs = packet.static_proofs
 
     if verdict.status == "risky" and not observed_guards and verdict.risk_path:
         return Verdict(
@@ -48,8 +49,31 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
             ),
         )
 
+    if verdict.status == "uncertain" and proofs:
+        preview = preview_static_verification(proofs)
+        if preview is not None and (preview.verification_score or 0) >= _SAFE_VERIFY_THRESHOLD:
+            proof_summaries = preview.evidence
+            return Verdict(
+                case_id=verdict.case_id,
+                status="safe_verified",
+                confidence="high",
+                risk_path=(),
+                safety_evidence=verdict.safety_evidence or proof_summaries,
+                counterarguments_considered=verdict.counterarguments_considered,
+                suggested_fix=None,
+                needs_human=False,
+                autofix_patch=None,
+                verification_summary=VerificationSummary(
+                    mode="structured_static_proof_override",
+                    strongest_proof_kind=preview.strongest_proof_kind,
+                    strongest_proof_depth=preview.strongest_proof_depth,
+                    strongest_proof_summary=preview.strongest_proof_summary,
+                    verification_score=preview.verification_score,
+                    evidence=proof_summaries,
+                ),
+            )
+
     if verdict.status == "safe":
-        proofs = packet.static_proofs
         if proofs:
             preview = preview_static_verification(proofs)
             if preview is None:

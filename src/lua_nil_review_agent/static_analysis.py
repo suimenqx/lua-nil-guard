@@ -2584,7 +2584,7 @@ def _transparent_return_mapping(
     ]
     if len(meaningful_lines) != 1:
         if len(meaningful_lines) == 2:
-            return _aliased_wrapper_return_mapping(meaningful_lines, params)
+            return _assignment_then_return_mapping(meaningful_lines, params)
         return ()
     statement = meaningful_lines[0]
     if not statement.startswith("return "):
@@ -2613,16 +2613,42 @@ def _aliased_wrapper_return_mapping(
     meaningful_lines: list[str],
     params: list[str],
 ) -> tuple[tuple[int, int], ...]:
-    assign_match = _ASSIGNMENT_RE.match(meaningful_lines[0])
-    if assign_match is None:
+    return _assignment_then_return_mapping(meaningful_lines, params)
+
+
+def _assignment_then_return_mapping(
+    meaningful_lines: list[str],
+    params: list[str],
+) -> tuple[tuple[int, int], ...]:
+    if len(meaningful_lines) != 2:
         return ()
-    alias = assign_match.group(1)
-    if meaningful_lines[1] != f"return {alias}":
+    return_statement = meaningful_lines[1]
+    if not return_statement.startswith("return "):
         return ()
-    source_arg = _wrapper_return_source_arg(assign_match.group(2), params)
+    assignment = _split_assignment_statement(meaningful_lines[0])
+    if assignment is None:
+        return ()
+    targets, values = assignment
+    if len(targets) != 1 or len(values) != 1:
+        return ()
+    source_arg = _wrapper_return_source_arg(values[0], params)
     if source_arg is None:
         return ()
-    return ((1, source_arg),)
+    assignment_target = targets[0].strip()
+    return_values = _split_top_level_values(return_statement[len("return ") :])
+    if not return_values:
+        return ()
+
+    mapping: list[tuple[int, int]] = []
+    for slot, value in enumerate(return_values, start=1):
+        resolved_source = source_arg if _same_symbol_reference(value, assignment_target) else _wrapper_return_source_arg(
+            value,
+            params,
+        )
+        if resolved_source is None:
+            return ()
+        mapping.append((slot, resolved_source))
+    return tuple(mapping)
 
 
 def _wrapper_return_source_arg(

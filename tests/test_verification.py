@@ -219,6 +219,58 @@ def test_verify_verdict_elevates_safe_confidence_for_deep_chained_proof() -> Non
     assert result.verification_summary.verification_score == 60
 
 
+def test_verify_verdict_overrides_uncertain_with_strong_static_proof() -> None:
+    verdict = Verdict(
+        case_id="case_uncertain_structured",
+        status="uncertain",
+        confidence="medium",
+        risk_path=("username <- req.params.username",),
+        safety_evidence=(),
+        counterarguments_considered=("backend requested more context",),
+        suggested_fix=None,
+        needs_human=True,
+    )
+    packet = EvidencePacket(
+        case_id="case_uncertain_structured",
+        target=EvidenceTarget(
+            file="demo.lua",
+            line=11,
+            column=1,
+            sink="string.match",
+            arg_index=1,
+            expression="username",
+        ),
+        local_context="if username then\n  return string.match(username, '^a')\nend",
+        related_functions=(),
+        function_summaries=(),
+        knowledge_facts=(),
+        static_reasoning={
+            "state": "safe_static",
+            "origin_candidates": ("req.params.username",),
+            "observed_guards": ("if username then",),
+        },
+        static_proofs=(
+            StaticProof(
+                kind="direct_guard",
+                summary="if username then",
+                subject="username",
+                depth=0,
+            ),
+        ),
+    )
+
+    result = verify_verdict(verdict, packet)
+
+    assert result.status == "safe_verified"
+    assert result.confidence == "high"
+    assert result.needs_human is False
+    assert result.safety_evidence == ("if username then",)
+    assert result.verification_summary is not None
+    assert result.verification_summary.mode == "structured_static_proof_override"
+    assert result.verification_summary.strongest_proof_kind == "direct_guard"
+    assert result.verification_summary.verification_score == 100
+
+
 def test_verify_verdict_does_not_let_legacy_guards_override_weak_structured_proof() -> None:
     verdict = Verdict(
         case_id="case_safe_weak_structured",
