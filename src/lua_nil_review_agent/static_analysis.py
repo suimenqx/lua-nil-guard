@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
 import re
 
 from .collector import top_level_phase_for_prefix
@@ -10,8 +12,10 @@ from .knowledge import (
     contract_applies_to_scope_kind,
     contract_applies_to_top_level_phase,
     contract_applies_to_sink,
+    extract_access_path,
 )
 from .models import CandidateCase, FunctionContract, StaticAnalysisResult, StaticProof
+from .parser_backend import _load_lua_language
 from .summaries import detect_module_name
 
 
@@ -20,6 +24,22 @@ _SIMPLE_CALL_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_:.]*)\s*\((.*)\)\s*$")
 _FUNCTION_DEF_RE = re.compile(r"^\s*(?:local\s+)?function\s+([A-Za-z_][A-Za-z0-9_:.]*)\s*\((.*?)\)\s*$")
 _ASSIGNMENT_RE = re.compile(r"^\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$")
 _MAX_CHAINED_RETURN_PROOF_DEPTH = 2
+_AST_CONTROL_FLOW_QUERY_PATH = Path(__file__).resolve().parent / "queries" / "lua" / "control_flow.scm"
+_AST_CONTROL_FLOW_QUERY_TEXT: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _AstGuardOutcome:
+    proofs: tuple[StaticProof, ...]
+    analysis_mode: str
+    unknown_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _AstControlFlowContext:
+    tree: object
+    source_bytes: bytes
+    captures: dict[str, tuple[object, ...]]
 
 
 def analyze_candidate(
@@ -31,7 +51,7 @@ def analyze_candidate(
 ) -> StaticAnalysisResult:
     """Apply bounded local heuristics before escalating to agent review."""
 
-    if not _IDENTIFIER_RE.match(candidate.symbol):
+    if not _is_trackable_symbol(candidate.symbol):
         return StaticAnalysisResult(
             state="unknown_static",
             observed_guards=(),
@@ -44,6 +64,7 @@ def analyze_candidate(
     lines = source.splitlines()
     prior_lines = lines[: max(0, candidate.line - 1)]
     origin_context = _find_last_assignment(prior_lines, candidate.symbol)
+    origin_detail = _find_last_assignment_detail(prior_lines, candidate.symbol)
     origin = origin_context[0] if origin_context is not None else None
     proofs: list[StaticProof] = []
     current_module = detect_module_name(source)
@@ -52,15 +73,21 @@ def analyze_candidate(
         if transparent_return_wrappers is not None
         else collect_transparent_return_wrappers((source,))
     )
+    ast_guard_outcome = _analyze_guards_with_ast(source, candidate)
+    analysis_mode = ast_guard_outcome.analysis_mode
+    unknown_reason = ast_guard_outcome.unknown_reason
     current_scope_kind = _scope_kind_for_function_scope(candidate.function_scope)
     current_top_level_phase = _top_level_phase_for_candidate(source, candidate)
 
-    if _has_active_positive_guard(prior_lines, candidate.symbol):
-        proofs.append(_build_positive_guard_proof(candidate.symbol))
-    if _has_early_exit_guard(prior_lines, candidate.symbol):
-        proofs.append(_build_early_exit_guard_proof(candidate.symbol))
-    if _has_active_assert(prior_lines, candidate.symbol):
-        proofs.append(_build_assert_guard_proof(candidate.symbol))
+    if ast_guard_outcome.analysis_mode == "ast_primary":
+        proofs.extend(ast_guard_outcome.proofs)
+    else:
+        if _has_active_positive_guard(prior_lines, candidate.symbol):
+            proofs.append(_build_positive_guard_proof(candidate.symbol))
+        if _has_early_exit_guard(prior_lines, candidate.symbol):
+            proofs.append(_build_early_exit_guard_proof(candidate.symbol))
+        if _has_active_assert(prior_lines, candidate.symbol):
+            proofs.append(_build_assert_guard_proof(candidate.symbol))
     contract_guard = _active_contract_guard(
         prior_lines,
         candidate.symbol,
@@ -74,6 +101,13 @@ def analyze_candidate(
     )
     if contract_guard is not None:
         proofs.append(contract_guard)
+    guarded_field_origin_proof = _guarded_field_origin_proof(
+        prior_lines,
+        origin_detail,
+        subject=candidate.symbol,
+    )
+    if guarded_field_origin_proof is not None:
+        proofs.append(guarded_field_origin_proof)
     return_contract_guard = _origin_return_contract_guard(
         prior_lines,
         origin_context,
@@ -95,6 +129,8 @@ def analyze_candidate(
     deduped_proofs = _dedupe_proofs(tuple(proofs))
     observed_guards = tuple(proof.summary for proof in deduped_proofs)
     state = "safe_static" if deduped_proofs else "unknown_static"
+    if deduped_proofs:
+        unknown_reason = None
     origins = (origin,) if origin is not None else (candidate.expression,)
     origin_usage_modes = (
         (origin_context[1],)
@@ -113,41 +149,494 @@ def analyze_candidate(
         origin_usage_modes=origin_usage_modes,
         origin_return_slots=origin_return_slots,
         proofs=deduped_proofs,
+        analysis_mode=analysis_mode,
+        unknown_reason=unknown_reason,
     )
+
+
+def _analyze_guards_with_ast(source: str, candidate: CandidateCase) -> _AstGuardOutcome:
+    context = _parse_control_flow_tree(source)
+    if context is None:
+        return _AstGuardOutcome(proofs=(), analysis_mode="legacy_only")
+
+    target_node = _resolve_candidate_node(context.tree.root_node, candidate)
+    if target_node is None:
+        return _AstGuardOutcome(
+            proofs=(),
+            analysis_mode="ast_fallback_to_legacy",
+            unknown_reason="unresolved_ast_node",
+        )
+
+    unknown_reason = _classify_ast_unknown_reason(source, context, target_node, candidate)
+    if unknown_reason is not None:
+        return _AstGuardOutcome(
+            proofs=(),
+            analysis_mode="ast_fallback_to_legacy",
+            unknown_reason=unknown_reason,
+        )
+
+    proofs: list[StaticProof] = []
+    positive_guard = _ast_positive_guard_proof(target_node, candidate.symbol, context.source_bytes)
+    if positive_guard is not None:
+        proofs.append(positive_guard)
+    repeat_until_guard = _ast_repeat_until_guard_proof(
+        target_node,
+        candidate.symbol,
+        context.source_bytes,
+    )
+    if repeat_until_guard is not None:
+        proofs.append(repeat_until_guard)
+    early_exit_guard = _ast_early_exit_guard_proof(target_node, candidate.symbol, context.source_bytes)
+    if early_exit_guard is not None:
+        proofs.append(early_exit_guard)
+    assert_guard = _ast_assert_guard_proof(target_node, candidate.symbol, context.source_bytes)
+    if assert_guard is not None:
+        proofs.append(assert_guard)
+
+    if proofs:
+        return _AstGuardOutcome(
+            proofs=_dedupe_proofs(tuple(proofs)),
+            analysis_mode="ast_primary",
+        )
+
+    return _AstGuardOutcome(
+        proofs=(),
+        analysis_mode="ast_fallback_to_legacy",
+    )
+
+
+def _parse_control_flow_tree(source: str):
+    language = _load_lua_language()
+    if language is None:
+        return None
+    try:
+        from tree_sitter import Parser, Query, QueryCursor
+    except Exception:
+        return None
+
+    try:
+        query = Query(language, _load_ast_control_flow_query_text())
+        parser = Parser()
+        parser.language = language
+        source_bytes = source.encode("utf-8")
+        tree = parser.parse(source_bytes)
+        captures = {
+            name: tuple(nodes)
+            for name, nodes in QueryCursor(query).captures(tree.root_node).items()
+        }
+    except Exception:
+        return None
+    return _AstControlFlowContext(
+        tree=tree,
+        source_bytes=source_bytes,
+        captures=captures,
+    )
+
+
+def _load_ast_control_flow_query_text() -> str:
+    global _AST_CONTROL_FLOW_QUERY_TEXT
+    if _AST_CONTROL_FLOW_QUERY_TEXT is None:
+        _AST_CONTROL_FLOW_QUERY_TEXT = _AST_CONTROL_FLOW_QUERY_PATH.read_text(encoding="utf-8")
+    return _AST_CONTROL_FLOW_QUERY_TEXT
+
+
+def _resolve_candidate_node(root_node, candidate: CandidateCase):
+    row = max(0, candidate.line - 1)
+    start_column = max(0, candidate.column - 1)
+    end_column = start_column + max(1, len(candidate.symbol))
+    try:
+        node = root_node.descendant_for_point_range((row, start_column), (row, end_column))
+    except Exception:
+        return None
+    while node is not None and not node.is_named:
+        node = node.parent
+    return node
+
+
+def _classify_ast_unknown_reason(
+    source: str,
+    context: _AstControlFlowContext,
+    target_node,
+    candidate: CandidateCase,
+) -> str | None:
+    for capture_name in ("while", "for"):
+        if any(_node_contains(node, target_node) for node in context.captures.get(capture_name, ())):
+            return "unsupported_control_flow"
+
+    prefix = "\n".join(source.splitlines()[: max(0, candidate.line)])
+    if "setmetatable(" in prefix or "__index" in prefix or "getmetatable(" in prefix:
+        return "dynamic_metatable"
+
+    if "[" in candidate.expression and not re.search(r"\[\s*(['\"])[^'\"]+\1\s*\]", candidate.expression):
+        return "dynamic_index_expression"
+
+    return None
+
+
+def _ast_positive_guard_proof(target_node, symbol: str, source_bytes: bytes) -> StaticProof | None:
+    ancestor = target_node
+    while ancestor is not None:
+        if ancestor.type in {"if_statement", "elseif_statement"}:
+            consequence = ancestor.child_by_field_name("consequence")
+            condition = ancestor.child_by_field_name("condition")
+            if (
+                consequence is not None
+                and _node_contains(consequence, target_node)
+                and _condition_is_positive_symbol_check(condition, symbol)
+                and not _path_has_assignment_between(consequence, target_node, symbol, source_bytes)
+            ):
+                return _build_positive_guard_proof(symbol)
+        ancestor = ancestor.parent
+    return None
+
+
+def _ast_repeat_until_guard_proof(target_node, symbol: str, source_bytes: bytes) -> StaticProof | None:
+    if _find_preceding_repeat_until_guard(target_node, symbol, source_bytes):
+        return _build_repeat_until_guard_proof(symbol)
+    return None
+
+
+def _ast_early_exit_guard_proof(target_node, symbol: str, source_bytes: bytes) -> StaticProof | None:
+    if _find_preceding_guard_node(
+        target_node,
+        symbol,
+        source_bytes,
+        guard_kind="early_exit",
+    ):
+        return _build_early_exit_guard_proof(symbol)
+    return None
+
+
+def _ast_assert_guard_proof(target_node, symbol: str, source_bytes: bytes) -> StaticProof | None:
+    if _find_preceding_guard_node(
+        target_node,
+        symbol,
+        source_bytes,
+        guard_kind="assert",
+    ):
+        return _build_assert_guard_proof(symbol)
+    return None
+
+
+def _find_preceding_guard_node(target_node, symbol: str, source_bytes: bytes, *, guard_kind: str) -> bool:
+    current = target_node
+    while current is not None and current.parent is not None:
+        parent = current.parent
+        for sibling in reversed(_preceding_named_siblings(parent, current)):
+            if _subtree_assigns_symbol(sibling, symbol, source_bytes):
+                return False
+            if guard_kind == "early_exit" and _node_is_negative_guard_exit(sibling, symbol, source_bytes):
+                return True
+            if guard_kind == "assert" and _node_is_assert_guard(sibling, symbol, source_bytes):
+                return True
+        current = parent
+    return False
+
+
+def _find_preceding_repeat_until_guard(target_node, symbol: str, source_bytes: bytes) -> bool:
+    current = target_node
+    while current is not None and current.parent is not None:
+        parent = current.parent
+        for sibling in reversed(_preceding_named_siblings(parent, current)):
+            if _node_is_repeat_until_guard(sibling, symbol, source_bytes):
+                return True
+            if _subtree_assigns_symbol(sibling, symbol, source_bytes):
+                return False
+        current = parent
+    return False
+
+
+def _preceding_named_siblings(parent, node) -> tuple[object, ...]:
+    siblings: list[object] = []
+    for child in parent.named_children:
+        if child.start_byte >= node.start_byte:
+            break
+        siblings.append(child)
+    return tuple(siblings)
+
+
+def _subtree_assigns_symbol(node, symbol: str, source_bytes: bytes) -> bool:
+    stack: list[tuple[object, bool]] = [(node, False)]
+    while stack:
+        current, nested_scope = stack.pop()
+        if current.type == "variable_declaration":
+            assignment = next(
+                (child for child in current.named_children if child.type == "assignment_statement"),
+                None,
+            )
+            if assignment is not None and not nested_scope and _assignment_node_targets_symbol(
+                assignment,
+                symbol,
+                source_bytes,
+            ):
+                return True
+            continue
+        if current.type == "assignment_statement" and _assignment_node_targets_symbol(
+            current,
+            symbol,
+            source_bytes,
+        ):
+            return True
+        if current.type == "function_declaration":
+            name = current.child_by_field_name("name")
+            is_local_function = _is_local_function_declaration(current)
+            if (
+                name is not None
+                and _node_text(source_bytes, name).strip() == symbol
+                and (not nested_scope or not is_local_function)
+            ):
+                return True
+            body = current.child_by_field_name("body")
+            if body is not None:
+                stack.append((body, True))
+            continue
+        if current.type in {
+            "do_statement",
+            "while_statement",
+            "repeat_statement",
+            "for_statement",
+            "for_in_statement",
+        }:
+            for child in reversed(current.named_children):
+                stack.append((child, True))
+            continue
+        for child in reversed(current.named_children):
+            stack.append((child, nested_scope))
+    return False
+
+
+def _assignment_node_targets_symbol(node, symbol: str, source_bytes: bytes) -> bool:
+    if not node.children:
+        return False
+    variable_list = node.children[0]
+    if variable_list.type != "variable_list":
+        return False
+    return any(
+        _same_symbol_reference(_node_text(source_bytes, child), symbol)
+        for child in variable_list.named_children
+    )
+
+
+def _is_local_function_declaration(node) -> bool:
+    return bool(node.children) and node.children[0].type == "local"
+
+
+def _node_is_negative_guard_exit(node, symbol: str, source_bytes: bytes) -> bool:
+    if node.type != "if_statement":
+        return False
+    if node.child_by_field_name("alternative") is not None:
+        return False
+    condition = node.child_by_field_name("condition")
+    consequence = node.child_by_field_name("consequence")
+    if not _condition_is_negative_symbol_check(condition, symbol):
+        return False
+    if consequence is None:
+        return False
+    return _block_guarantees_early_exit(consequence, source_bytes)
+
+
+def _node_is_assert_guard(node, symbol: str, source_bytes: bytes) -> bool:
+    if node.type != "function_call":
+        return False
+    name_node = node.children[0] if node.children else None
+    arguments_node = next((child for child in node.children if child.type == "arguments"), None)
+    if name_node is None or arguments_node is None:
+        return False
+    if _node_text(source_bytes, name_node).strip() != "assert":
+        return False
+    args = tuple(_node_text(source_bytes, child).strip() for child in arguments_node.named_children)
+    return bool(args) and _same_symbol_reference(args[0], symbol)
+
+
+def _node_is_repeat_until_guard(node, symbol: str, source_bytes: bytes) -> bool:
+    if node.type != "repeat_statement":
+        return False
+    body = node.child_by_field_name("body")
+    condition = node.child_by_field_name("condition")
+    if body is None or condition is None:
+        return False
+    if not _condition_is_positive_symbol_check(condition, symbol):
+        return False
+    if _block_contains_nonlocal_break(body):
+        return False
+    return True
+
+
+def _block_guarantees_early_exit(block_node, source_bytes: bytes) -> bool:
+    statements = list(block_node.named_children)
+    if not statements:
+        return False
+    terminal = statements[-1]
+    if terminal.type == "return_statement":
+        return True
+    if terminal.type == "break_statement":
+        return True
+    if terminal.type == "function_call":
+        return _node_text(source_bytes, terminal).strip().startswith("error(")
+    return False
+
+
+def _block_contains_nonlocal_break(block_node) -> bool:
+    stack: list[tuple[object, bool]] = [(block_node, False)]
+    while stack:
+        current, nested_loop = stack.pop()
+        if current.type == "break_statement" and not nested_loop:
+            return True
+        if current.type == "function_declaration":
+            continue
+        child_nested_loop = nested_loop or (
+            current is not block_node and current.type in {"while_statement", "repeat_statement", "for_statement"}
+        )
+        for child in reversed(current.named_children):
+            stack.append((child, child_nested_loop))
+    return False
+
+
+def _condition_is_positive_symbol_check(condition_node, symbol: str) -> bool:
+    if condition_node is None:
+        return False
+    text = condition_node.text.decode("utf-8").strip()
+    return _matches_positive_guard_text(text, symbol)
+
+
+def _condition_is_negative_symbol_check(condition_node, symbol: str) -> bool:
+    if condition_node is None:
+        return False
+    text = condition_node.text.decode("utf-8").strip()
+    return _matches_negative_guard_text(text, symbol)
+
+
+def _path_has_assignment_between(scope_node, target_node, symbol: str, source_bytes: bytes) -> bool:
+    current = target_node
+    while current is not None and current != scope_node:
+        parent = current.parent
+        if parent is None:
+            break
+        for sibling in reversed(_preceding_named_siblings(parent, current)):
+            if _subtree_assigns_symbol(sibling, symbol, source_bytes):
+                return True
+        current = parent
+    return False
+
+
+def _node_contains(ancestor, node) -> bool:
+    return ancestor.start_byte <= node.start_byte and node.end_byte <= ancestor.end_byte
+
+
+def _node_text(source_bytes: bytes, node) -> str:
+    return source_bytes[node.start_byte : node.end_byte].decode("utf-8")
 
 
 def _find_last_assignment(lines: list[str], symbol: str) -> tuple[str, str, int] | None:
-    single_pattern = re.compile(
-        rf"^\s*(?:local\s+)?{re.escape(symbol)}\s*=\s*(.+?)\s*$",
-    )
-    multi_pattern = re.compile(
-        r"^\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)+)\s*=\s*(.+?)\s*$",
-    )
+    detail = _find_last_assignment_detail(lines, symbol)
+    if detail is None:
+        return None
+    origin, usage_mode, return_slot, _ = detail
+    return origin, usage_mode, return_slot
 
+
+def _find_last_assignment_detail(
+    lines: list[str],
+    symbol: str,
+) -> tuple[str, str, int, int] | None:
     line_paths, final_path = _scan_branch_paths(lines)
 
-    for line, path in zip(reversed(lines), reversed(line_paths)):
+    for line_index in range(len(lines) - 1, -1, -1):
+        line = lines[line_index]
+        path = line_paths[line_index]
         if not _branch_path_is_prefix(path, final_path):
             continue
-        match = single_pattern.match(line)
-        if match:
-            return match.group(1), "single_assignment", 1
-        match = multi_pattern.match(line)
-        if match:
-            names = [name.strip() for name in match.group(1).split(",")]
-            if symbol not in names:
-                continue
+        assignment = _split_assignment_statement(line)
+        if assignment is None:
+            continue
+        targets, values = assignment
+        if not targets:
+            continue
 
-            values = _split_top_level_values(match.group(2))
-            if not values:
-                continue
+        matching_index = next(
+            (
+                index
+                for index, target in enumerate(targets)
+                if _same_symbol_reference(target, symbol)
+            ),
+            None,
+        )
+        if matching_index is None:
+            continue
+        if not values:
+            continue
 
-            position = names.index(symbol)
-            if position < len(values):
-                return values[position], "multi_assignment", 1
-            if len(values) == 1:
-                # A single function call can populate multiple targets in Lua.
-                return values[0], "multi_assignment", position + 1
+        usage_mode = "multi_assignment" if len(targets) > 1 else "single_assignment"
+        if matching_index < len(values):
+            return values[matching_index], usage_mode, 1, line_index
+        if len(values) == 1:
+            # A single function call can populate multiple targets in Lua.
+            return values[0], "multi_assignment", matching_index + 1, line_index
+    return None
+
+
+def _split_assignment_statement(line: str) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+    code = _strip_lua_comment(line).strip()
+    if not code:
+        return None
+    if code.startswith(("function ", "local function ")):
+        return None
+
+    normalized = code
+    if normalized.startswith("local "):
+        normalized = normalized[len("local ") :].lstrip()
+        if normalized.startswith("function "):
+            return None
+
+    split_index = _find_assignment_operator(normalized)
+    if split_index is None:
+        return None
+
+    lhs = normalized[:split_index].strip()
+    rhs = normalized[split_index + 1 :].strip()
+    if not lhs or not rhs:
+        return None
+
+    targets = tuple(part.strip() for part in _split_top_level_values(lhs) if part.strip())
+    values = tuple(part.strip() for part in _split_top_level_values(rhs) if part.strip())
+    if not targets:
+        return None
+    return targets, values
+
+
+def _find_assignment_operator(statement: str) -> int | None:
+    depth = 0
+    quote: str | None = None
+    escaped = False
+
+    for index, char in enumerate(statement):
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char in "([{":
+            depth += 1
+            continue
+        if char in ")]}":
+            depth = max(0, depth - 1)
+            continue
+        if depth != 0 or char != "=":
+            continue
+
+        previous = statement[index - 1] if index > 0 else ""
+        following = statement[index + 1] if index + 1 < len(statement) else ""
+        if previous in {"=", "~", "<", ">"} or following == "=":
+            continue
+        return index
+
     return None
 
 
@@ -293,6 +782,17 @@ def _build_positive_guard_proof(symbol: str) -> StaticProof:
     )
 
 
+def _build_repeat_until_guard_proof(symbol: str) -> StaticProof:
+    return StaticProof(
+        kind="loop_exit_guard",
+        summary=f"repeat ... until {symbol}",
+        subject=symbol,
+        source_symbol=symbol,
+        provenance=(f"the loop only reaches the sink after `{symbol}` becomes truthy",),
+        depth=0,
+    )
+
+
 def _build_early_exit_guard_proof(symbol: str) -> StaticProof:
     return StaticProof(
         kind="early_exit_guard",
@@ -326,6 +826,45 @@ def _build_defaulting_origin_proof(symbol: str, origin: str | None) -> StaticPro
             f"assignment `{origin or ''}` uses Lua's non-nil defaulting idiom",
         ),
         depth=0,
+    )
+
+
+def _guarded_field_origin_proof(
+    lines: list[str],
+    origin_detail: tuple[str, str, int, int] | None,
+    *,
+    subject: str,
+) -> StaticProof | None:
+    if origin_detail is None:
+        return None
+    if not _IDENTIFIER_RE.match(subject):
+        return None
+
+    origin, _usage_mode, _return_slot, assignment_line_index = origin_detail
+    if extract_access_path(origin) is None:
+        return None
+
+    assignment_prefix = lines[:assignment_line_index]
+    supporting: list[StaticProof] = []
+    if _has_active_positive_guard(assignment_prefix, origin):
+        supporting.append(_build_positive_guard_proof(origin))
+    if _has_early_exit_guard(assignment_prefix, origin):
+        supporting.append(_build_early_exit_guard_proof(origin))
+    if _has_active_assert(assignment_prefix, origin):
+        supporting.append(_build_assert_guard_proof(origin))
+
+    if not supporting:
+        return None
+
+    supporting_summaries = tuple(proof.summary for proof in _dedupe_proofs(tuple(supporting)))
+    return StaticProof(
+        kind="guarded_field_origin",
+        summary=f"{subject} inherits non-nil from {origin}",
+        subject=subject,
+        source_symbol=origin,
+        supporting_summaries=supporting_summaries,
+        provenance=(f"`{subject}` is assigned from guarded field path `{origin}`",),
+        depth=1,
     )
 
 
@@ -1418,11 +1957,43 @@ def _top_level_phase_for_candidate(source: str, candidate: CandidateCase) -> str
     return top_level_phase_for_prefix(prefix)
 
 
+def _is_trackable_symbol(symbol: str) -> bool:
+    return _IDENTIFIER_RE.match(symbol) is not None or extract_access_path(symbol) is not None
+
+
+def _same_symbol_reference(left: str, right: str) -> bool:
+    left_value = left.strip()
+    right_value = right.strip()
+    if left_value == right_value:
+        return True
+    left_path = extract_access_path(left_value)
+    right_path = extract_access_path(right_value)
+    return left_path is not None and left_path == right_path
+
+
+def _matches_positive_guard_text(condition_text: str, symbol: str) -> bool:
+    condition = condition_text.strip()
+    if _same_symbol_reference(condition, symbol):
+        return True
+    if condition.endswith(" ~= nil"):
+        return _same_symbol_reference(condition[: -len(" ~= nil")], symbol)
+    return False
+
+
+def _matches_negative_guard_text(condition_text: str, symbol: str) -> bool:
+    condition = condition_text.strip()
+    if condition.startswith("not "):
+        return _same_symbol_reference(condition[len("not ") :], symbol)
+    if condition.endswith(" == nil"):
+        return _same_symbol_reference(condition[: -len(" == nil")], symbol)
+    return False
+
+
 def _is_if_open_for_symbol(stripped_line: str, symbol: str) -> bool:
     if not _is_if_open(stripped_line):
         return False
     condition = stripped_line[len("if ") : -len(" then")].strip()
-    return condition == symbol or condition == f"{symbol} ~= nil"
+    return _matches_positive_guard_text(condition, symbol)
 
 
 def _is_if_open(stripped_line: str) -> bool:
@@ -1435,7 +2006,7 @@ def _is_elseif_line(stripped_line: str) -> bool:
 
 def _is_elseif_for_symbol(stripped_line: str, symbol: str) -> bool:
     condition = stripped_line[len("elseif ") : -len(" then")].strip()
-    return condition == symbol or condition == f"{symbol} ~= nil"
+    return _matches_positive_guard_text(condition, symbol)
 
 
 def _opens_non_if_block(stripped_line: str) -> bool:
@@ -1454,10 +2025,10 @@ def _closes_block(stripped_line: str) -> bool:
 
 
 def _is_negative_guard_for_symbol(stripped_line: str, symbol: str) -> bool:
-    return (
-        stripped_line == f"if not {symbol} then"
-        or stripped_line == f"if {symbol} == nil then"
-    )
+    if not _is_if_open(stripped_line):
+        return False
+    condition = stripped_line[len("if ") : -len(" then")].strip()
+    return _matches_negative_guard_text(condition, symbol)
 
 
 def _is_early_exit_statement(stripped_line: str) -> bool:
@@ -1470,20 +2041,11 @@ def _is_early_exit_statement(stripped_line: str) -> bool:
 
 
 def _assigns_symbol(stripped_line: str, symbol: str) -> bool:
-    single_pattern = re.compile(
-        rf"^(?:local\s+)?{re.escape(symbol)}\s*=\s*.+$",
-    )
-    if single_pattern.match(stripped_line):
-        return True
-
-    multi_pattern = re.compile(
-        r"^(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)+)\s*=\s*.+$",
-    )
-    match = multi_pattern.match(stripped_line)
-    if match is None:
+    assignment = _split_assignment_statement(stripped_line)
+    if assignment is None:
         return False
-    names = [name.strip() for name in match.group(1).split(",")]
-    return symbol in names
+    names, _ = assignment
+    return any(_same_symbol_reference(name, symbol) for name in names)
 
 
 def _scan_branch_paths(lines: list[str]) -> tuple[tuple[tuple[int, ...], ...], tuple[int, ...]]:

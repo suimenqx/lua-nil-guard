@@ -35,6 +35,8 @@ def test_build_adjudication_prompt_includes_evidence_and_hard_rules() -> None:
         origin_candidates=("req.params.username",),
         observed_guards=("if username then",),
         origin_return_slots=(1,),
+        analysis_mode="ast_primary",
+        unknown_reason="unsupported_control_flow",
         related_function_contexts=(
             "normalize_name @ lib/normalizer.lua:1\nfunction normalize_name(value)\n  value = value or ''",
         ),
@@ -66,6 +68,8 @@ def test_build_adjudication_prompt_includes_evidence_and_hard_rules() -> None:
     assert "string.match" in prompt
     assert "req.params may be nil" in prompt
     assert "origin_return_slots: 1" in prompt
+    assert "analysis_mode: ast_primary" in prompt
+    assert "unknown_reason: unsupported_control_flow" in prompt
     assert "proof_kinds: direct_guard" in prompt
     assert "Structured static proofs:" in prompt
     assert "[direct_guard] if username then" in prompt

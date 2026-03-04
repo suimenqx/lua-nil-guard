@@ -1678,6 +1678,7 @@ def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -
     assert summary.backend_review_total_seconds == 0.0
     assert summary.backend_average_seconds == 0.0
     assert summary.backend_review_average_seconds == 0.0
+    assert summary.ast_primary_cases + summary.ast_fallback_to_legacy_cases + summary.legacy_only_cases == 18
     assert summary.backend_name == "StrictEvidenceBackend"
     assert summary.backend_model is None
     assert summary.backend_executable is None

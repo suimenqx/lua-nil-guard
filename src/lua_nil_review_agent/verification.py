@@ -116,9 +116,11 @@ def _tuple_field(packet: EvidencePacket, key: str) -> tuple[str, ...]:
 def _safe_proof_score(proof: StaticProof) -> int:
     base_scores = {
         "direct_guard": 100,
+        "loop_exit_guard": 100,
         "early_exit_guard": 100,
         "assert_guard": 100,
         "contract_guard": 95,
+        "guarded_field_origin": 95,
         "local_defaulting": 95,
         "return_contract": 90,
         "wrapper_defaulting": 85,

@@ -244,6 +244,8 @@ def prepare_evidence_packet(
         origin_candidates=assessment.static_analysis.origin_candidates,
         origin_usage_modes=assessment.static_analysis.origin_usage_modes,
         origin_return_slots=assessment.static_analysis.origin_return_slots,
+        analysis_mode=assessment.static_analysis.analysis_mode,
+        unknown_reason=assessment.static_analysis.unknown_reason,
         observed_guards=assessment.static_analysis.observed_guards,
         related_function_contexts=related_function_contexts,
         static_proofs=assessment.static_analysis.proofs,
@@ -371,6 +373,21 @@ def benchmark_repository_review(
     actual_risky = sum(1 for case in cases if case.actual_status == "risky")
     actual_safe = sum(1 for case in cases if case.actual_status == "safe")
     actual_uncertain = sum(1 for case in cases if case.actual_status == "uncertain")
+    ast_primary_cases = sum(
+        1
+        for assessment, _ in labeled_assessments
+        if assessment.static_analysis.analysis_mode == "ast_primary"
+    )
+    ast_fallback_to_legacy_cases = sum(
+        1
+        for assessment, _ in labeled_assessments
+        if assessment.static_analysis.analysis_mode == "ast_fallback_to_legacy"
+    )
+    legacy_only_cases = sum(
+        1
+        for assessment, _ in labeled_assessments
+        if assessment.static_analysis.analysis_mode == "legacy_only"
+    )
     backend_cache_hits = _backend_metric(adjudication_backend, "cache_hits")
     backend_cache_misses = _backend_metric(adjudication_backend, "cache_misses")
     backend_calls = _backend_metric(adjudication_backend, "backend_call_count")
@@ -433,6 +450,9 @@ def benchmark_repository_review(
         backend_review_calls=backend_review_calls,
         backend_review_total_seconds=backend_review_total_seconds,
         backend_review_average_seconds=backend_review_average_seconds,
+        ast_primary_cases=ast_primary_cases,
+        ast_fallback_to_legacy_cases=ast_fallback_to_legacy_cases,
+        legacy_only_cases=legacy_only_cases,
     )
 
 

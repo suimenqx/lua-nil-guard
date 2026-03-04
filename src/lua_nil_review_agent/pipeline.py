@@ -14,6 +14,8 @@ def build_evidence_packet(
     observed_guards: tuple[str, ...],
     origin_usage_modes: tuple[str, ...] = (),
     origin_return_slots: tuple[int, ...] = (),
+    analysis_mode: str = "legacy_only",
+    unknown_reason: str | None = None,
     related_function_contexts: tuple[str, ...] = (),
     static_proofs: tuple[StaticProof, ...] = (),
 ) -> EvidencePacket:
@@ -41,6 +43,8 @@ def build_evidence_packet(
             "observed_guards": tuple(observed_guards),
             "proof_kinds": tuple(proof.kind for proof in static_proofs),
             "proof_summaries": tuple(proof.summary for proof in static_proofs),
+            "analysis_mode": analysis_mode,
+            "unknown_reason": unknown_reason or "",
         },
         related_function_contexts=tuple(related_function_contexts),
         static_proofs=tuple(static_proofs),

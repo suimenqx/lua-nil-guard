@@ -5,6 +5,7 @@ from pathlib import Path
 from lua_nil_review_agent.knowledge import (
     KnowledgeBase,
     KnowledgeFact,
+    contract_applies_to_call,
     derive_facts_from_contracts,
     derive_facts_from_summaries,
     facts_for_subject,
@@ -292,6 +293,20 @@ def test_derive_facts_from_contracts_skips_access_path_scoped_contracts_without_
     facts = derive_facts_from_contracts(contracts)
 
     assert facts == ()
+
+
+def test_contract_applies_to_call_normalizes_non_identifier_string_keys() -> None:
+    contract = FunctionContract(
+        qualified_name="normalize_name",
+        returns_non_nil=True,
+        required_arg_access_paths=((1, ('req.headers["x-token"]',)),),
+    )
+
+    assert contract_applies_to_call(
+        contract,
+        arg_count=1,
+        arg_values=("req.headers['x-token']",),
+    )
 
 
 def test_derive_facts_from_contracts_skips_return_slot_scoped_contracts_without_call_context() -> None:

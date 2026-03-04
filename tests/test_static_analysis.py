@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from lua_nil_review_agent.models import CandidateCase, FunctionContract
+from lua_nil_review_agent.parser_backend import get_parser_backend_info
 from lua_nil_review_agent.static_analysis import analyze_candidate
 
 
@@ -2117,3 +2118,240 @@ def test_analyze_candidate_allows_re_guard_after_reassignment() -> None:
     assert result.state == "safe_static"
     assert result.observed_guards == ("if username then",)
     assert result.origin_candidates == ("req.params.fallback_name",)
+
+
+def test_analyze_candidate_ast_preserves_guard_across_shadowed_do_block() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "if username then",
+            "  do",
+            "    local username = nil",
+            "    log(username)",
+            "  end",
+            "  return string.match(username, '^a')",
+            "end",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_ast_shadow",
+        file="demo.lua",
+        line=7,
+        column=10,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    if get_parser_backend_info().tree_sitter_available:
+        assert result.state == "safe_static"
+        assert result.analysis_mode == "ast_primary"
+        assert result.observed_guards == ("if username then",)
+    else:
+        assert result.analysis_mode == "legacy_only"
+
+
+def test_analyze_candidate_marks_loop_control_as_structured_unknown_when_ast_runs() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "while true do",
+            "  if not username then",
+            "    break",
+            "  end",
+            "  return string.match(username, '^a')",
+            "end",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_ast_unknown",
+        file="demo.lua",
+        line=6,
+        column=10,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "unknown_static"
+    if get_parser_backend_info().tree_sitter_available:
+        assert result.analysis_mode == "ast_fallback_to_legacy"
+        assert result.unknown_reason == "unsupported_control_flow"
+    else:
+        assert result.analysis_mode == "legacy_only"
+
+
+def test_analyze_candidate_marks_elseif_guard_safe_when_ast_runs() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "if ready then",
+            "  log('ready')",
+            "elseif username then",
+            "  return string.match(username, '^a')",
+            "end",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_ast_elseif",
+        file="demo.lua",
+        line=5,
+        column=10,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    if get_parser_backend_info().tree_sitter_available:
+        assert result.state == "safe_static"
+        assert result.analysis_mode == "ast_primary"
+        assert result.observed_guards == ("if username then",)
+        assert any(proof.kind == "direct_guard" for proof in result.proofs)
+    else:
+        assert result.analysis_mode == "legacy_only"
+
+
+def test_analyze_candidate_marks_repeat_until_guard_safe_when_ast_runs() -> None:
+    source = "\n".join(
+        [
+            "local username = nil",
+            "repeat",
+            "  username = req.params.username",
+            "until username",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_ast_repeat",
+        file="demo.lua",
+        line=5,
+        column=8,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    if get_parser_backend_info().tree_sitter_available:
+        assert result.state == "safe_static"
+        assert result.analysis_mode == "ast_primary"
+        assert result.observed_guards == ("repeat ... until username",)
+        assert any(proof.kind == "loop_exit_guard" for proof in result.proofs)
+    else:
+        assert result.analysis_mode == "legacy_only"
+
+
+def test_analyze_candidate_tracks_direct_field_path_guard() -> None:
+    source = "\n".join(
+        [
+            "if req.params.username then",
+            "  return string.match(req.params.username, '^a')",
+            "end",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_field_guard",
+        file="demo.lua",
+        line=2,
+        column=23,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="req.params.username",
+        symbol="req.params.username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "safe_static"
+    assert result.observed_guards == ("if req.params.username then",)
+    if get_parser_backend_info().tree_sitter_available:
+        assert result.analysis_mode == "ast_primary"
+    else:
+        assert result.analysis_mode == "legacy_only"
+
+
+def test_analyze_candidate_normalizes_bracket_field_paths_for_guards() -> None:
+    source = "\n".join(
+        [
+            "if req.headers['x-token'] then",
+            "  return string.match(req.headers[\"x-token\"], '^a')",
+            "end",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_field_bracket_guard",
+        file="demo.lua",
+        line=2,
+        column=23,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression='req.headers["x-token"]',
+        symbol='req.headers["x-token"]',
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "safe_static"
+    if get_parser_backend_info().tree_sitter_available:
+        assert result.analysis_mode == "ast_primary"
+    else:
+        assert result.analysis_mode == "legacy_only"
+
+
+def test_analyze_candidate_proves_local_from_guarded_field_origin_safe() -> None:
+    source = "\n".join(
+        [
+            "if req.params.username then",
+            "  local username = req.params.username",
+            "  return string.match(username, '^a')",
+            "end",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_guarded_field_origin",
+        file="demo.lua",
+        line=3,
+        column=23,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "safe_static"
+    assert result.observed_guards == ("username inherits non-nil from req.params.username",)
+    assert any(proof.kind == "guarded_field_origin" for proof in result.proofs)

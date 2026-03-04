@@ -40,6 +40,8 @@ def build_adjudication_prompt(
             f"- origin_candidates: {', '.join(packet.static_reasoning['origin_candidates']) or '(none)'}",
             f"- origin_usage_modes: {', '.join(packet.static_reasoning.get('origin_usage_modes', ())) or '(none)'}",
             f"- origin_return_slots: {', '.join(packet.static_reasoning.get('origin_return_slots', ())) or '(none)'}",
+            f"- analysis_mode: {packet.static_reasoning.get('analysis_mode', 'legacy_only') or 'legacy_only'}",
+            f"- unknown_reason: {packet.static_reasoning.get('unknown_reason', '') or '(none)'}",
             f"- observed_guards: {', '.join(packet.static_reasoning['observed_guards']) or '(none)'}",
             f"- proof_kinds: {', '.join(packet.static_reasoning.get('proof_kinds', ())) or '(none)'}",
             "",

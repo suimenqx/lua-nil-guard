@@ -273,14 +273,14 @@ def contract_applies_to_call(
     for index, allowed_roots in contract.required_arg_roots:
         if index < 1 or index > len(arg_values):
             return False
-        arg_root = _extract_arg_root(arg_values[index - 1])
+        arg_root = extract_access_root(arg_values[index - 1])
         if arg_root is None or arg_root not in allowed_roots:
             return False
 
     for index, allowed_prefixes in contract.required_arg_prefixes:
         if index < 1 or index > len(arg_values):
             return False
-        arg_prefix = _extract_arg_prefix(arg_values[index - 1])
+        arg_prefix = extract_access_prefix(arg_values[index - 1])
         if arg_prefix is None:
             return False
         if not any(_prefix_matches(arg_prefix, prefix) for prefix in allowed_prefixes):
@@ -289,7 +289,7 @@ def contract_applies_to_call(
     for index, allowed_paths in contract.required_arg_access_paths:
         if index < 1 or index > len(arg_values):
             return False
-        arg_path = _extract_arg_access_path(arg_values[index - 1])
+        arg_path = extract_access_path(arg_values[index - 1])
         if arg_path is None or arg_path not in allowed_paths:
             return False
     return True
@@ -324,7 +324,7 @@ def _is_literal(value: str) -> bool:
     return False
 
 
-def _extract_arg_root(raw_value: str) -> str | None:
+def extract_access_root(raw_value: str) -> str | None:
     match = _ROOT_RE.match(raw_value)
     if match is None:
         return None
@@ -334,7 +334,7 @@ def _extract_arg_root(raw_value: str) -> str | None:
     return root
 
 
-def _extract_arg_prefix(raw_value: str) -> str | None:
+def extract_access_prefix(raw_value: str) -> str | None:
     match = _PREFIX_RE.match(raw_value)
     if match is None:
         return None
@@ -352,7 +352,7 @@ def _prefix_matches(arg_prefix: str, required_prefix: str) -> bool:
     return arg_prefix == normalized or arg_prefix.startswith(f"{normalized}.")
 
 
-def _extract_arg_access_path(raw_value: str) -> str | None:
+def extract_access_path(raw_value: str) -> str | None:
     value = raw_value.strip()
     match = _ROOT_RE.match(value)
     if match is None:
@@ -400,6 +400,18 @@ def _extract_arg_access_path(raw_value: str) -> str | None:
     return path
 
 
+def _extract_arg_root(raw_value: str) -> str | None:
+    return extract_access_root(raw_value)
+
+
+def _extract_arg_prefix(raw_value: str) -> str | None:
+    return extract_access_prefix(raw_value)
+
+
+def _extract_arg_access_path(raw_value: str) -> str | None:
+    return extract_access_path(raw_value)
+
+
 def _find_matching_bracket(value: str, start: int) -> int | None:
     quote: str | None = None
     escaped = False
@@ -436,7 +448,8 @@ def _normalize_bracket_segment(bracket_value: str) -> str | None:
         inner_value = bracket_value[1:-1]
         if _IDENTIFIER_RE.match(inner_value):
             return inner_value
-        return None
+        escaped = inner_value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'["{escaped}"]'
     return None
 
 

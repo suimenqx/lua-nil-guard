@@ -1176,6 +1176,9 @@ def _render_benchmark_summary(root: Path, summary) -> str:  # noqa: ANN001
         f"Backend review latency: {payload['backend_review_total_seconds']:.3f}s",
         f"Backend average latency: {payload['backend_average_seconds']:.3f}s",
         f"Backend review average latency: {payload['backend_review_average_seconds']:.3f}s",
+        f"AST primary cases: {payload['ast_primary_cases']}",
+        f"AST fallback cases: {payload['ast_fallback_to_legacy_cases']}",
+        f"Legacy-only cases: {payload['legacy_only_cases']}",
     ]
     if payload["backend_model"] is not None:
         lines.insert(4, f"Backend model: {payload['backend_model']}")
@@ -1419,6 +1422,9 @@ def _serialize_benchmark_summary(root: Path, summary) -> dict[str, object]:  # n
         "backend_review_total_seconds": review_total_seconds,
         "backend_average_seconds": summary.backend_average_seconds,
         "backend_review_average_seconds": review_average_seconds,
+        "ast_primary_cases": summary.ast_primary_cases,
+        "ast_fallback_to_legacy_cases": summary.ast_fallback_to_legacy_cases,
+        "legacy_only_cases": summary.legacy_only_cases,
         "cases": [
             {
                 "case_id": case.case_id,
