@@ -37,6 +37,8 @@ def test_build_adjudication_prompt_includes_evidence_and_hard_rules() -> None:
         origin_return_slots=(1,),
         analysis_mode="ast_primary",
         unknown_reason="unsupported_control_flow",
+        origin_analysis_mode="ast_origin_fallback_to_legacy",
+        origin_unknown_reason="no_bounded_ast_origin",
         related_function_contexts=(
             "normalize_name @ lib/normalizer.lua:1\nfunction normalize_name(value)\n  value = value or ''",
         ),
@@ -70,12 +72,20 @@ def test_build_adjudication_prompt_includes_evidence_and_hard_rules() -> None:
     assert "origin_return_slots: 1" in prompt
     assert "analysis_mode: ast_primary" in prompt
     assert "unknown_reason: unsupported_control_flow" in prompt
+    assert "origin_analysis_mode: ast_origin_fallback_to_legacy" in prompt
+    assert "origin_unknown_reason: no_bounded_ast_origin" in prompt
     assert "proof_kinds: direct_guard" in prompt
     assert "Structured static proofs:" in prompt
+    assert "Static verification preview:" in prompt
+    assert "strongest_proof_kind: direct_guard" in prompt
     assert "[direct_guard] if username then" in prompt
     assert "Calibration examples:" in prompt
     assert "Example (direct_guard):" in prompt
     assert "Example (unsupported_control_flow):" in prompt
+    assert "Example (no_bounded_ast_origin):" in prompt
+    assert "Example (verification_summary):" in prompt
+    assert "Role calibration:" in prompt
+    assert "Prosecutor: try to break the current proof chain" in prompt
     assert "Related function contexts:" in prompt
     assert "normalize_name @ lib/normalizer.lua:1" in prompt
     assert "Adjudication policy: lua-nil-adjudicator" in prompt
@@ -186,6 +196,7 @@ def test_build_adjudication_prompt_limits_calibration_examples_to_relevant_items
 
     assert prompt.count("Example (return_contract):") == 1
     assert prompt.count("Example (wrapper_defaulting):") == 1
+    assert "Example (proof_depth):" in prompt
 
 
 def test_skill_file_exists_with_required_frontmatter() -> None:

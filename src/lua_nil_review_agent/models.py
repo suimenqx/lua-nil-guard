@@ -136,6 +136,8 @@ class StaticAnalysisResult:
     proofs: tuple["StaticProof", ...] = ()
     analysis_mode: str = "legacy_only"
     unknown_reason: str | None = None
+    origin_analysis_mode: str = "legacy_origin_only"
+    origin_unknown_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,6 +297,21 @@ class BenchmarkCacheComparison:
     cache_cleared_entries: int
     cold: BenchmarkSummary
     warm: BenchmarkSummary
+
+
+@dataclass(frozen=True, slots=True)
+class ImprovementProposal:
+    """A draft-only suggestion for improving precision on unresolved review cases."""
+
+    kind: str
+    case_id: str
+    file: str
+    status: str
+    confidence: str
+    reason: str
+    suggested_contract: FunctionContract | None = None
+    suggested_pattern: str | None = None
+    evidence: tuple[str, ...] = ()
 
 
 def with_candidate_state(candidate: CandidateCase, state: str) -> CandidateCase:

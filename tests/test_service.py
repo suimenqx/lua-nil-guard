@@ -15,6 +15,7 @@ from lua_nil_review_agent.service import (
     bootstrap_repository,
     clear_backend_cache,
     draft_function_contracts,
+    draft_review_improvements,
     export_autofix_patches,
     export_autofix_unified_diff,
     find_repository_root_for_file,
@@ -694,6 +695,134 @@ def test_draft_function_contracts_infers_guard_and_wrapper_drafts_without_mutati
     assert draft_by_name["wrap_name"].notes == "draft:ast_wrapper_passthrough"
 
     assert "already_configured" not in draft_by_name
+
+
+def test_draft_review_improvements_links_uncertain_cases_to_patterns_and_drafts(
+    tmp_path: Path,
+) -> None:
+    class AlwaysUncertainBackend:
+        def adjudicate(self, packet, sink_rule):  # noqa: ANN001
+            return AdjudicationRecord(
+                prosecutor=RoleOpinion(
+                    role="prosecutor",
+                    status="uncertain",
+                    confidence="medium",
+                    risk_path=packet.static_reasoning.get("origin_candidates", ()),
+                    safety_evidence=(),
+                    missing_evidence=("local proof is incomplete",),
+                    recommended_next_action="expand_context",
+                    suggested_fix=None,
+                ),
+                defender=RoleOpinion(
+                    role="defender",
+                    status="uncertain",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=packet.static_reasoning.get("observed_guards", ()),
+                    missing_evidence=("needs stronger deterministic proof",),
+                    recommended_next_action="expand_context",
+                    suggested_fix=None,
+                ),
+                judge=Verdict(
+                    case_id=packet.case_id,
+                    status="uncertain",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=(),
+                    counterarguments_considered=("needs stronger deterministic proof",),
+                    suggested_fix=None,
+                    needs_human=True,
+                ),
+            )
+
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo_contract.lua").write_text(
+        "\n".join(
+            [
+                "local function parse_user()",
+                "  local username = normalize_name(req.params.username)",
+                "  return string.match(username, '^a')",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo_wrapper.lua").write_text(
+        "\n".join(
+            [
+                "local function parse_other()",
+                "  local username = maybe_name(req.params.username)",
+                "  return string.match(username, '^a')",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "helpers.lua").write_text(
+        "\n".join(
+            [
+                "function normalize_name(value)",
+                "  if not value then",
+                "    value = ''",
+                "  end",
+                "  return value",
+                "end",
+                "",
+                "function maybe_name(value)",
+                "  log(value)",
+                "  return value",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    proposals = draft_review_improvements(snapshot, backend=AlwaysUncertainBackend())
+
+    proposal_kinds = {(proposal.kind, proposal.suggested_pattern or "") for proposal in proposals}
+    contract_proposals = [
+        proposal
+        for proposal in proposals
+        if proposal.kind == "function_contract" and proposal.suggested_contract is not None
+    ]
+
+    assert ("ast_pattern", "no_bounded_ast_proof") in proposal_kinds
+    assert ("wrapper_recognizer", "maybe_name") in proposal_kinds
+    assert any(
+        proposal.suggested_contract is not None
+        and proposal.suggested_contract.qualified_name == "normalize_name"
+        for proposal in contract_proposals
+    )
 
 
 def test_run_file_review_budgets_and_prioritizes_related_function_contexts(

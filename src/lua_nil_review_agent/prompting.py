@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .models import EvidencePacket, SinkRule, StaticProof
 from .skill_runtime import compile_adjudicator_skill_header
+from .verification import preview_static_verification
 
 
 _PROOF_KIND_CALIBRATIONS = {
@@ -55,6 +56,12 @@ _UNKNOWN_REASON_CALIBRATIONS = {
     "unresolved_ast_node": (
         "Example (unresolved_ast_node): if the target node cannot be resolved precisely, distrust AST-specific proof claims and stay conservative."
     ),
+    "no_bounded_ast_proof": (
+        "Example (no_bounded_ast_proof): when AST sees the shape but cannot prove a bounded guard, do not promote weak similarity into safety."
+    ),
+    "no_bounded_ast_origin": (
+        "Example (no_bounded_ast_origin): if the local source cannot be bounded to a clear assignment, treat origin evidence as incomplete."
+    ),
     "upvalue_capture": (
         "Example (upvalue_capture): captured mutable upvalues can break local assumptions; do not treat them as simple local proofs."
     ),
@@ -97,14 +104,22 @@ def build_adjudication_prompt(
             f"- origin_return_slots: {', '.join(packet.static_reasoning.get('origin_return_slots', ())) or '(none)'}",
             f"- analysis_mode: {packet.static_reasoning.get('analysis_mode', 'legacy_only') or 'legacy_only'}",
             f"- unknown_reason: {packet.static_reasoning.get('unknown_reason', '') or '(none)'}",
+            f"- origin_analysis_mode: {packet.static_reasoning.get('origin_analysis_mode', 'legacy_origin_only') or 'legacy_origin_only'}",
+            f"- origin_unknown_reason: {packet.static_reasoning.get('origin_unknown_reason', '') or '(none)'}",
             f"- observed_guards: {', '.join(packet.static_reasoning['observed_guards']) or '(none)'}",
             f"- proof_kinds: {', '.join(packet.static_reasoning.get('proof_kinds', ())) or '(none)'}",
             "",
             "Structured static proofs:",
             _render_static_proofs(packet.static_proofs),
             "",
+            "Static verification preview:",
+            _render_verification_preview(packet),
+            "",
             "Calibration examples:",
             _render_calibration_examples(packet),
+            "",
+            "Role calibration:",
+            _render_role_calibration(),
             "",
             "Local context:",
             packet.local_context or "(none)",
@@ -152,6 +167,8 @@ def _render_static_proofs(proofs: tuple[StaticProof, ...]) -> str:
 def _render_calibration_examples(packet: EvidencePacket) -> str:
     examples: list[str] = []
     seen: set[str] = set()
+    preview = preview_static_verification(packet.static_proofs)
+    has_deep_proof = any(proof.depth >= 2 for proof in packet.static_proofs)
 
     for proof in packet.static_proofs:
         calibration = _PROOF_KIND_CALIBRATIONS.get(proof.kind)
@@ -162,6 +179,14 @@ def _render_calibration_examples(packet: EvidencePacket) -> str:
         if len(examples) >= 2:
             break
 
+    if has_deep_proof:
+        depth_calibration = (
+            "Example (proof_depth): deeper proof chains should be treated as bounded evidence only; verify that every hop is explicit before accepting safety."
+        )
+        if depth_calibration not in seen:
+            examples.append(depth_calibration)
+            seen.add(depth_calibration)
+
     unknown_reason = packet.static_reasoning.get("unknown_reason", "")
     if isinstance(unknown_reason, str):
         calibration = _UNKNOWN_REASON_CALIBRATIONS.get(unknown_reason)
@@ -169,6 +194,63 @@ def _render_calibration_examples(packet: EvidencePacket) -> str:
             examples.append(calibration)
             seen.add(calibration)
 
+    origin_unknown_reason = packet.static_reasoning.get("origin_unknown_reason", "")
+    if isinstance(origin_unknown_reason, str):
+        calibration = _UNKNOWN_REASON_CALIBRATIONS.get(origin_unknown_reason)
+        if calibration is not None and calibration not in seen:
+            examples.append(calibration)
+            seen.add(calibration)
+
+    if preview is not None:
+        verification_calibration = _verification_calibration(preview)
+        if verification_calibration is not None and verification_calibration not in seen:
+            examples.append(verification_calibration)
+            seen.add(verification_calibration)
+
     if not examples:
         return "(none)"
     return "\n".join(f"- {example}" for example in examples)
+
+
+def _render_verification_preview(packet: EvidencePacket) -> str:
+    preview = preview_static_verification(packet.static_proofs)
+    if preview is None:
+        return "(none)"
+    evidence = ", ".join(preview.evidence) if preview.evidence else "(none)"
+    return "\n".join(
+        [
+            f"- mode: {preview.mode}",
+            f"- strongest_proof_kind: {preview.strongest_proof_kind or '(none)'}",
+            f"- strongest_proof_depth: {preview.strongest_proof_depth if preview.strongest_proof_depth is not None else '(none)'}",
+            f"- verification_score: {preview.verification_score if preview.verification_score is not None else '(none)'}",
+            f"- evidence: {evidence}",
+        ]
+    )
+
+
+def _render_role_calibration() -> str:
+    return "\n".join(
+        [
+            "- Prosecutor: try to break the current proof chain, not speculate about unseen code.",
+            "- Defender: argue only from structured static proofs, matched contracts, wrapper evidence, and knowledge facts already in the packet.",
+            "- Judge: decide whether the present proof is sufficient; unresolved gaps should remain `uncertain`, not auto-upgrade to `risky`.",
+        ]
+    )
+
+
+def _verification_calibration(preview) -> str | None:
+    score = preview.verification_score
+    depth = preview.strongest_proof_depth
+    if score is None:
+        return None
+    if score >= 80 and (depth is None or depth <= 1):
+        return (
+            "Example (verification_summary): a high-score shallow proof usually deserves deference unless a concrete reachable counterexample appears in the packet."
+        )
+    if depth is not None and depth >= 2:
+        return (
+            "Example (verification_summary): a deeper proof chain is useful but still bounded; keep the verdict conservative if any hop depends on weak inference."
+        )
+    return (
+        "Example (verification_summary): medium-strength static proof should shape the review, but it does not by itself resolve missing control-flow evidence."
+    )

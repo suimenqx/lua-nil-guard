@@ -44,6 +44,12 @@ def test_prepare_evidence_packet_uses_static_assessment_context() -> None:
     assert packet.static_reasoning["unknown_reason"] == (
         assessment.static_analysis.unknown_reason or ""
     )
+    assert packet.static_reasoning["origin_analysis_mode"] == (
+        assessment.static_analysis.origin_analysis_mode
+    )
+    assert packet.static_reasoning["origin_unknown_reason"] == (
+        assessment.static_analysis.origin_unknown_reason or ""
+    )
     assert packet.static_reasoning["observed_guards"] == ("if username then",)
     assert packet.static_reasoning["proof_kinds"] == ("direct_guard",)
     assert packet.static_reasoning["origin_candidates"] == ("req.params.username",)

@@ -33,6 +33,7 @@ from .models import (
     CandidateAssessment,
     EvidencePacket,
     FunctionContract,
+    ImprovementProposal,
     RepositorySnapshot,
     SinkRule,
     Verdict,
@@ -269,6 +270,8 @@ def prepare_evidence_packet(
         origin_return_slots=assessment.static_analysis.origin_return_slots,
         analysis_mode=assessment.static_analysis.analysis_mode,
         unknown_reason=assessment.static_analysis.unknown_reason,
+        origin_analysis_mode=assessment.static_analysis.origin_analysis_mode,
+        origin_unknown_reason=assessment.static_analysis.origin_unknown_reason,
         observed_guards=assessment.static_analysis.observed_guards,
         related_function_contexts=related_function_contexts,
         static_proofs=assessment.static_analysis.proofs,
@@ -674,6 +677,125 @@ def draft_function_contracts(
 
     drafts.sort(key=lambda contract: contract.qualified_name)
     return tuple(drafts)
+
+
+def draft_review_improvements(
+    snapshot: RepositorySnapshot,
+    *,
+    backend: AdjudicationBackend | None = None,
+    knowledge_path: str | Path | None = None,
+) -> tuple[ImprovementProposal, ...]:
+    """Generate draft-only follow-up proposals from unresolved or medium-confidence reviews."""
+
+    assessments = review_repository(snapshot)
+    if not assessments:
+        return ()
+
+    summaries = _collect_repository_summaries(snapshot)
+    summary_text_by_name = _build_summary_text_index(summaries)
+    function_context_by_name = _build_function_context_index(snapshot, summaries)
+    file_module_by_path = _build_file_module_index(snapshot)
+    facts = _load_knowledge_facts(snapshot, knowledge_path)
+    adjudication_backend = backend or HeuristicAdjudicationBackend()
+    verdicts = _run_review_from_assessments(
+        snapshot,
+        assessments,
+        adjudication_backend=adjudication_backend,
+        summary_text_by_name=summary_text_by_name,
+        function_context_by_name=function_context_by_name,
+        file_module_by_path=file_module_by_path,
+        facts=facts,
+    )
+    verdict_by_case_id = {verdict.case_id: verdict for verdict in verdicts}
+    draft_contract_by_name = {
+        contract.qualified_name: contract for contract in draft_function_contracts(snapshot)
+    }
+
+    proposals: list[ImprovementProposal] = []
+    seen: set[tuple[str, str, str]] = set()
+    known_draft_names = frozenset(draft_contract_by_name)
+
+    for assessment in assessments:
+        verdict = verdict_by_case_id[assessment.candidate.case_id]
+        if verdict.status != "uncertain" and verdict.confidence != "medium":
+            continue
+
+        evidence = assessment.static_analysis.origin_candidates or (assessment.candidate.expression,)
+        unknown_reason = (
+            assessment.static_analysis.unknown_reason
+            or assessment.static_analysis.origin_unknown_reason
+        )
+        if unknown_reason is not None:
+            key = ("ast_pattern", assessment.candidate.case_id, unknown_reason)
+            if key not in seen:
+                proposals.append(
+                    ImprovementProposal(
+                        kind="ast_pattern",
+                        case_id=assessment.candidate.case_id,
+                        file=assessment.candidate.file,
+                        status=verdict.status,
+                        confidence=verdict.confidence,
+                        reason=(
+                            f"structured fallback `{unknown_reason}` blocked a conclusive proof; "
+                            "consider adding a bounded AST pattern"
+                        ),
+                        suggested_pattern=unknown_reason,
+                        evidence=evidence,
+                    )
+                )
+                seen.add(key)
+
+        current_module = file_module_by_path.get(_normalize_path_key(assessment.candidate.file))
+        related_names = _related_functions_from_assessment(
+            assessment,
+            current_module=current_module,
+            known_function_names=known_draft_names,
+        )
+        for function_name in related_names:
+            if function_name in draft_contract_by_name:
+                key = ("function_contract", assessment.candidate.case_id, function_name)
+                if key in seen:
+                    continue
+                proposals.append(
+                    ImprovementProposal(
+                        kind="function_contract",
+                        case_id=assessment.candidate.case_id,
+                        file=assessment.candidate.file,
+                        status=verdict.status,
+                        confidence=verdict.confidence,
+                        reason=(
+                            f"unresolved case references `{function_name}`; "
+                            "review the inferred contract draft before promoting it"
+                        ),
+                        suggested_contract=draft_contract_by_name[function_name],
+                        evidence=evidence,
+                    )
+                )
+                seen.add(key)
+                continue
+
+            key = ("wrapper_recognizer", assessment.candidate.case_id, function_name)
+            if key in seen:
+                continue
+            proposals.append(
+                ImprovementProposal(
+                    kind="wrapper_recognizer",
+                    case_id=assessment.candidate.case_id,
+                    file=assessment.candidate.file,
+                    status=verdict.status,
+                    confidence=verdict.confidence,
+                    reason=(
+                        f"`{function_name}` participates in an unresolved call chain; "
+                        "consider adding a bounded wrapper/helper recognizer"
+                    ),
+                    suggested_pattern=function_name,
+                    evidence=evidence,
+                )
+            )
+            seen.add(key)
+
+    proposals.sort(key=lambda proposal: (proposal.file, proposal.case_id, proposal.kind, proposal.reason))
+    return tuple(proposals)
 
 
 def export_adjudication_tasks(

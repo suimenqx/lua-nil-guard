@@ -2238,6 +2238,80 @@ def test_analyze_candidate_marks_loop_control_as_structured_unknown_when_ast_run
         assert result.analysis_mode == "legacy_only"
 
 
+def test_analyze_candidate_marks_unproved_ast_case_with_structured_no_bounded_reason() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "if ready then",
+            "  log('ready')",
+            "end",
+            "return string.match(username, '^a')",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_ast_no_bounded_proof",
+        file="demo.lua",
+        line=5,
+        column=21,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="main",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "unknown_static"
+    if get_parser_backend_info().tree_sitter_available:
+        assert result.analysis_mode == "ast_fallback_to_legacy"
+        assert result.unknown_reason == "no_bounded_ast_proof"
+        assert result.origin_analysis_mode == "ast_origin_primary"
+        assert result.origin_unknown_reason is None
+        assert result.origin_candidates == ("req.params.username",)
+    else:
+        assert result.analysis_mode == "legacy_only"
+        assert result.origin_analysis_mode == "legacy_origin_only"
+
+
+def test_analyze_candidate_marks_nested_upvalue_capture_as_structured_unknown() -> None:
+    source = "\n".join(
+        [
+            "local username = req.params.username",
+            "local function render()",
+            "  return string.match(username, '^a')",
+            "end",
+        ]
+    )
+    candidate = CandidateCase(
+        case_id="case_ast_upvalue",
+        file="demo.lua",
+        line=3,
+        column=23,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="username",
+        symbol="username",
+        function_scope="render",
+        static_state="unknown_static",
+    )
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "unknown_static"
+    if get_parser_backend_info().tree_sitter_available:
+        assert result.analysis_mode == "ast_fallback_to_legacy"
+        assert result.unknown_reason == "upvalue_capture"
+        assert result.origin_analysis_mode == "ast_origin_fallback_to_legacy"
+        assert result.origin_unknown_reason == "upvalue_capture"
+    else:
+        assert result.analysis_mode == "legacy_only"
+        assert result.origin_analysis_mode == "legacy_origin_only"
+
+
 def test_analyze_candidate_marks_elseif_guard_safe_when_ast_runs() -> None:
     source = "\n".join(
         [

@@ -36,6 +36,13 @@ class _AstGuardOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class _AstOriginOutcome:
+    detail: tuple[str, str, int, int] | None
+    analysis_mode: str
+    unknown_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class _AstControlFlowContext:
     tree: object
     source_bytes: bytes
@@ -64,8 +71,22 @@ def analyze_candidate(
 
     lines = source.splitlines()
     prior_lines = lines[: max(0, candidate.line - 1)]
-    origin_context = _find_last_assignment(prior_lines, candidate.symbol)
-    origin_detail = _find_last_assignment_detail(prior_lines, candidate.symbol)
+    ast_context = _parse_control_flow_tree(source)
+    origin_outcome = _resolve_origin_with_ast(
+        source,
+        candidate,
+        context=ast_context,
+    )
+    origin_detail = origin_outcome.detail
+    if origin_detail is None:
+        origin_detail = _find_last_assignment_detail(prior_lines, candidate.symbol)
+    origin_context = None
+    if origin_detail is not None:
+        origin_context = (
+            origin_detail[0],
+            origin_detail[1],
+            origin_detail[2],
+        )
     origin = origin_context[0] if origin_context is not None else None
     proofs: list[StaticProof] = []
     current_module = detect_module_name(source)
@@ -80,7 +101,11 @@ def analyze_candidate(
         else collect_inline_guard_contracts((source,), allow_local=True)
     )
     effective_function_contracts = effective_inline_guard_contracts + tuple(function_contracts)
-    ast_guard_outcome = _analyze_guards_with_ast(source, candidate)
+    ast_guard_outcome = _analyze_guards_with_ast(
+        source,
+        candidate,
+        context=ast_context,
+    )
     analysis_mode = ast_guard_outcome.analysis_mode
     unknown_reason = ast_guard_outcome.unknown_reason
     current_scope_kind = _scope_kind_for_function_scope(candidate.function_scope)
@@ -158,11 +183,17 @@ def analyze_candidate(
         proofs=deduped_proofs,
         analysis_mode=analysis_mode,
         unknown_reason=unknown_reason,
+        origin_analysis_mode=origin_outcome.analysis_mode,
+        origin_unknown_reason=origin_outcome.unknown_reason,
     )
 
 
-def _analyze_guards_with_ast(source: str, candidate: CandidateCase) -> _AstGuardOutcome:
-    context = _parse_control_flow_tree(source)
+def _analyze_guards_with_ast(
+    source: str,
+    candidate: CandidateCase,
+    *,
+    context: _AstControlFlowContext | None = None,
+) -> _AstGuardOutcome:
     if context is None:
         return _AstGuardOutcome(proofs=(), analysis_mode="legacy_only")
 
@@ -209,6 +240,49 @@ def _analyze_guards_with_ast(source: str, candidate: CandidateCase) -> _AstGuard
     return _AstGuardOutcome(
         proofs=(),
         analysis_mode="ast_fallback_to_legacy",
+        unknown_reason="no_bounded_ast_proof",
+    )
+
+
+def _resolve_origin_with_ast(
+    source: str,
+    candidate: CandidateCase,
+    *,
+    context: _AstControlFlowContext | None = None,
+) -> _AstOriginOutcome:
+    if context is None:
+        return _AstOriginOutcome(
+            detail=None,
+            analysis_mode="legacy_origin_only",
+        )
+
+    target_node = _resolve_candidate_node(context.tree.root_node, candidate)
+    if target_node is None:
+        return _AstOriginOutcome(
+            detail=None,
+            analysis_mode="ast_origin_fallback_to_legacy",
+            unknown_reason="unresolved_ast_node",
+        )
+
+    unknown_reason = _classify_ast_unknown_reason(source, context, target_node, candidate)
+    if unknown_reason is not None:
+        return _AstOriginOutcome(
+            detail=None,
+            analysis_mode="ast_origin_fallback_to_legacy",
+            unknown_reason=unknown_reason,
+        )
+
+    detail = _find_bounded_origin_detail(source, candidate, target_node, context)
+    if detail is not None:
+        return _AstOriginOutcome(
+            detail=detail,
+            analysis_mode="ast_origin_primary",
+        )
+
+    return _AstOriginOutcome(
+        detail=None,
+        analysis_mode="ast_origin_fallback_to_legacy",
+        unknown_reason="no_bounded_ast_origin",
     )
 
 
@@ -277,7 +351,130 @@ def _classify_ast_unknown_reason(
     if "[" in candidate.expression and not re.search(r"\[\s*(['\"])[^'\"]+\1\s*\]", candidate.expression):
         return "dynamic_index_expression"
 
+    if _is_captured_upvalue_reference(target_node, candidate.symbol, context.source_bytes):
+        return "upvalue_capture"
+
     return None
+
+
+def _find_bounded_origin_detail(
+    source: str,
+    candidate: CandidateCase,
+    target_node,
+    context: _AstControlFlowContext,
+) -> tuple[str, str, int, int] | None:
+    scope_node = _nearest_origin_scope_node(context.tree.root_node, target_node)
+    if scope_node is None:
+        return None
+
+    scope_start_line = scope_node.start_point[0]
+    target_line = max(0, candidate.line - 1)
+    if target_line < scope_start_line:
+        return None
+
+    scope_lines = source.splitlines()[scope_start_line:target_line]
+    detail = _find_last_assignment_detail(scope_lines, candidate.symbol)
+    if detail is None:
+        return None
+    origin, usage_mode, return_slot, line_index = detail
+    return origin, usage_mode, return_slot, line_index + scope_start_line
+
+
+def _nearest_origin_scope_node(root_node, target_node):
+    function_node = _enclosing_function_declaration(target_node)
+    if function_node is None:
+        return root_node
+    body = function_node.child_by_field_name("body")
+    return body if body is not None else root_node
+
+
+def _enclosing_function_declaration(node):
+    current = node
+    while current is not None:
+        if current.type == "function_declaration":
+            return current
+        current = current.parent
+    return None
+
+
+def _is_captured_upvalue_reference(target_node, symbol: str, source_bytes: bytes) -> bool:
+    if _IDENTIFIER_RE.match(symbol) is None:
+        return False
+
+    function_node = _enclosing_function_declaration(target_node)
+    if function_node is None:
+        return False
+
+    params_node = function_node.child_by_field_name("parameters")
+    if params_node is not None:
+        for child in params_node.named_children:
+            if _node_text(source_bytes, child).strip() == symbol:
+                return False
+
+    if _function_prefix_binds_symbol_locally(function_node, target_node, symbol, source_bytes):
+        return False
+
+    return _outer_scope_binds_symbol(function_node, symbol, source_bytes)
+
+
+def _function_prefix_binds_symbol_locally(function_node, target_node, symbol: str, source_bytes: bytes) -> bool:
+    body = function_node.child_by_field_name("body")
+    if body is None:
+        return False
+
+    current = target_node
+    while current is not None and current != body:
+        parent = current.parent
+        if parent is None:
+            break
+        for sibling in reversed(_preceding_named_siblings(parent, current)):
+            if _subtree_binds_symbol_locally(sibling, symbol, source_bytes):
+                return True
+        current = parent
+    return False
+
+
+def _outer_scope_binds_symbol(function_node, symbol: str, source_bytes: bytes) -> bool:
+    current = function_node
+    while current is not None and current.parent is not None:
+        parent = current.parent
+        for sibling in reversed(_preceding_named_siblings(parent, current)):
+            if _subtree_binds_symbol_locally(sibling, symbol, source_bytes):
+                return True
+        current = parent
+    return False
+
+
+def _subtree_binds_symbol_locally(node, symbol: str, source_bytes: bytes) -> bool:
+    stack: list[object] = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == "variable_declaration" and _local_declaration_targets_symbol(
+            current,
+            symbol,
+            source_bytes,
+        ):
+            return True
+        if current.type == "function_declaration":
+            if _is_local_function_declaration(current):
+                name = current.child_by_field_name("name")
+                if name is not None and _node_text(source_bytes, name).strip() == symbol:
+                    return True
+            continue
+        for child in reversed(current.named_children):
+            stack.append(child)
+    return False
+
+
+def _local_declaration_targets_symbol(node, symbol: str, source_bytes: bytes) -> bool:
+    text = _node_text(source_bytes, node).strip()
+    if not text.startswith("local ") or text.startswith("local function "):
+        return False
+    lhs = text[len("local ") :].split("=", 1)[0].strip()
+    if not lhs:
+        return False
+    targets = tuple(part.strip() for part in _split_top_level_values(lhs) if part.strip())
+    return any(_same_symbol_reference(target, symbol) for target in targets)
 
 
 def _ast_positive_guard_proof(target_node, symbol: str, source_bytes: bytes) -> StaticProof | None:

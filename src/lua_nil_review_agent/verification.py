@@ -8,6 +8,24 @@ _SAFE_ELEVATE_THRESHOLD = 50
 _CONFIDENCE_ORDER = ("low", "medium", "high")
 
 
+def preview_static_verification(proofs: tuple[StaticProof, ...]) -> VerificationSummary | None:
+    """Summarize the current structured static proof set before adjudication."""
+
+    if not proofs:
+        return None
+    strongest_proof = _strongest_safe_proof(proofs)
+    strongest_score = _safe_verification_score(proofs)
+    proof_summaries = _proof_summaries(proofs)
+    return VerificationSummary(
+        mode="structured_static_proof_preview",
+        strongest_proof_kind=strongest_proof.kind,
+        strongest_proof_depth=strongest_proof.depth,
+        strongest_proof_summary=strongest_proof.summary,
+        verification_score=strongest_score,
+        evidence=proof_summaries,
+    )
+
+
 def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
     """Apply a lightweight automatic verification pass to a verdict."""
 
@@ -33,16 +51,18 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
     if verdict.status == "safe":
         proofs = packet.static_proofs
         if proofs:
-            strongest_proof = _strongest_safe_proof(proofs)
-            strongest_score = _safe_verification_score(proofs)
-            proof_summaries = _proof_summaries(proofs)
+            preview = preview_static_verification(proofs)
+            if preview is None:
+                return verdict
+            strongest_score = preview.verification_score or 0
+            proof_summaries = preview.evidence
             safety_evidence = verdict.safety_evidence or proof_summaries
             verification_summary = VerificationSummary(
                 mode="structured_static_proof",
-                strongest_proof_kind=strongest_proof.kind,
-                strongest_proof_depth=strongest_proof.depth,
-                strongest_proof_summary=strongest_proof.summary,
-                verification_score=strongest_score,
+                strongest_proof_kind=preview.strongest_proof_kind,
+                strongest_proof_depth=preview.strongest_proof_depth,
+                strongest_proof_summary=preview.strongest_proof_summary,
+                verification_score=preview.verification_score,
                 evidence=proof_summaries,
             )
 

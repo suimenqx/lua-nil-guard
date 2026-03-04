@@ -376,3 +376,82 @@ The next major work program is:
 4. with LLM enhancements remaining downstream and proof-centric
 
 This plan is the current execution baseline for future implementation and expert review.
+
+## 13. Current Highest-Priority Follow-Up
+
+After the current implementation progress, the most valuable next execution sequence is no longer the original Phase 1 bootstrap work. The highest-priority remaining work should now be:
+
+### Priority 1: Complete Structured AST Fallback Reasons
+
+Focus:
+
+1. Close the remaining `unknown_reason` coverage gaps.
+2. Add missing concrete reasons such as:
+   - `upvalue_capture`
+   - any other AST fallback branches that still degrade without a specific reason
+3. Ensure every AST fallback path is either:
+   - a proved result
+   - or a reasoned conservative result
+
+Expected goal:
+
+- Every AST-to-legacy fallback becomes diagnosable and actionable, so the team can see exactly which unsupported constructs still block precision gains.
+
+### Priority 2: Migrate Local Origin/Source Positioning To AST
+
+Focus:
+
+1. Replace the most fragile text-based origin lookup in `_find_last_assignment(...)` with bounded AST-backed local source positioning.
+2. Keep the migration narrow:
+   - local assignment origin only
+   - no full interprocedural source-chain solving
+3. Preserve legacy fallback while AST origin coverage is rolled out.
+
+Expected goal:
+
+- Reduce false ambiguity from text-only last-assignment inference, especially in nested blocks and branch-sensitive local source tracking, while keeping the reasoning explainable.
+
+### Priority 3: Deepen Proof-Aware LLM Calibration
+
+Focus:
+
+1. Extend targeted prompt calibration beyond `StaticProof.kind` and `unknown_reason`.
+2. Explicitly incorporate:
+   - `StaticProof.depth`
+   - `VerificationSummary`
+3. Tighten role guidance so that:
+   - Prosecutor attacks proof sufficiency
+   - Defender argues only from structured proof evidence
+   - Judge decides proof adequacy, not speculative possibilities
+
+Expected goal:
+
+- Increase adjudication consistency on borderline cases without reverting to broad prompt expansion or asking the model to rediscover local control flow from scratch.
+
+### Priority 4: Build The `medium` / `uncertain` Feedback Loop
+
+Focus:
+
+1. Use `medium` and `uncertain` outcomes as input for draft generation.
+2. Convert these cases into review-only proposals for:
+   - new AST patterns
+   - new wrapper recognizers
+   - new function-contract drafts
+3. Keep the loop strictly draft-only:
+   - no automatic production rule mutation
+   - no silent widening of certainty
+
+Expected goal:
+
+- Turn unresolved cases into a controlled precision-improvement queue, so future capability growth is driven by real failure topology instead of ad hoc heuristic expansion.
+
+## 14. Current Execution Order
+
+The recommended immediate execution order is:
+
+1. Finish structured `unknown_reason` coverage.
+2. Move local origin/source positioning onto bounded AST logic.
+3. Deepen proof-aware LLM calibration using `depth` and `VerificationSummary`.
+4. Connect `medium` / `uncertain` review output to draft proposal generation.
+
+This is the current highest-value continuation path from the present codebase state.

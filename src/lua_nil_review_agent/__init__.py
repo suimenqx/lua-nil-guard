@@ -69,6 +69,7 @@ from .models import (
     RepositorySnapshot,
     FunctionContract,
     FunctionSummary,
+    ImprovementProposal,
     KnowledgeFact,
     RoleOpinion,
     SinkRule,
@@ -106,6 +107,7 @@ from .service import (
     refresh_knowledge_base,
     prepare_evidence_packet,
     refresh_summary_cache,
+    draft_review_improvements,
     review_repository_file,
     review_repository,
     run_file_review,
@@ -114,7 +116,7 @@ from .service import (
 )
 from .summaries import SummaryStore, summarize_source
 from .static_analysis import analyze_candidate
-from .verification import verify_verdict
+from .verification import preview_static_verification, verify_verdict
 
 __all__ = [
     "AdjudicationRecord",
@@ -148,6 +150,7 @@ __all__ = [
     "EvidenceTarget",
     "FunctionContract",
     "FunctionSummary",
+    "ImprovementProposal",
     "KnowledgeBase",
     "KnowledgeFact",
     "CodexCliBackend",
@@ -188,6 +191,7 @@ __all__ = [
     "export_adjudication_tasks",
     "export_autofix_patches",
     "export_autofix_unified_diff",
+    "draft_review_improvements",
     "find_repository_root_for_file",
     "fallback_adjudicator_skill_header",
     "facts_for_subject",
@@ -209,6 +213,7 @@ __all__ = [
     "get_parser_backend_info",
     "summarize_source",
     "prepare_evidence_packet",
+    "preview_static_verification",
     "refresh_knowledge_base",
     "refresh_summary_cache",
     "register_cli_protocol_backend",

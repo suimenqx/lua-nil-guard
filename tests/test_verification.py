@@ -6,7 +6,7 @@ from lua_nil_review_agent.models import (
     StaticProof,
     Verdict,
 )
-from lua_nil_review_agent.verification import verify_verdict
+from lua_nil_review_agent.verification import preview_static_verification, verify_verdict
 
 
 def test_verify_verdict_upgrades_clear_risk_to_risky_verified() -> None:
@@ -138,6 +138,31 @@ def test_verify_verdict_upgrades_safe_to_safe_verified_for_strong_static_proof()
     assert result.verification_summary.strongest_proof_kind == "direct_guard"
     assert result.verification_summary.strongest_proof_depth == 0
     assert result.verification_summary.verification_score == 100
+
+
+def test_preview_static_verification_reports_strongest_proof_and_depth() -> None:
+    preview = preview_static_verification(
+        (
+            StaticProof(
+                kind="wrapper_defaulting",
+                summary="wrap_name(...) preserves or defaults to non-nil",
+                subject="username",
+                depth=1,
+            ),
+            StaticProof(
+                kind="direct_guard",
+                summary="if username then",
+                subject="username",
+                depth=0,
+            ),
+        )
+    )
+
+    assert preview is not None
+    assert preview.mode == "structured_static_proof_preview"
+    assert preview.strongest_proof_kind == "direct_guard"
+    assert preview.strongest_proof_depth == 0
+    assert preview.verification_score == 100
 
 
 def test_verify_verdict_elevates_safe_confidence_for_deep_chained_proof() -> None:

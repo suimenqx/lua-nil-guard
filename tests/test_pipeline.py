@@ -30,6 +30,8 @@ def test_build_evidence_packet_preserves_core_case_data() -> None:
         origin_return_slots=(1,),
         analysis_mode="ast_primary",
         unknown_reason="unsupported_control_flow",
+        origin_analysis_mode="ast_origin_fallback_to_legacy",
+        origin_unknown_reason="no_bounded_ast_origin",
         static_proofs=(
             StaticProof(
                 kind="direct_guard",
@@ -49,6 +51,8 @@ def test_build_evidence_packet_preserves_core_case_data() -> None:
     assert packet.static_reasoning["origin_return_slots"] == ("1",)
     assert packet.static_reasoning["analysis_mode"] == "ast_primary"
     assert packet.static_reasoning["unknown_reason"] == "unsupported_control_flow"
+    assert packet.static_reasoning["origin_analysis_mode"] == "ast_origin_fallback_to_legacy"
+    assert packet.static_reasoning["origin_unknown_reason"] == "no_bounded_ast_origin"
     assert packet.static_reasoning["proof_kinds"] == ("direct_guard",)
     assert packet.static_reasoning["proof_summaries"] == ("if username then",)
     assert packet.static_proofs[0].subject == "username"
