@@ -149,7 +149,7 @@ class CliAgentBackend:
     ) -> AdjudicationRecord:
         temp_dir_root = str(self.workdir) if self.workdir is not None else None
         with tempfile.TemporaryDirectory(
-            prefix="lua_nil_review_agent_",
+            prefix="lua_nil_guard_",
             dir=temp_dir_root,
         ) as temp_dir:
             temp_path = Path(temp_dir)

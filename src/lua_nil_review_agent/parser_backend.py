@@ -12,7 +12,7 @@ import warnings
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VENDOR_LUA_SRC_DIR = PROJECT_ROOT / "vendor" / "tree-sitter-lua" / "src"
-TREE_SITTER_BUILD_DIR = Path.home() / ".cache" / "lua-nil-review-agent" / "tree_sitter"
+TREE_SITTER_BUILD_DIR = Path.home() / ".cache" / "lua-nil-guard" / "tree_sitter"
 TREE_SITTER_LUA_LIBRARY = TREE_SITTER_BUILD_DIR / "tree_sitter_lua.so"
 
 _LANGUAGE_CACHE = None

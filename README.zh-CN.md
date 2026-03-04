@@ -1,8 +1,6 @@
 # LuaNilGuard（中文说明）
 
-`LuaNilGuard` 是项目名称，当前 CLI 命令仍然保持为 `lua-nil-review-agent`。
-
-`lua-nil-review-agent` 是一个面向开发者的 CLI 工具，用于审查 Lua 代码中潜在的 nil 相关运行时风险。
+`lua-nil-guard` 是一个面向开发者的 CLI 工具，用于审查 Lua 代码中潜在的 nil 相关运行时风险。
 
 当前推荐的使用方式是：保留本仓库的源码目录结构，在此仓库中运行，并将它指向你希望审查的 Lua 项目。
 
@@ -26,19 +24,19 @@ pip install -e .
 3. 初始化目标仓库配置：
 
 ```sh
-lua-nil-review-agent init-config /path/to/target-repo
+lua-nil-guard init-config /path/to/target-repo
 ```
 
 4. 运行静态扫描：
 
 ```sh
-lua-nil-review-agent scan /path/to/target-repo
+lua-nil-guard scan /path/to/target-repo
 ```
 
 5. 运行完整报告：
 
 ```sh
-lua-nil-review-agent report /path/to/target-repo
+lua-nil-guard report /path/to/target-repo
 ```
 
 ## 单文件审查
@@ -46,9 +44,9 @@ lua-nil-review-agent report /path/to/target-repo
 如果你只想审查某一个 Lua 文件，可以使用单文件入口。该文件仍然必须位于一个已经执行过 `init-config` 的目标仓库中。
 
 ```sh
-lua-nil-review-agent scan-file /path/to/target-repo/src/demo.lua
-lua-nil-review-agent report-file /path/to/target-repo/src/demo.lua
-lua-nil-review-agent report-file-json /path/to/target-repo/src/demo.lua
+lua-nil-guard scan-file /path/to/target-repo/src/demo.lua
+lua-nil-guard report-file /path/to/target-repo/src/demo.lua
+lua-nil-guard report-file-json /path/to/target-repo/src/demo.lua
 ```
 
 单文件审查会保留仓库上下文，因此在条件允许时，仍然会使用跨文件函数摘要和相关函数源码片段辅助裁决。
@@ -60,13 +58,13 @@ lua-nil-review-agent report-file-json /path/to/target-repo/src/demo.lua
 1. 先初始化目标仓库：
 
 ```sh
-lua-nil-review-agent init-config /path/to/target-repo
+lua-nil-guard init-config /path/to/target-repo
 ```
 
 2. 选一个存在 nil 敏感调用的真实文件，先跑：
 
 ```sh
-lua-nil-review-agent report-file /path/to/target-repo/src/demo.lua
+lua-nil-guard report-file /path/to/target-repo/src/demo.lua
 ```
 
 3. 如果结果已经比较明确（例如 `risky` 或 `safe`），先继续在少量文件上验证，再考虑扩大到模块级或仓库级。
@@ -105,13 +103,13 @@ lua-nil-review-agent report-file /path/to/target-repo/src/demo.lua
 5. 修改契约后，先重新运行同一个文件，确认效果稳定，再扩大到：
 
 ```sh
-lua-nil-review-agent report /path/to/target-repo
+lua-nil-guard report /path/to/target-repo
 ```
 
 6. 如果你想看工具当前还无法证明的模式，可以查看 proposal backlog：
 
 ```sh
-lua-nil-review-agent proposal-analytics /path/to/target-repo
+lua-nil-guard proposal-analytics /path/to/target-repo
 ```
 
 这个输出更适合在你已经跑过几个真实文件之后再看。它能帮助你区分：
@@ -131,8 +129,8 @@ lua-nil-review-agent proposal-analytics /path/to/target-repo
 示例：
 
 ```sh
-lua-nil-review-agent report --backend gemini /path/to/target-repo
-lua-nil-review-agent report-file --backend codeagent /path/to/target-repo/src/demo.lua
+lua-nil-guard report --backend gemini /path/to/target-repo
+lua-nil-guard report-file --backend codeagent /path/to/target-repo/src/demo.lua
 ```
 
 这些 backend 依赖对应的本地 CLI 工具、账号凭据以及网络环境都已经在你的机器上正常工作。
@@ -140,7 +138,7 @@ lua-nil-review-agent report-file --backend codeagent /path/to/target-repo/src/de
 如果要使用自定义 provider，可以先生成一份 manifest 模板：
 
 ```sh
-lua-nil-review-agent generate-backend-manifest my-provider stdout_envelope_cli
+lua-nil-guard generate-backend-manifest my-provider stdout_envelope_cli
 ```
 
 ## 目标仓库结构

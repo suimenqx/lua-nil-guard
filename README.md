@@ -1,8 +1,6 @@
 # LuaNilGuard
 
-`LuaNilGuard` is the project name. The current CLI command remains `lua-nil-review-agent`.
-
-`lua-nil-review-agent` is a developer-facing CLI for reviewing Lua code for likely nil-related runtime faults. The supported operating model is source-tree usage: keep this repository intact, run from the checkout, and point the tool at Lua repositories you want to inspect.
+`lua-nil-guard` is a developer-facing CLI for reviewing Lua code for likely nil-related runtime faults. The supported operating model is source-tree usage: keep this repository intact, run from the checkout, and point the tool at Lua repositories you want to inspect.
 
 Chinese documentation: [README.zh-CN.md](./README.zh-CN.md)
 
@@ -24,19 +22,19 @@ pip install -e .
 3. Initialize the target repository config:
 
 ```sh
-lua-nil-review-agent init-config /path/to/target-repo
+lua-nil-guard init-config /path/to/target-repo
 ```
 
 4. Run a static scan:
 
 ```sh
-lua-nil-review-agent scan /path/to/target-repo
+lua-nil-guard scan /path/to/target-repo
 ```
 
 5. Run a full report:
 
 ```sh
-lua-nil-review-agent report /path/to/target-repo
+lua-nil-guard report /path/to/target-repo
 ```
 
 ## Single-File Review
@@ -44,9 +42,9 @@ lua-nil-review-agent report /path/to/target-repo
 If you only want to inspect one Lua file, use the file entrypoints. The file still needs to live inside a repository that has been initialized with `init-config`.
 
 ```sh
-lua-nil-review-agent scan-file /path/to/target-repo/src/demo.lua
-lua-nil-review-agent report-file /path/to/target-repo/src/demo.lua
-lua-nil-review-agent report-file-json /path/to/target-repo/src/demo.lua
+lua-nil-guard scan-file /path/to/target-repo/src/demo.lua
+lua-nil-guard report-file /path/to/target-repo/src/demo.lua
+lua-nil-guard report-file-json /path/to/target-repo/src/demo.lua
 ```
 
 Single-file review keeps repository context, so cross-file function summaries and related function source snippets can still be used during adjudication.
@@ -58,13 +56,13 @@ For a first trial, do not start with a full repository scan. Start with one repr
 1. Initialize the target repository once:
 
 ```sh
-lua-nil-review-agent init-config /path/to/target-repo
+lua-nil-guard init-config /path/to/target-repo
 ```
 
 2. Pick one real file with a known nil-sensitive call and run:
 
 ```sh
-lua-nil-review-agent report-file /path/to/target-repo/src/demo.lua
+lua-nil-guard report-file /path/to/target-repo/src/demo.lua
 ```
 
 3. If the result is already `risky` or `safe`, keep iterating on small files before moving to a wider scan.
@@ -103,13 +101,13 @@ Typical examples:
 5. Re-run the same file after updating contracts. Only after a few representative files behave well should you move on to:
 
 ```sh
-lua-nil-review-agent report /path/to/target-repo
+lua-nil-guard report /path/to/target-repo
 ```
 
 6. If you want to see what the tool still cannot prove, inspect the proposal backlog:
 
 ```sh
-lua-nil-review-agent proposal-analytics /path/to/target-repo
+lua-nil-guard proposal-analytics /path/to/target-repo
 ```
 
 This report is most useful after you have already tried a few single-file runs. It helps separate:
@@ -129,14 +127,14 @@ The default backend is `heuristic`. For LLM-backed adjudication, use `--backend`
 Examples:
 
 ```sh
-lua-nil-review-agent report --backend gemini /path/to/target-repo
-lua-nil-review-agent report-file --backend codeagent /path/to/target-repo/src/demo.lua
+lua-nil-guard report --backend gemini /path/to/target-repo
+lua-nil-guard report-file --backend codeagent /path/to/target-repo/src/demo.lua
 ```
 
 Those backends require the corresponding local CLI tool, credentials, and network access to already be working on the machine. For custom providers, generate a starter manifest with:
 
 ```sh
-lua-nil-review-agent generate-backend-manifest my-provider stdout_envelope_cli
+lua-nil-guard generate-backend-manifest my-provider stdout_envelope_cli
 ```
 
 ## Repository Layout
