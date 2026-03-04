@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+from importlib import resources
 from pathlib import Path
 
 ADJUDICATOR_SKILL_CONTRACT = "lua-nil-adjudicator/v1"
+BUNDLED_ADJUDICATOR_SKILL_NAME = "lua_nil_adjudicator.SKILL.md"
 
 
 class SkillRuntimeError(ValueError):
@@ -24,9 +26,9 @@ class SkillDefinition:
 
 
 def default_adjudicator_skill_path() -> Path:
-    """Return the repository-local adjudicator skill path."""
+    """Return the packaged default adjudicator skill path."""
 
-    return Path(__file__).resolve().parents[2] / "skills" / "lua-nil-adjudicator" / "SKILL.md"
+    return Path(__file__).with_name(BUNDLED_ADJUDICATOR_SKILL_NAME)
 
 
 def load_skill_definition(path: str | Path) -> SkillDefinition:
@@ -38,7 +40,9 @@ def load_skill_definition(path: str | Path) -> SkillDefinition:
 def load_adjudicator_skill(path: str | Path | None = None) -> SkillDefinition:
     """Load the default adjudicator skill, or a provided override path."""
 
-    return load_skill_definition(path or default_adjudicator_skill_path())
+    if path is None:
+        return _load_bundled_adjudicator_skill()
+    return load_skill_definition(path)
 
 
 def fallback_adjudicator_skill_header() -> str:
@@ -147,6 +151,17 @@ def compile_adjudicator_skill_header(
 def _load_skill_definition_cached(resolved_path: str) -> SkillDefinition:
     path = Path(resolved_path)
     content = path.read_text(encoding="utf-8")
+    return _parse_skill_definition(content, path)
+
+
+@lru_cache(maxsize=1)
+def _load_bundled_adjudicator_skill() -> SkillDefinition:
+    resource = resources.files("lua_nil_guard").joinpath(BUNDLED_ADJUDICATOR_SKILL_NAME)
+    content = resource.read_text(encoding="utf-8")
+    return _parse_skill_definition(content, default_adjudicator_skill_path())
+
+
+def _parse_skill_definition(content: str, path: Path) -> SkillDefinition:
     frontmatter, body = _split_frontmatter(content, path)
     name = frontmatter.get("name")
     description = frontmatter.get("description")

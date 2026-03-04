@@ -19,6 +19,9 @@ classifiers = [
 [project.scripts]
 lua-nil-guard = "lua_nil_guard.cli:main"
 
+[tool.setuptools.package-data]
+lua_nil_guard = ["lua_nil_adjudicator.SKILL.md"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

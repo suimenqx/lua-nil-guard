@@ -30,6 +30,56 @@
     "safe_patterns": ["x or ''", "assert(x)", "if x then ... end"]
   },
   {
+    "id": "string.sub.arg1",
+    "kind": "function_arg",
+    "qualified_name": "string.sub",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or ''", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "string.len.arg1",
+    "kind": "function_arg",
+    "qualified_name": "string.len",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or ''", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "string.byte.arg1",
+    "kind": "function_arg",
+    "qualified_name": "string.byte",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or ''", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "string.lower.arg1",
+    "kind": "function_arg",
+    "qualified_name": "string.lower",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or ''", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "string.upper.arg1",
+    "kind": "function_arg",
+    "qualified_name": "string.upper",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or ''", "assert(x)", "if x then ... end"]
+  },
+  {
     "id": "table.insert.arg1",
     "kind": "function_arg",
     "qualified_name": "table.insert",
@@ -58,6 +108,226 @@
     "failure_mode": "runtime_error",
     "default_severity": "high",
     "safe_patterns": ["x or {}", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "concat.left",
+    "kind": "binary_operand",
+    "qualified_name": "..",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or ''", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "concat.right",
+    "kind": "binary_operand",
+    "qualified_name": "..",
+    "arg_index": 2,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or ''", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "compare.lt.left",
+    "kind": "binary_operand",
+    "qualified_name": "<",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "compare.lt.right",
+    "kind": "binary_operand",
+    "qualified_name": "<",
+    "arg_index": 2,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "compare.lte.left",
+    "kind": "binary_operand",
+    "qualified_name": "<=",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "compare.lte.right",
+    "kind": "binary_operand",
+    "qualified_name": "<=",
+    "arg_index": 2,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "compare.gt.left",
+    "kind": "binary_operand",
+    "qualified_name": ">",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "compare.gt.right",
+    "kind": "binary_operand",
+    "qualified_name": ">",
+    "arg_index": 2,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "compare.gte.left",
+    "kind": "binary_operand",
+    "qualified_name": ">=",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "compare.gte.right",
+    "kind": "binary_operand",
+    "qualified_name": ">=",
+    "arg_index": 2,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "arithmetic.add.left",
+    "kind": "binary_operand",
+    "qualified_name": "+",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "arithmetic.add.right",
+    "kind": "binary_operand",
+    "qualified_name": "+",
+    "arg_index": 2,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "arithmetic.sub.left",
+    "kind": "binary_operand",
+    "qualified_name": "-",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "arithmetic.sub.right",
+    "kind": "binary_operand",
+    "qualified_name": "-",
+    "arg_index": 2,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "arithmetic.mul.left",
+    "kind": "binary_operand",
+    "qualified_name": "*",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "arithmetic.mul.right",
+    "kind": "binary_operand",
+    "qualified_name": "*",
+    "arg_index": 2,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "arithmetic.div.left",
+    "kind": "binary_operand",
+    "qualified_name": "/",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "arithmetic.div.right",
+    "kind": "binary_operand",
+    "qualified_name": "/",
+    "arg_index": 2,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "arithmetic.mod.left",
+    "kind": "binary_operand",
+    "qualified_name": "%",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "arithmetic.mod.right",
+    "kind": "binary_operand",
+    "qualified_name": "%",
+    "arg_index": 2,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "arithmetic.pow.left",
+    "kind": "binary_operand",
+    "qualified_name": "^",
+    "arg_index": 1,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
+  },
+  {
+    "id": "arithmetic.pow.right",
+    "kind": "binary_operand",
+    "qualified_name": "^",
+    "arg_index": 2,
+    "nil_sensitive": true,
+    "failure_mode": "runtime_error",
+    "default_severity": "high",
+    "safe_patterns": ["x or 0", "assert(x)", "if x then ... end"]
   },
   {
     "id": "length.operand",

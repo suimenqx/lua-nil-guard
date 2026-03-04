@@ -1530,6 +1530,271 @@ def test_run_file_review_disambiguates_same_name_functions_by_module(
     )
 
 
+def test_run_file_review_respects_global_require_with_module_style_loading(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    target_file = tmp_path / "src" / "demo.lua"
+    target_file.write_text(
+        "\n".join(
+            [
+                "require(\"user.normalizer\")",
+                "",
+                "local function parse_user()",
+                "  local username = user.normalizer.normalize_name(req.params.username)",
+                "  return string.match(username, '^a')",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "user_normalizer.lua").write_text(
+        "\n".join(
+            [
+                "module(\"user.normalizer\", package.seeall)",
+                "",
+                "function normalize_name(value)",
+                "  value = value or 'guest'",
+                "  return value",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "admin_normalizer.lua").write_text(
+        "\n".join(
+            [
+                "module(\"admin.normalizer\", package.seeall)",
+                "",
+                "function normalize_name(value)",
+                "  return nil",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    seen: dict[str, tuple[str, ...]] = {}
+
+    class RequireAwareBackend:
+        def adjudicate(self, packet, sink_rule):  # noqa: ANN001
+            del sink_rule
+            seen["related_functions"] = packet.related_functions
+            seen["function_summaries"] = packet.function_summaries
+            return AdjudicationRecord(
+                prosecutor=RoleOpinion(
+                    role="prosecutor",
+                    status="safe",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=("global require keeps explicit module call stable",),
+                    missing_evidence=(),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                defender=RoleOpinion(
+                    role="defender",
+                    status="safe",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=("global require keeps explicit module call stable",),
+                    missing_evidence=(),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                judge=Verdict(
+                    case_id=packet.case_id,
+                    status="safe",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=("global require keeps explicit module call stable",),
+                    counterarguments_considered=(),
+                    suggested_fix=None,
+                    needs_human=False,
+                ),
+            )
+
+    verdicts = run_file_review(snapshot, target_file, backend=RequireAwareBackend())
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status.startswith("safe")
+    assert seen["related_functions"] == ("user.normalizer.normalize_name",)
+    assert any(
+        "user.normalizer.normalize_name params=" in summary
+        for summary in seen["function_summaries"]
+    )
+    assert not any("require" in summary for summary in seen["function_summaries"])
+
+
+def test_run_file_review_surfaces_cross_file_maybe_nil_origin_for_string_find(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.find.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.find",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    target_file = tmp_path / "src" / "consumer.lua"
+    target_file.write_text(
+        "\n".join(
+            [
+                "require(\"user.lookup\")",
+                "",
+                "local function scan_user(req)",
+                "  local nickname = user.lookup.resolve_name(req)",
+                "  return string.find(nickname, '^vip')",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "lookup.lua").write_text(
+        "\n".join(
+            [
+                "module(\"user.lookup\", package.seeall)",
+                "",
+                "function resolve_name(req)",
+                "  if req.force_nil then",
+                "    return nil",
+                "  end",
+                "  if req.cached_name then",
+                "    return req.cached_name",
+                "  end",
+                "  if req.profile then",
+                "    return req.profile.display_name",
+                "  end",
+                "  return nil",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_file_review(snapshot, target_file)
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status.startswith("risky")
+
+    seen: dict[str, tuple[str, ...]] = {}
+
+    class CrossFileCaptureBackend:
+        def adjudicate(self, packet, sink_rule):  # noqa: ANN001
+            del sink_rule
+            seen["related_functions"] = packet.related_functions
+            seen["function_summaries"] = packet.function_summaries
+            seen["related_function_contexts"] = packet.related_function_contexts
+            seen["origins"] = _tuple_field(packet.static_reasoning, "origin_candidates")
+            seen["risk_summaries"] = tuple(signal.summary for signal in packet.static_risk_signals)
+            return AdjudicationRecord(
+                prosecutor=RoleOpinion(
+                    role="prosecutor",
+                    status="safe",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=("captured evidence only",),
+                    missing_evidence=(),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                defender=RoleOpinion(
+                    role="defender",
+                    status="safe",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=("captured evidence only",),
+                    missing_evidence=(),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                judge=Verdict(
+                    case_id=packet.case_id,
+                    status="safe",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=("captured evidence only",),
+                    counterarguments_considered=(),
+                    suggested_fix=None,
+                    needs_human=False,
+                ),
+            )
+
+    run_file_review(snapshot, target_file, backend=CrossFileCaptureBackend())
+
+    assert seen["related_functions"] == ("user.lookup.resolve_name",)
+    assert any(
+        "user.lookup.resolve_name params=" in summary
+        for summary in seen["function_summaries"]
+    )
+    assert any(
+        "user.lookup.resolve_name(req)" in origin
+        for origin in seen["origins"]
+    )
+    assert seen["risk_summaries"] == ("user.lookup.resolve_name(...) may return nil into `nickname`",)
+    assert any("resolve_name @ " in context for context in seen["related_function_contexts"])
+    assert any("return nil" in context for context in seen["related_function_contexts"])
+    assert any("return req.cached_name" in context for context in seen["related_function_contexts"])
+    assert any(
+        "return req.profile.display_name" in context
+        for context in seen["related_function_contexts"]
+    )
+
+
 def test_run_file_review_qualifies_bare_calls_inside_module_files(
     tmp_path: Path,
 ) -> None:

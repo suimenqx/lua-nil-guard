@@ -13,6 +13,9 @@ _FUNCTION_START_RE = re.compile(
 _MODULE_DECLARATION_RE = re.compile(
     r"^\s*module\s*\(\s*(['\"])([^'\"]+)\1(?:\s*,\s*package\.seeall)?\s*\)\s*$",
 )
+_REQUIRE_DECLARATION_RE = re.compile(
+    r"^\s*require(?:\s*\(\s*(['\"])([^'\"]+)\1\s*\)|\s+(['\"])([^'\"]+)\3)\s*$"
+)
 
 
 class SummaryStore:
@@ -132,6 +135,30 @@ def detect_module_name(source: str) -> str | None:
         if match is not None:
             return match.group(2)
     return None
+
+
+def detect_required_module_line(line: str) -> str | None:
+    """Return the required module from a bare global require statement."""
+
+    code = _strip_lua_comment(line)
+    if not code.strip():
+        return None
+    match = _REQUIRE_DECLARATION_RE.match(code.strip())
+    if match is None:
+        return None
+    return match.group(2) or match.group(4)
+
+
+def detect_required_modules(source: str) -> tuple[str, ...]:
+    """Return globally required modules declared via bare require(...) statements."""
+
+    modules: list[str] = []
+    for line in source.splitlines():
+        module_name = detect_required_module_line(line)
+        if module_name is None:
+            continue
+        modules.append(module_name)
+    return tuple(dict.fromkeys(modules))
 
 
 def _parse_params(raw: str) -> dict[str, str]:

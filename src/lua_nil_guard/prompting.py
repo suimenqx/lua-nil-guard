@@ -71,6 +71,9 @@ _UNKNOWN_REASON_CALIBRATIONS = {
 }
 
 _RISK_KIND_CALIBRATIONS = {
+    "direct_nil_literal": (
+        "Example (direct_nil_literal): if a nil-sensitive expression directly consumes the literal `nil`, that is immediate high-confidence risk evidence."
+    ),
     "direct_sink_field_path": (
         "Example (direct_sink_field_path): if a sink consumes `req.params.name` directly with no bounded guard, that is strong local risk evidence, not merely missing safety proof."
     ),
@@ -79,6 +82,12 @@ _RISK_KIND_CALIBRATIONS = {
     ),
     "wrapper_field_path_risk": (
         "Example (wrapper_field_path_risk): if a tiny transparent wrapper only forwards `req.params.name`, the wrapped local inherits the same field-path risk unless a bounded guard exists before the wrapper call."
+    ),
+    "call_nil_return_branch": (
+        "Example (call_nil_return_branch): if `local name = helper(req)` feeds a sink and the analyzed helper body has an explicit `return nil` path for that return slot, treat that as strong local risk evidence."
+    ),
+    "coalescing_call_nil_branch": (
+        "Example (coalescing_call_nil_branch): if `helper(a, b)` returns `a or b` and both call-site inputs may still be nil, the sink still has a bounded nil-return risk."
     ),
 }
 

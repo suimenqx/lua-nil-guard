@@ -8,6 +8,7 @@ from lua_nil_guard.skill_runtime import (
     ADJUDICATOR_SKILL_CONTRACT,
     SkillRuntimeError,
     compile_adjudicator_skill_header,
+    default_adjudicator_skill_path,
     fallback_adjudicator_skill_header,
     load_skill_definition,
 )
@@ -57,6 +58,13 @@ def test_compile_adjudicator_skill_header_contains_canonical_constraints() -> No
     assert "Absence of proof is not proof of bug." in header
     assert "Do not assume undocumented business guarantees." in header
     assert "Return `uncertain` when evidence is incomplete." in header
+
+
+def test_default_adjudicator_skill_path_points_to_packaged_resource() -> None:
+    skill_path = default_adjudicator_skill_path()
+
+    assert skill_path.name == "lua_nil_adjudicator.SKILL.md"
+    assert skill_path.exists()
 
 
 def test_compile_adjudicator_skill_header_can_fallback_when_skill_is_invalid(tmp_path: Path) -> None:

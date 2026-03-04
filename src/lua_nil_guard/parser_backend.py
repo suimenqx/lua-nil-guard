@@ -72,6 +72,22 @@ class LengthOperand:
     column: int
 
 
+@dataclass(frozen=True, slots=True)
+class BinaryOperand:
+    """A normalized Lua binary expression discovered by the active backend."""
+
+    operator: str
+    expression: str
+    left: str
+    right: str
+    left_offset: int
+    left_line: int
+    left_column: int
+    right_offset: int
+    right_line: int
+    right_column: int
+
+
 def get_parser_backend_info() -> ParserBackendInfo:
     """Return the active parser backend description."""
 
@@ -115,6 +131,21 @@ def collect_length_operands(source: str) -> tuple[LengthOperand, ...]:
     if tree_sitter_operands is None:
         raise ParserBackendUnavailableError(
             "tree_sitter Parser unavailable for length-operand collection"
+        )
+    return tree_sitter_operands
+
+
+def collect_binary_operands(
+    source: str,
+    operator: str | None = None,
+) -> tuple[BinaryOperand, ...]:
+    """Collect binary expressions using the active backend."""
+
+    language = _require_tree_sitter_language()
+    tree_sitter_operands = _collect_binary_operands_tree_sitter(source, language, operator)
+    if tree_sitter_operands is None:
+        raise ParserBackendUnavailableError(
+            "tree_sitter Parser unavailable for binary-operand collection"
         )
     return tree_sitter_operands
 
@@ -406,6 +437,35 @@ def _collect_length_operands_tree_sitter(
     return tuple(operands)
 
 
+def _collect_binary_operands_tree_sitter(
+    source: str,
+    language,
+    operator: str | None,
+) -> tuple[BinaryOperand, ...] | None:
+    try:
+        from tree_sitter import Parser
+    except Exception:
+        return None
+
+    parser = Parser()
+    parser.language = language
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
+    operands: list[BinaryOperand] = []
+    stack = [tree.root_node]
+
+    while stack:
+        node = stack.pop()
+        if node.type == "binary_expression":
+            binary_operand = _binary_operand_from_tree_sitter_node(node, source_bytes)
+            if binary_operand is not None and (operator is None or binary_operand.operator == operator):
+                operands.append(binary_operand)
+        stack.extend(reversed(node.children))
+
+    operands.sort(key=lambda item: (item.left_line, item.left_column))
+    return tuple(operands)
+
+
 def _call_site_from_tree_sitter_node(node, source_bytes: bytes) -> CallSite | None:
     arguments_node = None
     for child in node.children:
@@ -496,6 +556,45 @@ def _length_operand_from_tree_sitter_node(node, source_bytes: bytes) -> LengthOp
         offset=offset,
         line=start_point.row + 1,
         column=start_point.column + 1,
+    )
+
+
+def _binary_operand_from_tree_sitter_node(node, source_bytes: bytes) -> BinaryOperand | None:
+    named_children = list(node.named_children)
+    if len(named_children) != 2:
+        return None
+
+    left_node, right_node = named_children
+    operator_text = None
+    for child in node.children:
+        if child.is_named:
+            continue
+        token = _decode_bytes(source_bytes, child.start_byte, child.end_byte).strip()
+        if token:
+            operator_text = token
+            break
+    if not operator_text:
+        return None
+
+    expression_text = _decode_bytes(source_bytes, node.start_byte, node.end_byte).strip()
+    left_text = _decode_bytes(source_bytes, left_node.start_byte, left_node.end_byte).strip()
+    right_text = _decode_bytes(source_bytes, right_node.start_byte, right_node.end_byte).strip()
+    if not expression_text or not left_text or not right_text:
+        return None
+
+    left_offset = len(source_bytes[: left_node.start_byte].decode("utf-8"))
+    right_offset = len(source_bytes[: right_node.start_byte].decode("utf-8"))
+    return BinaryOperand(
+        operator=operator_text,
+        expression=expression_text,
+        left=left_text,
+        right=right_text,
+        left_offset=left_offset,
+        left_line=left_node.start_point.row + 1,
+        left_column=left_node.start_point.column + 1,
+        right_offset=right_offset,
+        right_line=right_node.start_point.row + 1,
+        right_column=right_node.start_point.column + 1,
     )
 
 

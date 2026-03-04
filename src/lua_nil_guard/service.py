@@ -44,9 +44,16 @@ from .models import (
 from .pipeline import build_evidence_packet, should_report
 from .prompting import build_adjudication_prompt
 from .repository import discover_lua_files, read_lua_source_text
-from .summaries import SummaryStore, detect_module_name, summarize_source
+from .summaries import (
+    SummaryStore,
+    detect_module_name,
+    detect_required_module_line,
+    summarize_source,
+)
 from .static_analysis import (
     analyze_candidate,
+    collect_coalescing_return_helpers,
+    collect_maybe_nil_return_helpers,
     collect_inline_guard_contracts,
     collect_transparent_return_wrappers,
 )
@@ -174,6 +181,8 @@ def review_source(
     *,
     function_contracts: tuple[object, ...] = (),
     transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]] | None = None,
+    maybe_nil_return_helpers: dict[str, tuple[tuple[int, int], ...]] | None = None,
+    coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]] | None = None,
     inline_guard_contracts: tuple[object, ...] | None = None,
 ) -> tuple[CandidateAssessment, ...]:
     """Collect candidates from one source file and attach local static analysis."""
@@ -195,6 +204,22 @@ def review_source(
         effective_inline_guard_contracts
         + collect_inline_guard_contracts((source,), allow_local=True)
     )
+    effective_maybe_nil_return_helpers = (
+        dict(maybe_nil_return_helpers)
+        if maybe_nil_return_helpers is not None
+        else {}
+    )
+    effective_coalescing_return_helpers = (
+        dict(coalescing_return_helpers)
+        if coalescing_return_helpers is not None
+        else {}
+    )
+    effective_maybe_nil_return_helpers.update(
+        collect_maybe_nil_return_helpers(summarize_source(file_path, source))
+    )
+    effective_coalescing_return_helpers.update(
+        collect_coalescing_return_helpers(summarize_source(file_path, source))
+    )
     assessments: list[CandidateAssessment] = []
     for candidate in collect_candidates(file_path, source, sink_rules):
         static_analysis = analyze_candidate(
@@ -202,6 +227,8 @@ def review_source(
             candidate,
             function_contracts=tuple(function_contracts),
             transparent_return_wrappers=effective_transparent_return_wrappers,
+            maybe_nil_return_helpers=effective_maybe_nil_return_helpers,
+            coalescing_return_helpers=effective_coalescing_return_helpers,
             inline_guard_contracts=effective_inline_guard_contracts,
         )
         assessments.append(
@@ -218,6 +245,8 @@ def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment
 
     transparent_return_wrappers = _collect_snapshot_transparent_return_wrappers(snapshot)
     inline_guard_contracts = _collect_snapshot_inline_guard_contracts(snapshot)
+    maybe_nil_return_helpers = _collect_snapshot_maybe_nil_return_helpers(snapshot)
+    coalescing_return_helpers = _collect_snapshot_coalescing_return_helpers(snapshot)
     assessments: list[CandidateAssessment] = []
     for file_path in snapshot.lua_files:
         source = read_lua_source_text(file_path)
@@ -228,6 +257,8 @@ def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment
                 snapshot.sink_rules,
                 function_contracts=snapshot.function_contracts,
                 transparent_return_wrappers=transparent_return_wrappers,
+                maybe_nil_return_helpers=maybe_nil_return_helpers,
+                coalescing_return_helpers=coalescing_return_helpers,
                 inline_guard_contracts=inline_guard_contracts,
             )
         )
@@ -244,12 +275,16 @@ def review_repository_file(
     source = read_lua_source_text(resolved_file)
     transparent_return_wrappers = _collect_snapshot_transparent_return_wrappers(snapshot)
     inline_guard_contracts = _collect_snapshot_inline_guard_contracts(snapshot)
+    maybe_nil_return_helpers = _collect_snapshot_maybe_nil_return_helpers(snapshot)
+    coalescing_return_helpers = _collect_snapshot_coalescing_return_helpers(snapshot)
     return review_source(
         resolved_file,
         source,
         snapshot.sink_rules,
         function_contracts=snapshot.function_contracts,
         transparent_return_wrappers=transparent_return_wrappers,
+        maybe_nil_return_helpers=maybe_nil_return_helpers,
+        coalescing_return_helpers=coalescing_return_helpers,
         inline_guard_contracts=inline_guard_contracts,
     )
 
@@ -1121,6 +1156,18 @@ def _collect_snapshot_inline_guard_contracts(
     )
 
 
+def _collect_snapshot_maybe_nil_return_helpers(
+    snapshot: RepositorySnapshot,
+) -> dict[str, tuple[tuple[int, int], ...]]:
+    return collect_maybe_nil_return_helpers(_collect_repository_summaries(snapshot))
+
+
+def _collect_snapshot_coalescing_return_helpers(
+    snapshot: RepositorySnapshot,
+) -> dict[str, tuple[tuple[int, int, int], ...]]:
+    return collect_coalescing_return_helpers(_collect_repository_summaries(snapshot))
+
+
 def _recognized_helper_names(snapshot: RepositorySnapshot) -> frozenset[str]:
     helper_names = set(_collect_snapshot_transparent_return_wrappers(snapshot))
     helper_names.update(
@@ -1613,6 +1660,8 @@ def _call_names_from_line(
     code = _strip_lua_comment(line)
     if not code.strip():
         return ()
+    if detect_required_module_line(code) is not None:
+        return ()
     if re.match(r"^\s*(?:local\s+)?function\b", code):
         return ()
     names = []
@@ -1620,6 +1669,8 @@ def _call_names_from_line(
         raw_name = match.group(1)
         short_name = raw_name.rsplit(".", 1)[-1].rsplit(":", 1)[-1]
         if short_name in _LUA_KEYWORDS:
+            continue
+        if raw_name == "require":
             continue
         names.append(
             _resolve_related_name(

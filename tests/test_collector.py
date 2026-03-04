@@ -203,3 +203,90 @@ def test_collect_candidates_finds_configured_length_operator_sinks() -> None:
     assert candidate.sink_name == "#"
     assert candidate.expression == "items"
     assert candidate.symbol == "items"
+
+
+def test_collect_candidates_finds_binary_operand_sinks() -> None:
+    sink_rules = (
+        SinkRule(
+            id="concat.left",
+            kind="binary_operand",
+            qualified_name="..",
+            arg_index=1,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("x or ''",),
+        ),
+        SinkRule(
+            id="compare.gte.right",
+            kind="binary_operand",
+            qualified_name=">=",
+            arg_index=2,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("x or 0",),
+        ),
+        SinkRule(
+            id="arithmetic.add.left",
+            kind="binary_operand",
+            qualified_name="+",
+            arg_index=1,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("x or 0",),
+        ),
+    )
+    source = "\n".join(
+        [
+            "local message = prefix .. suffix",
+            "if score >= limit then return message end",
+            "local total = count + bonus",
+        ]
+    )
+
+    candidates = collect_candidates(Path("foo/binary.lua"), source, sink_rules)
+
+    assert len(candidates) == 3
+    assert [candidate.sink_rule_id for candidate in candidates] == [
+        "concat.left",
+        "compare.gte.right",
+        "arithmetic.add.left",
+    ]
+    assert [candidate.expression for candidate in candidates] == ["prefix", "limit", "count"]
+    assert [candidate.sink_name for candidate in candidates] == [
+        "concat.left",
+        "compare.gte.right",
+        "arithmetic.add.left",
+    ]
+
+
+def test_collect_candidates_skips_non_nil_literal_binary_operands() -> None:
+    sink_rules = (
+        SinkRule(
+            id="concat.left",
+            kind="binary_operand",
+            qualified_name="..",
+            arg_index=1,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("x or ''",),
+        ),
+        SinkRule(
+            id="concat.right",
+            kind="binary_operand",
+            qualified_name="..",
+            arg_index=2,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("x or ''",),
+        ),
+    )
+
+    candidates = collect_candidates(Path("foo/concat.lua"), "return 'x' .. suffix", sink_rules)
+
+    assert len(candidates) == 1
+    assert candidates[0].expression == "suffix"

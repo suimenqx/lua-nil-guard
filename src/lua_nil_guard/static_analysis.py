@@ -61,10 +61,28 @@ def analyze_candidate(
     *,
     function_contracts: tuple[FunctionContract, ...] = (),
     transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]] | None = None,
+    maybe_nil_return_helpers: dict[str, tuple[tuple[int, int], ...]] | None = None,
+    coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]] | None = None,
     inline_guard_contracts: tuple[FunctionContract, ...] | None = None,
 ) -> StaticAnalysisResult:
     """Apply bounded local heuristics before escalating to agent review."""
 
+    current_module = detect_module_name(source)
+    direct_expression_risks = _direct_expression_risk_signals(
+        candidate.expression,
+        sink_name=candidate.sink_name,
+        current_module=current_module,
+        maybe_nil_return_helpers=tuple(
+            maybe_nil_return_helpers.items()
+        )
+        if maybe_nil_return_helpers is not None
+        else (),
+        coalescing_return_helpers=tuple(
+            coalescing_return_helpers.items()
+        )
+        if coalescing_return_helpers is not None
+        else (),
+    )
     if not _is_trackable_symbol(candidate.symbol):
         return StaticAnalysisResult(
             state="unknown_static",
@@ -73,6 +91,7 @@ def analyze_candidate(
             origin_usage_modes=("direct_sink",),
             origin_return_slots=(1,),
             proofs=(),
+            risk_signals=direct_expression_risks,
         )
 
     lines = source.splitlines()
@@ -96,11 +115,20 @@ def analyze_candidate(
     origin = origin_context[0] if origin_context is not None else None
     proofs: list[StaticProof] = []
     risk_signals: list[StaticRiskSignal] = []
-    current_module = detect_module_name(source)
     effective_transparent_return_wrappers = (
         dict(transparent_return_wrappers)
         if transparent_return_wrappers is not None
         else collect_transparent_return_wrappers((source,), allow_local=True)
+    )
+    effective_maybe_nil_return_helpers = (
+        dict(maybe_nil_return_helpers)
+        if maybe_nil_return_helpers is not None
+        else {}
+    )
+    effective_coalescing_return_helpers = (
+        dict(coalescing_return_helpers)
+        if coalescing_return_helpers is not None
+        else {}
     )
     effective_inline_guard_contracts = (
         tuple(inline_guard_contracts)
@@ -183,6 +211,22 @@ def analyze_candidate(
                 current_module=current_module,
                 transparent_return_wrappers=effective_transparent_return_wrappers,
                 unknown_reason=unknown_reason,
+            )
+        )
+        risk_signals.extend(
+            _call_nil_return_risk_signals(
+                origin_detail,
+                subject=candidate.symbol,
+                current_module=current_module,
+                maybe_nil_return_helpers=effective_maybe_nil_return_helpers,
+            )
+        )
+        risk_signals.extend(
+            _coalescing_call_risk_signals(
+                origin_detail,
+                subject=candidate.symbol,
+                current_module=current_module,
+                coalescing_return_helpers=effective_coalescing_return_helpers,
             )
         )
     deduped_risk_signals = _dedupe_risk_signals(tuple(risk_signals))
@@ -1333,6 +1377,135 @@ def _field_path_risk_signals(
     )
 
 
+def _direct_expression_risk_signals(
+    expression: str,
+    *,
+    sink_name: str,
+    current_module: str | None,
+    maybe_nil_return_helpers: tuple[tuple[str, tuple[tuple[int, int], ...]], ...],
+    coalescing_return_helpers: tuple[tuple[str, tuple[tuple[int, int, int], ...]], ...],
+) -> tuple[StaticRiskSignal, ...]:
+    stripped = _strip_lua_comment(expression).strip()
+    if stripped == "nil":
+        return (
+            StaticRiskSignal(
+                kind="direct_nil_literal",
+                summary=f"nil reaches {sink_name} directly",
+                subject="nil",
+                source_expression="nil",
+                provenance=(f"the sink consumes an explicit nil literal in `{expression}`",),
+                depth=0,
+            ),
+        )
+
+    parsed_call = _parse_simple_call(stripped)
+    if parsed_call is None:
+        return ()
+
+    raw_name, _args = parsed_call
+    helper_lookup = dict(maybe_nil_return_helpers)
+    resolved_name = _resolve_contract_name(
+        raw_name,
+        current_module=current_module,
+        known_contract_names=frozenset(helper_lookup),
+    )
+    depth = _maybe_nil_return_depth_for_slot(
+        helper_lookup.get(resolved_name),
+        1,
+    )
+    if depth is None:
+        helper_lookup = dict(coalescing_return_helpers)
+        coalescing_signal = _coalescing_call_risk_signal_for_expression(
+            stripped,
+            sink_name=sink_name,
+            current_module=current_module,
+            coalescing_return_helpers=helper_lookup,
+            subject=expression,
+        )
+        return (coalescing_signal,) if coalescing_signal is not None else ()
+
+    return (
+        StaticRiskSignal(
+            kind="call_nil_return_branch",
+            summary=f"{resolved_name}(...) may return nil directly into {sink_name}",
+            subject=expression,
+            source_expression=expression,
+            provenance=(
+                f"`{resolved_name}` has an analyzed return path that can yield nil for slot 1",
+            ),
+            depth=depth,
+        ),
+    )
+
+
+def _coalescing_call_risk_signals(
+    origin_detail: tuple[str, str, int, int] | None,
+    *,
+    subject: str,
+    current_module: str | None,
+    coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]],
+) -> tuple[StaticRiskSignal, ...]:
+    if origin_detail is None:
+        return ()
+
+    origin, _usage_mode, return_slot, _assignment_line_index = origin_detail
+    signal = _coalescing_call_risk_signal_for_expression(
+        _strip_lua_comment(origin).strip(),
+        sink_name=subject,
+        current_module=current_module,
+        coalescing_return_helpers=coalescing_return_helpers,
+        subject=subject,
+        return_slot=return_slot,
+    )
+    return (signal,) if signal is not None else ()
+
+
+def _coalescing_call_risk_signal_for_expression(
+    expression: str,
+    *,
+    sink_name: str,
+    current_module: str | None,
+    coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]],
+    subject: str,
+    return_slot: int = 1,
+) -> StaticRiskSignal | None:
+    parsed_call = _parse_simple_call(expression)
+    if parsed_call is None:
+        return None
+
+    raw_name, args = parsed_call
+    resolved_name = _resolve_contract_name(
+        raw_name,
+        current_module=current_module,
+        known_contract_names=frozenset(coalescing_return_helpers),
+    )
+    mapping = _coalescing_return_mapping_for_slot(
+        coalescing_return_helpers.get(resolved_name),
+        return_slot,
+    )
+    if mapping is None:
+        return None
+
+    primary_index, fallback_index = mapping
+    primary_arg = args[primary_index - 1].strip() if 1 <= primary_index <= len(args) else "nil"
+    fallback_arg = args[fallback_index - 1].strip() if 1 <= fallback_index <= len(args) else "nil"
+    if not _call_argument_could_be_nil(primary_arg):
+        return None
+    if not _call_argument_could_be_nil(fallback_arg):
+        return None
+
+    return StaticRiskSignal(
+        kind="coalescing_call_nil_branch",
+        summary=f"{resolved_name}(...) may still return nil into {sink_name}",
+        subject=subject,
+        source_expression=expression,
+        provenance=(
+            f"`{resolved_name}` returns arg {primary_index} or arg {fallback_index}, and both call-site inputs may still be nil",
+        ),
+        depth=1,
+    )
+
+
 def _wrapper_field_path_risk_signals(
     lines: list[str],
     origin_detail: tuple[str, str, int, int] | None,
@@ -1388,6 +1561,48 @@ def _wrapper_field_path_risk_signals(
                 f"`{resolved_name}` transparently forwards unguarded field path `{passthrough_value}`",
             ),
             depth=1,
+        ),
+    )
+
+
+def _call_nil_return_risk_signals(
+    origin_detail: tuple[str, str, int, int] | None,
+    *,
+    subject: str,
+    current_module: str | None,
+    maybe_nil_return_helpers: dict[str, tuple[tuple[int, int], ...]],
+) -> tuple[StaticRiskSignal, ...]:
+    if origin_detail is None:
+        return ()
+
+    origin, _usage_mode, return_slot, _assignment_line_index = origin_detail
+    parsed_call = _parse_simple_call(_strip_lua_comment(origin).strip())
+    if parsed_call is None:
+        return ()
+
+    raw_name, _args = parsed_call
+    resolved_name = _resolve_contract_name(
+        raw_name,
+        current_module=current_module,
+        known_contract_names=frozenset(maybe_nil_return_helpers),
+    )
+    depth = _maybe_nil_return_depth_for_slot(
+        maybe_nil_return_helpers.get(resolved_name),
+        return_slot,
+    )
+    if depth is None:
+        return ()
+
+    return (
+        StaticRiskSignal(
+            kind="call_nil_return_branch",
+            summary=f"{resolved_name}(...) may return nil into `{subject}`",
+            subject=subject,
+            source_expression=origin,
+            provenance=(
+                f"`{resolved_name}` has an analyzed return path that can yield nil for slot {return_slot}",
+            ),
+            depth=depth,
         ),
     )
 
@@ -1472,6 +1687,131 @@ def _dedupe_risk_signals(
         seen.add(key)
         unique.append(signal)
     return tuple(unique)
+
+
+def collect_maybe_nil_return_helpers(
+    summaries: tuple[object, ...],
+) -> dict[str, tuple[tuple[int, int], ...]]:
+    slot_depths: dict[str, dict[int, int]] = {}
+    changed = True
+    while changed:
+        changed = False
+        for summary in summaries:
+            derived = _derive_maybe_nil_return_slots_for_summary(summary, slot_depths)
+            if not derived:
+                continue
+            helper_slots = slot_depths.setdefault(summary.qualified_name, {})
+            for slot, depth in derived.items():
+                current = helper_slots.get(slot)
+                if current is not None and current <= depth:
+                    continue
+                helper_slots[slot] = depth
+                changed = True
+    return {
+        name: tuple(sorted(slot_map.items()))
+        for name, slot_map in slot_depths.items()
+    }
+
+
+def collect_coalescing_return_helpers(
+    summaries: tuple[object, ...],
+) -> dict[str, tuple[tuple[int, int, int], ...]]:
+    helper_mappings: dict[str, list[tuple[int, int, int]]] = {}
+    for summary in summaries:
+        params = list(getattr(summary, "params", ()))
+        if not params:
+            continue
+        mappings: list[tuple[int, int, int]] = []
+        for returned in getattr(summary, "returns", ()):
+            values = _split_top_level_values(returned)
+            for slot, value in enumerate(values, start=1):
+                mapping = _coalescing_return_mapping(value, params)
+                if mapping is None:
+                    continue
+                mappings.append((slot, mapping[0], mapping[1]))
+        if mappings:
+            helper_mappings[summary.qualified_name] = mappings
+    return {
+        name: tuple(mappings)
+        for name, mappings in helper_mappings.items()
+    }
+
+
+def _derive_maybe_nil_return_slots_for_summary(
+    summary: object,
+    known_slot_depths: dict[str, dict[int, int]],
+) -> dict[int, int]:
+    slot_depths: dict[int, int] = {}
+    known_names = frozenset(known_slot_depths)
+    for returned in getattr(summary, "returns", ()):
+        values = _split_top_level_values(returned)
+        for index, value in enumerate(values, start=1):
+            stripped = value.strip()
+            if stripped == "nil":
+                slot_depths[index] = min(slot_depths.get(index, 1_000_000), 0)
+                continue
+            parsed_call = _parse_simple_call(stripped)
+            if parsed_call is None:
+                continue
+            raw_name, _args = parsed_call
+            resolved_name = _resolve_contract_name(
+                raw_name,
+                current_module=getattr(summary, "module_name", None),
+                known_contract_names=known_names,
+            )
+            nested_depth = _maybe_nil_return_depth_for_slot(
+                tuple(known_slot_depths.get(resolved_name, {}).items()),
+                index,
+            )
+            if nested_depth is None:
+                continue
+            candidate_depth = nested_depth + 1
+            slot_depths[index] = min(slot_depths.get(index, 1_000_000), candidate_depth)
+    return slot_depths
+
+
+def _coalescing_return_mapping(
+    expression: str,
+    params: list[str],
+) -> tuple[int, int] | None:
+    match = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s+or\s+([A-Za-z_][A-Za-z0-9_]*)\s*$", expression)
+    if match is None:
+        return None
+    left_name, right_name = match.group(1), match.group(2)
+    if left_name not in params or right_name not in params:
+        return None
+    return params.index(left_name) + 1, params.index(right_name) + 1
+
+
+def _maybe_nil_return_depth_for_slot(
+    helper_slots: tuple[tuple[int, int], ...] | None,
+    slot: int,
+) -> int | None:
+    if not helper_slots:
+        return None
+    for helper_slot, depth in helper_slots:
+        if helper_slot == slot:
+            return depth
+    return None
+
+
+def _coalescing_return_mapping_for_slot(
+    helper_slots: tuple[tuple[int, int, int], ...] | None,
+    slot: int,
+) -> tuple[int, int] | None:
+    if not helper_slots:
+        return None
+    for helper_slot, primary_index, fallback_index in helper_slots:
+        if helper_slot == slot:
+            return primary_index, fallback_index
+    return None
+
+
+def _call_argument_could_be_nil(value: str) -> bool:
+    stripped = value.strip()
+    if stripped == "nil":
+        return True
+    return not _is_non_nil_literal(stripped)
 
 
 def _contract_matching_symbol_index(

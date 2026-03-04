@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .models import CandidateCase, SinkRule
 from .parser_backend import (
+    collect_binary_operands,
     collect_call_sites,
     collect_length_operands,
     collect_receiver_accesses,
@@ -19,6 +20,7 @@ _ANONYMOUS_FUNCTION_RE = re.compile(r"(?:=\s*|return\s+)function\b")
 _MODULE_DECLARATION_RE = re.compile(
     r"^\s*module\s*\(\s*(['\"])([^'\"]+)\1(?:\s*,\s*package\.seeall)?\s*\)\s*$",
 )
+_NUMBER_LITERAL_RE = re.compile(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 
 
 def collect_candidates(
@@ -61,6 +63,40 @@ def collect_candidates(
             continue
 
         if sink_rule.kind != "receiver":
+            if sink_rule.kind == "binary_operand":
+                if sink_rule.arg_index not in {1, 2}:
+                    continue
+                for operand in collect_binary_operands(source, sink_rule.qualified_name):
+                    if sink_rule.arg_index == 1:
+                        expression = operand.left
+                        line, column = operand.left_line, operand.left_column
+                        operand_offset = operand.left_offset
+                    else:
+                        expression = operand.right
+                        line, column = operand.right_line, operand.right_column
+                        operand_offset = operand.right_offset
+                    if _is_obviously_non_nil_literal(expression):
+                        continue
+                    function_scope, _ = _scan_enclosing_context(source[: operand_offset])
+                    symbol = expression if _IDENTIFIER_RE.match(expression) else expression
+                    case_id = f"{path_text}:{line}:{column}:{sink_rule.id}"
+
+                    candidates.append(
+                        CandidateCase(
+                            case_id=case_id,
+                            file=path_text,
+                            line=line,
+                            column=column,
+                            sink_rule_id=sink_rule.id,
+                            sink_name=sink_rule.id,
+                            arg_index=sink_rule.arg_index,
+                            expression=expression,
+                            symbol=symbol,
+                            function_scope=function_scope,
+                            static_state="unknown_static",
+                        )
+                    )
+                continue
             if sink_rule.kind != "unary_operand":
                 continue
 
@@ -201,3 +237,16 @@ def _opens_non_function_block(stripped_line: str) -> bool:
         or (stripped_line.startswith("while ") and stripped_line.endswith(" do"))
         or stripped_line == "do"
     )
+
+
+def _is_obviously_non_nil_literal(expression: str) -> bool:
+    stripped = expression.strip()
+    if stripped == "nil":
+        return False
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {"'", '"'}:
+        return True
+    if stripped in {"true", "false"}:
+        return True
+    if _NUMBER_LITERAL_RE.match(stripped):
+        return True
+    return stripped.startswith("{") and stripped.endswith("}")

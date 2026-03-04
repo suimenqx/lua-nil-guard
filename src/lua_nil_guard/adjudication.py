@@ -184,6 +184,12 @@ def _suggested_fix(packet: EvidencePacket, sink_rule: SinkRule) -> str | None:
     if sink_rule.qualified_name.startswith("string."):
         return _coalesce_fix(packet, sink_rule, "''")
 
+    if sink_rule.kind == "binary_operand" and sink_rule.qualified_name == "..":
+        return _coalesce_fix(packet, sink_rule, "''")
+
+    if sink_rule.kind == "binary_operand":
+        return _coalesce_fix(packet, sink_rule, "0")
+
     if sink_rule.qualified_name in {"table.insert", "pairs", "ipairs"}:
         return _coalesce_fix(packet, sink_rule, "{}")
 
@@ -334,6 +340,8 @@ def _find_target_line_index(
         if expression not in line:
             continue
         if sink_rule.kind == "function_arg" and sink_rule.qualified_name not in line:
+            continue
+        if sink_rule.kind == "binary_operand" and sink_rule.qualified_name not in line:
             continue
         if sink_rule.kind == "unary_operand" and "#" not in line:
             continue

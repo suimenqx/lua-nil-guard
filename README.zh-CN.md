@@ -64,6 +64,20 @@ lua-nil-guard report-file-json /path/to/target-repo/src/demo.lua
 
 单文件审查会保留仓库上下文，因此在条件允许时，仍然会使用跨文件函数摘要和相关函数源码片段辅助裁决。
 
+## 默认高危覆盖面
+
+LuaNilGuard 开箱即用时，优先覆盖那些最常见、最容易直接引发运行时错误的 nil 高危点：
+
+- `string.find`、`string.match`、`string.gsub`、`string.sub`、`string.len`、`string.byte`、`string.lower`、`string.upper` 等字符串库首参
+- 字符串拼接 `..`
+- `pairs(...)` / `ipairs(...)` 表迭代
+- `#value` 长度操作
+- 可能为 nil 的 receiver 成员访问（如 `value.name`、`value[key]`）
+- 数字顺序比较：`<`、`<=`、`>`、`>=`
+- 数值计算：`+`、`-`、`*`、`/`、`%`、`^`
+
+这些模式已经包含在默认生成的 `sink_rules.json` 中，也是本工具在首次试用时最希望让客户直接感知到的核心价值。
+
 ## 首次试用建议
 
 第一次试用时，不建议直接对整个仓库运行完整审查。更稳妥的做法是：先选一个具有代表性的真实 Lua 文件，跑通单文件流程，再逐步扩大范围。
@@ -223,5 +237,5 @@ lua-nil-guard generate-backend-manifest my-provider stdout_envelope_cli
 
 ## 说明
 
-- 当前官方支持的运行方式是“源码目录使用”或 editable install。默认技能文件依赖本仓库目录结构。
+- 当前官方支持的运行方式是“源码目录使用”或 editable install。默认 adjudicator skill 已作为包内资源分发，但 vendored Lua grammar 的本地编译仍依赖本仓库目录结构。
 - `docs/` 目录下还有更详细的提示词结构与 sink rule 说明，可按需查看。

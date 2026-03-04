@@ -62,6 +62,20 @@ lua-nil-guard report-file-json /path/to/target-repo/src/demo.lua
 
 Single-file review keeps repository context, so cross-file function summaries and related function source snippets can still be used during adjudication.
 
+## Default High-Risk Coverage
+
+Out of the box, LuaNilGuard prioritizes Lua nil hazards that commonly lead to immediate runtime faults:
+
+- string-library first-argument sinks such as `string.find`, `string.match`, `string.gsub`, `string.sub`, `string.len`, `string.byte`, `string.lower`, and `string.upper`
+- string concatenation with `..`
+- table iteration via `pairs(...)` and `ipairs(...)`
+- length operator usage with `#value`
+- member access on a possibly nil receiver (`value.name`, `value[key]`)
+- numeric ordering comparisons: `<`, `<=`, `>`, `>=`
+- numeric arithmetic: `+`, `-`, `*`, `/`, `%`, `^`
+
+These patterns are part of the default `sink_rules.json` template and are intended to be the first customer-visible value surface during trial use.
+
 ## Recommended First Run
 
 For a first trial, do not start with a full repository scan. Start with one representative Lua file, then tighten configuration only if the result is too uncertain.
@@ -182,5 +196,5 @@ Target repositories are expected to contain:
 - Missing helper definitions do not block review, but they reduce cross-file proof strength and can increase `uncertain` results.
 - The current implementation is optimized for precision, not full coverage. It will stay conservative when it cannot prove a bounded safe or risky path.
 - Large-repository performance work such as global AST caching, incremental PR analysis, and concurrency is planned, but not part of this release. For now, module-scale or file-scale trials are the recommended rollout path.
-- Source-tree or editable-install usage is the supported path. The default skill file is loaded from this repository checkout.
+- Source-tree or editable-install usage is the supported path. The default adjudicator skill is bundled as package data, but the vendored Lua grammar build still relies on this repository checkout.
 - The built-in docs under `docs/` cover prompt structure and sink rule semantics in more detail.

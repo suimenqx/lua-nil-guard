@@ -8,6 +8,7 @@ from lua_nil_guard.parser_backend import (
     _tree_sitter_source_signature,
     _write_tree_sitter_build_info,
     ParserBackendInfo,
+    collect_binary_operands,
     ParserBackendUnavailableError,
     collect_call_sites,
     collect_length_operands,
@@ -70,6 +71,35 @@ def test_collect_length_operands_finds_length_operators_with_tree_sitter_backend
     assert operands[0].operand == "items"
     assert operands[1].line == 2
     assert operands[1].operand == "req.items"
+
+
+def test_collect_binary_operands_finds_concat_compare_and_arithmetic() -> None:
+    source = "\n".join(
+        [
+            "local message = prefix .. suffix",
+            "if score >= limit then return message end",
+            "local total = count + bonus",
+        ]
+    )
+
+    concat_operands = collect_binary_operands(source, "..")
+    compare_operands = collect_binary_operands(source, ">=")
+    arithmetic_operands = collect_binary_operands(source, "+")
+
+    assert len(concat_operands) == 1
+    assert concat_operands[0].left == "prefix"
+    assert concat_operands[0].right == "suffix"
+    assert concat_operands[0].operator == ".."
+
+    assert len(compare_operands) == 1
+    assert compare_operands[0].left == "score"
+    assert compare_operands[0].right == "limit"
+    assert compare_operands[0].operator == ">="
+
+    assert len(arithmetic_operands) == 1
+    assert arithmetic_operands[0].left == "count"
+    assert arithmetic_operands[0].right == "bonus"
+    assert arithmetic_operands[0].operator == "+"
 
 
 def test_collect_call_sites_requires_tree_sitter_backend(

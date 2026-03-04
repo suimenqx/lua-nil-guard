@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lua_nil_guard.summaries import SummaryStore, summarize_source
+from lua_nil_guard.summaries import SummaryStore, detect_required_modules, summarize_source
 
 
 def test_summarize_source_extracts_basic_function_contracts() -> None:
@@ -67,3 +67,18 @@ def test_summary_store_round_trips_json(tmp_path: Path) -> None:
     loaded = store.load()
 
     assert loaded == summaries
+
+
+def test_detect_required_modules_parses_global_require_forms() -> None:
+    source = "\n".join(
+        [
+            "require(\"user.normalizer\")",
+            "require 'admin.audit'",
+            "local mod = require('ignored.local.alias')",
+            "-- require('ignored.comment')",
+        ]
+    )
+
+    required = detect_required_modules(source)
+
+    assert required == ("user.normalizer", "admin.audit")

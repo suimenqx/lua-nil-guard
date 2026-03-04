@@ -6,6 +6,25 @@ from pathlib import Path
 from lua_nil_guard.service import bootstrap_repository, run_repository_review
 
 
+def _write_review_config(tmp_path: Path, sink_rules: list[dict[str, object]]) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir(exist_ok=True)
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(sink_rules),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_run_repository_review_produces_verified_risk_for_locally_proven_nil_sink(tmp_path: Path) -> None:
     (tmp_path / "config").mkdir()
     (tmp_path / "src").mkdir()
@@ -118,6 +137,88 @@ def test_run_repository_review_uses_function_contracts_to_suppress_false_positiv
     assert len(verdicts) == 1
     assert verdicts[0].status == "safe"
     assert any("returns non-nil" in fact for fact in verdicts[0].safety_evidence)
+
+
+def test_run_repository_review_marks_transitive_cross_file_nil_return_chain_as_risky(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.find.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.find",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "consumer.lua").write_text(
+        "\n".join(
+            [
+                "require(\"user.facade\")",
+                "local nickname = user.facade.pick_name(req)",
+                "return string.find(nickname, '^vip')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "facade.lua").write_text(
+        "\n".join(
+            [
+                "module(\"user.facade\", package.seeall)",
+                "",
+                "function pick_name(req)",
+                "  return user.lookup.resolve_name(req)",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "lookup.lua").write_text(
+        "\n".join(
+            [
+                "module(\"user.lookup\", package.seeall)",
+                "",
+                "function resolve_name(req)",
+                "  if req.force_nil then",
+                "    return nil",
+                "  end",
+                "  if req.profile then",
+                "    return req.profile.display_name",
+                "  end",
+                "  return req.cached_name",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 1
+    assert verdicts[0].status.startswith("risky")
+    assert any("may return nil" in part for part in verdicts[0].risk_path)
 
 
 def test_run_repository_review_uses_guard_contract_to_suppress_member_access_false_positive(
@@ -481,7 +582,7 @@ def test_run_repository_review_skips_call_shaped_return_contracts_without_matchi
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "uncertain"
+    assert verdicts[0].status == "risky_verified"
 
 
 def test_run_repository_review_uses_literal_scoped_return_contract_when_call_matches(
@@ -1325,7 +1426,7 @@ def test_run_repository_review_skips_second_return_slot_when_only_first_is_safe(
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "uncertain"
+    assert verdicts[0].status == "risky_verified"
 
 
 def test_run_repository_review_uses_return_slot_specific_arg_requirements(
@@ -2713,3 +2814,281 @@ def test_run_repository_review_limits_contracts_to_top_level_phases(
 
     assert verdict_by_line[2].status == "uncertain"
     assert verdict_by_line[9].status == "safe"
+
+
+def test_run_repository_review_marks_binary_operand_hazards_as_risky(tmp_path: Path) -> None:
+    _write_review_config(
+        tmp_path,
+        [
+            {
+                "id": "concat.left",
+                "kind": "binary_operand",
+                "qualified_name": "..",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or ''"],
+            },
+            {
+                "id": "compare.gte.left",
+                "kind": "binary_operand",
+                "qualified_name": ">=",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+            {
+                "id": "arithmetic.add.left",
+                "kind": "binary_operand",
+                "qualified_name": "+",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+        ],
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local prefix = nil",
+                "local threshold = nil",
+                "local bonus = nil",
+                "local label = prefix .. suffix",
+                "local ok = threshold >= limit",
+                "local total = bonus + base",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 3
+    assert all(verdict.status.startswith("risky") for verdict in verdicts)
+
+
+def test_run_repository_review_suppresses_defaulted_binary_operands(tmp_path: Path) -> None:
+    _write_review_config(
+        tmp_path,
+        [
+            {
+                "id": "concat.left",
+                "kind": "binary_operand",
+                "qualified_name": "..",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or ''"],
+            },
+            {
+                "id": "arithmetic.add.left",
+                "kind": "binary_operand",
+                "qualified_name": "+",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+        ],
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local safe_name = req.params.name or ''",
+                "local safe_bonus = bonus or 0",
+                "local label = safe_name .. suffix",
+                "local total = safe_bonus + base",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 2
+    assert all(verdict.status.startswith("safe") for verdict in verdicts)
+
+
+def test_run_repository_review_supports_extended_string_api_sinks(tmp_path: Path) -> None:
+    _write_review_config(
+        tmp_path,
+        [
+            {
+                "id": "string.lower.arg1",
+                "kind": "function_arg",
+                "qualified_name": "string.lower",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or ''"],
+            },
+            {
+                "id": "string.len.arg1",
+                "kind": "function_arg",
+                "qualified_name": "string.len",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or ''"],
+            },
+        ],
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local raw = nil",
+                "local lowered = string.lower(raw)",
+                "local count = string.len(raw)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 2
+    assert all(verdict.status.startswith("risky") for verdict in verdicts)
+
+
+def test_run_repository_review_marks_module_style_cross_file_binary_and_direct_call_risks(
+    tmp_path: Path,
+) -> None:
+    _write_review_config(
+        tmp_path,
+        [
+            {
+                "id": "concat.left",
+                "kind": "binary_operand",
+                "qualified_name": "..",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or ''"],
+            },
+            {
+                "id": "string.find.arg1",
+                "kind": "function_arg",
+                "qualified_name": "string.find",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or ''"],
+            },
+        ],
+    )
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "src" / "consumer.lua").write_text(
+        "\n".join(
+            [
+                "require(\"user.lookup\")",
+                "local nickname = user.lookup.resolve_name(req)",
+                "local tag = nickname .. '!'",
+                "return string.find(user.lookup.resolve_name(req), '^vip')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "lookup.lua").write_text(
+        "\n".join(
+            [
+                "module(\"user.lookup\", package.seeall)",
+                "",
+                "function resolve_name(req)",
+                "  if req.force_nil then",
+                "    return nil",
+                "  end",
+                "  if req.cached_name then",
+                "    return req.cached_name",
+                "  end",
+                "  return req.profile.display_name",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 2
+    assert all(verdict.status.startswith("risky") for verdict in verdicts)
+    assert any("may return nil" in " ".join(verdict.risk_path) for verdict in verdicts)
+
+
+def test_run_repository_review_marks_module_style_numeric_binary_risks(
+    tmp_path: Path,
+) -> None:
+    _write_review_config(
+        tmp_path,
+        [
+            {
+                "id": "arithmetic.add.left",
+                "kind": "binary_operand",
+                "qualified_name": "+",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+            {
+                "id": "compare.gte.left",
+                "kind": "binary_operand",
+                "qualified_name": ">=",
+                "arg_index": 1,
+                "nil_sensitive": True,
+                "failure_mode": "runtime_error",
+                "default_severity": "high",
+                "safe_patterns": ["x or 0"],
+            },
+        ],
+    )
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "src" / "consumer.lua").write_text(
+        "\n".join(
+            [
+                "require(\"metrics.score\")",
+                "local total = metrics.score.resolve(req) + bonus",
+                "if metrics.score.resolve(req) >= limit then",
+                "  return total",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "score.lua").write_text(
+        "\n".join(
+            [
+                "module(\"metrics.score\", package.seeall)",
+                "",
+                "function resolve(req)",
+                "  if req.missing then",
+                "    return nil",
+                "  end",
+                "  return req.current_score",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = bootstrap_repository(tmp_path)
+    verdicts = run_repository_review(snapshot)
+
+    assert len(verdicts) == 2
+    assert all(verdict.status.startswith("risky") for verdict in verdicts)
+    assert all(any("may return nil" in part for part in verdict.risk_path) for verdict in verdicts)

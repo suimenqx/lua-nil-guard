@@ -22,6 +22,10 @@ def test_load_sink_rules_reads_built_in_rules() -> None:
     assert len(rules) >= 4
     assert len({rule.id for rule in rules}) == len(rules)
     assert any(rule.id == "string.match.arg1" for rule in rules)
+    assert any(rule.id == "concat.left" for rule in rules)
+    assert any(rule.id == "compare.gte.left" for rule in rules)
+    assert any(rule.id == "arithmetic.add.left" for rule in rules)
+    assert any(rule.id == "string.lower.arg1" for rule in rules)
 
 
 def test_load_sink_rules_rejects_duplicate_rule_ids(tmp_path: Path) -> None:
