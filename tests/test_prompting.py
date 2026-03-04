@@ -73,6 +73,9 @@ def test_build_adjudication_prompt_includes_evidence_and_hard_rules() -> None:
     assert "proof_kinds: direct_guard" in prompt
     assert "Structured static proofs:" in prompt
     assert "[direct_guard] if username then" in prompt
+    assert "Calibration examples:" in prompt
+    assert "Example (direct_guard):" in prompt
+    assert "Example (unsupported_control_flow):" in prompt
     assert "Related function contexts:" in prompt
     assert "normalize_name @ lib/normalizer.lua:1" in prompt
     assert "Adjudication policy: lua-nil-adjudicator" in prompt
@@ -123,6 +126,66 @@ def test_build_adjudication_prompt_uses_compiled_skill_header(monkeypatch: pytes
     prompt = build_adjudication_prompt(packet=packet, sink_rule=rule)
 
     assert prompt.startswith("SKILL HEADER FOR TESTS")
+
+
+def test_build_adjudication_prompt_limits_calibration_examples_to_relevant_items() -> None:
+    candidate = CandidateCase(
+        case_id="case_calibration",
+        file="foo.lua",
+        line=3,
+        column=2,
+        sink_rule_id="string.match.arg1",
+        sink_name="string.match",
+        arg_index=1,
+        expression="value",
+        symbol="value",
+        function_scope="demo",
+        static_state="safe_static",
+    )
+    packet = build_evidence_packet(
+        candidate=candidate,
+        local_context="return string.match(value, '^a')",
+        related_functions=(),
+        function_summaries=(),
+        knowledge_facts=(),
+        origin_candidates=("normalize_name(req.params.username)",),
+        observed_guards=("normalize_name(...) returns non-nil",),
+        static_proofs=(
+            StaticProof(
+                kind="return_contract",
+                summary="normalize_name(...) returns non-nil",
+                subject="value",
+                depth=0,
+            ),
+            StaticProof(
+                kind="wrapper_defaulting",
+                summary="wrap_name(...) preserves or defaults to non-nil",
+                subject="value",
+                depth=1,
+            ),
+            StaticProof(
+                kind="wrapper_defaulting",
+                summary="finalize_name(...) preserves or defaults to non-nil",
+                subject="value",
+                depth=2,
+            ),
+        ),
+    )
+    rule = SinkRule(
+        id="string.match.arg1",
+        kind="function_arg",
+        qualified_name="string.match",
+        arg_index=1,
+        nil_sensitive=True,
+        failure_mode="runtime_error",
+        default_severity="high",
+        safe_patterns=(),
+    )
+
+    prompt = build_adjudication_prompt(packet=packet, sink_rule=rule)
+
+    assert prompt.count("Example (return_contract):") == 1
+    assert prompt.count("Example (wrapper_defaulting):") == 1
 
 
 def test_skill_file_exists_with_required_frontmatter() -> None:

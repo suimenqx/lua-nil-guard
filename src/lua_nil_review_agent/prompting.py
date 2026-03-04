@@ -6,6 +6,61 @@ from .models import EvidencePacket, SinkRule, StaticProof
 from .skill_runtime import compile_adjudicator_skill_header
 
 
+_PROOF_KIND_CALIBRATIONS = {
+    "direct_guard": (
+        "Example (direct_guard): `if username then sink(username)` is usually sufficient local safety proof unless a reassignment or alternate reachable branch bypasses the guard."
+    ),
+    "loop_exit_guard": (
+        "Example (loop_exit_guard): `repeat ... until username` only proves safety after the loop when no earlier reachable break can bypass the exit condition."
+    ),
+    "early_exit_guard": (
+        "Example (early_exit_guard): `if not username then return end; sink(username)` is normally sufficient because the nil branch cannot reach the sink."
+    ),
+    "assert_guard": (
+        "Example (assert_guard): `assert(username); sink(username)` is usually sufficient because the failing branch aborts before the sink."
+    ),
+    "contract_guard": (
+        "Example (contract_guard): if a configured or inlined helper guarantees argument non-nil, treat it as a strong proof only for the exact matched call shape."
+    ),
+    "guarded_field_origin": (
+        "Example (guarded_field_origin): if `local name = req.params.name` happens under an active guard on the same field path, the local inherits that proof."
+    ),
+    "return_contract": (
+        "Example (return_contract): when a call matches a constrained return contract, treat the proved return slot as safe, but do not generalize to other slots or call shapes."
+    ),
+    "chained_return_contract": (
+        "Example (chained_return_contract): accept bounded chained proofs, but inspect each hop; one weak or mismatched hop breaks the whole chain."
+    ),
+    "wrapper_passthrough": (
+        "Example (wrapper_passthrough): a tiny wrapper that only returns one argument preserves upstream proof, but only if its body is transparent and side-effect-light."
+    ),
+    "wrapper_defaulting": (
+        "Example (wrapper_defaulting): a tiny wrapper that defaults to a non-nil literal is strong evidence for that return slot, but not for unrelated outputs."
+    ),
+    "local_defaulting": (
+        "Example (local_defaulting): `value = value or ''` is strong local proof for that symbol, but it does not prove sibling values or earlier aliases."
+    ),
+}
+
+_UNKNOWN_REASON_CALIBRATIONS = {
+    "unsupported_control_flow": (
+        "Example (unsupported_control_flow): when loops or richer reachability are not fully modeled, keep the verdict conservative unless independent strong proof exists."
+    ),
+    "dynamic_metatable": (
+        "Example (dynamic_metatable): metatable-driven lookup can invalidate simple field assumptions; prefer `uncertain` unless another explicit proof dominates."
+    ),
+    "dynamic_index_expression": (
+        "Example (dynamic_index_expression): dynamic table keys are not stable field paths; do not upgrade them to safe from prefix-only similarity."
+    ),
+    "unresolved_ast_node": (
+        "Example (unresolved_ast_node): if the target node cannot be resolved precisely, distrust AST-specific proof claims and stay conservative."
+    ),
+    "upvalue_capture": (
+        "Example (upvalue_capture): captured mutable upvalues can break local assumptions; do not treat them as simple local proofs."
+    ),
+}
+
+
 def build_adjudication_prompt(
     *,
     packet: EvidencePacket,
@@ -48,6 +103,9 @@ def build_adjudication_prompt(
             "Structured static proofs:",
             _render_static_proofs(packet.static_proofs),
             "",
+            "Calibration examples:",
+            _render_calibration_examples(packet),
+            "",
             "Local context:",
             packet.local_context or "(none)",
             "",
@@ -89,3 +147,28 @@ def _render_static_proofs(proofs: tuple[StaticProof, ...]) -> str:
         lines.append(f"  depth: {proof.depth}")
         chunks.append("\n".join(lines))
     return "\n\n".join(chunks)
+
+
+def _render_calibration_examples(packet: EvidencePacket) -> str:
+    examples: list[str] = []
+    seen: set[str] = set()
+
+    for proof in packet.static_proofs:
+        calibration = _PROOF_KIND_CALIBRATIONS.get(proof.kind)
+        if calibration is None or calibration in seen:
+            continue
+        examples.append(calibration)
+        seen.add(calibration)
+        if len(examples) >= 2:
+            break
+
+    unknown_reason = packet.static_reasoning.get("unknown_reason", "")
+    if isinstance(unknown_reason, str):
+        calibration = _UNKNOWN_REASON_CALIBRATIONS.get(unknown_reason)
+        if calibration is not None and calibration not in seen:
+            examples.append(calibration)
+            seen.add(calibration)
+
+    if not examples:
+        return "(none)"
+    return "\n".join(f"- {example}" for example in examples)
