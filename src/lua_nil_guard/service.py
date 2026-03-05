@@ -1261,6 +1261,7 @@ def run_repository_review(
     *,
     backend: AdjudicationBackend | None = None,
     knowledge_path: str | Path | None = None,
+    only_unknown_for_agent: bool = True,
 ) -> tuple[Verdict, ...]:
     """Run the current end-to-end local review pipeline across a repository."""
 
@@ -1280,6 +1281,7 @@ def run_repository_review(
         function_context_by_name=function_context_by_name,
         file_module_by_path=file_module_by_path,
         facts=facts,
+        only_unknown_for_agent=only_unknown_for_agent,
     )
 
 
@@ -1420,6 +1422,7 @@ def run_file_review(
     *,
     backend: AdjudicationBackend | None = None,
     knowledge_path: str | Path | None = None,
+    only_unknown_for_agent: bool = True,
 ) -> tuple[Verdict, ...]:
     """Run the current end-to-end review pipeline for one Lua file with repository context."""
 
@@ -1439,6 +1442,7 @@ def run_file_review(
         function_context_by_name=function_context_by_name,
         file_module_by_path=file_module_by_path,
         facts=facts,
+        only_unknown_for_agent=only_unknown_for_agent,
     )
 
 
@@ -1687,7 +1691,7 @@ def _run_review_from_assessments(
             )
             try:
                 if only_unknown_for_agent and assessment.static_analysis.state != "unknown_static":
-                    seeded_verdict = _static_only_seed_verdict(case_id)
+                    seeded_verdict = _static_only_seed_verdict(assessment)
                     final_verdict = verify_verdict(seeded_verdict, packet)
                 else:
                     adjudication = adjudication_backend.adjudicate(
@@ -1778,7 +1782,24 @@ def _run_review_from_assessments(
     return tuple(verdicts)
 
 
-def _static_only_seed_verdict(case_id: str) -> Verdict:
+def _static_only_seed_verdict(assessment: CandidateAssessment) -> Verdict:
+    state = assessment.static_analysis.state
+    case_id = assessment.candidate.case_id
+    if state == "safe_static":
+        safety_evidence = (
+            assessment.static_analysis.observed_guards
+            or tuple(proof.summary for proof in assessment.static_analysis.proofs)
+        )
+        return Verdict(
+            case_id=case_id,
+            status="safe",
+            confidence="medium",
+            risk_path=(),
+            safety_evidence=safety_evidence,
+            counterarguments_considered=("static-only evaluation path",),
+            suggested_fix=None,
+            needs_human=False,
+        )
     return Verdict(
         case_id=case_id,
         status="uncertain",

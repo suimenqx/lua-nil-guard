@@ -1672,7 +1672,12 @@ def test_run_file_review_disambiguates_same_name_functions_by_module(
                 ),
             )
 
-    verdicts = run_file_review(snapshot, target_file, backend=ModuleAwareBackend())
+    verdicts = run_file_review(
+        snapshot,
+        target_file,
+        backend=ModuleAwareBackend(),
+        only_unknown_for_agent=False,
+    )
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("safe")
@@ -1809,7 +1814,12 @@ def test_run_file_review_respects_global_require_with_module_style_loading(
                 ),
             )
 
-    verdicts = run_file_review(snapshot, target_file, backend=RequireAwareBackend())
+    verdicts = run_file_review(
+        snapshot,
+        target_file,
+        backend=RequireAwareBackend(),
+        only_unknown_for_agent=False,
+    )
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("safe")
@@ -2066,7 +2076,12 @@ def test_run_file_review_qualifies_bare_calls_inside_module_files(
                 ),
             )
 
-    verdicts = run_file_review(snapshot, target_file, backend=ModuleCallBackend())
+    verdicts = run_file_review(
+        snapshot,
+        target_file,
+        backend=ModuleCallBackend(),
+        only_unknown_for_agent=False,
+    )
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("safe")
@@ -2181,7 +2196,12 @@ def test_run_file_review_falls_back_to_global_bare_helper_when_module_symbol_mis
                 ),
             )
 
-    verdicts = run_file_review(snapshot, target_file, backend=GlobalFallbackBackend())
+    verdicts = run_file_review(
+        snapshot,
+        target_file,
+        backend=GlobalFallbackBackend(),
+        only_unknown_for_agent=False,
+    )
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("safe")
