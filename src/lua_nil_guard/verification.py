@@ -50,10 +50,20 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
     observed_guards = _tuple_field(packet, "observed_guards")
     proofs = packet.static_proofs
     risk_signals = packet.static_risk_signals
+    proof_preview = preview_static_verification(proofs)
+    risk_preview = preview_static_risk(risk_signals)
+    proof_score = _preview_score(proof_preview)
+    risk_score = _preview_score(risk_preview)
+
+    if _has_strong_conflict(proof_score, risk_score):
+        return _downgrade_conflicting_verdict(
+            verdict,
+            proof_preview=proof_preview,
+            risk_preview=risk_preview,
+        )
 
     if verdict.status == "risky" and not observed_guards and verdict.risk_path:
-        risk_preview = preview_static_risk(risk_signals)
-        if risk_preview is not None and (risk_preview.verification_score or 0) >= _SAFE_VERIFY_THRESHOLD:
+        if risk_preview is not None and risk_score >= _SAFE_VERIFY_THRESHOLD:
             return Verdict(
                 case_id=verdict.case_id,
                 status="risky_verified",
@@ -73,26 +83,60 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
                     evidence=risk_preview.evidence,
                 ),
             )
+        if risk_preview is not None:
+            elevated_confidence = verdict.confidence
+            if risk_score >= _SAFE_ELEVATE_THRESHOLD:
+                elevated_confidence = _max_confidence(
+                    verdict.confidence,
+                    _risk_confidence_floor(risk_score),
+                )
+            verification_summary = VerificationSummary(
+                mode="structured_static_risk",
+                strongest_proof_kind=risk_preview.strongest_proof_kind,
+                strongest_proof_depth=risk_preview.strongest_proof_depth,
+                strongest_proof_summary=risk_preview.strongest_proof_summary,
+                verification_score=risk_preview.verification_score,
+                evidence=risk_preview.evidence,
+            )
+            if (
+                elevated_confidence != verdict.confidence
+                or verification_summary != verdict.verification_summary
+            ):
+                return Verdict(
+                    case_id=verdict.case_id,
+                    status="risky",
+                    confidence=elevated_confidence,
+                    risk_path=verdict.risk_path,
+                    safety_evidence=verdict.safety_evidence,
+                    counterarguments_considered=verdict.counterarguments_considered,
+                    suggested_fix=verdict.suggested_fix,
+                    needs_human=verdict.needs_human,
+                    autofix_patch=verdict.autofix_patch,
+                    verification_summary=verification_summary,
+                )
+            return verdict
+        verification_summary = VerificationSummary(
+            mode="risk_no_guard",
+            evidence=verdict.risk_path,
+        )
+        if verdict.verification_summary == verification_summary:
+            return verdict
         return Verdict(
             case_id=verdict.case_id,
-            status="risky_verified",
-            confidence="high",
+            status="risky",
+            confidence=verdict.confidence,
             risk_path=verdict.risk_path,
             safety_evidence=verdict.safety_evidence,
             counterarguments_considered=verdict.counterarguments_considered,
             suggested_fix=verdict.suggested_fix,
-            needs_human=False,
+            needs_human=verdict.needs_human,
             autofix_patch=verdict.autofix_patch,
-            verification_summary=VerificationSummary(
-                mode="risk_no_guard",
-                evidence=verdict.risk_path,
-            ),
+            verification_summary=verification_summary,
         )
 
-    if verdict.status == "uncertain" and proofs:
-        preview = preview_static_verification(proofs)
-        if preview is not None and (preview.verification_score or 0) >= _SAFE_VERIFY_THRESHOLD:
-            proof_summaries = preview.evidence
+    if verdict.status == "uncertain" and proof_preview is not None:
+        if proof_score >= _SAFE_VERIFY_THRESHOLD:
+            proof_summaries = proof_preview.evidence
             return Verdict(
                 case_id=verdict.case_id,
                 status="safe_verified",
@@ -105,10 +149,10 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
                 autofix_patch=None,
                 verification_summary=VerificationSummary(
                     mode="structured_static_proof_override",
-                    strongest_proof_kind=preview.strongest_proof_kind,
-                    strongest_proof_depth=preview.strongest_proof_depth,
-                    strongest_proof_summary=preview.strongest_proof_summary,
-                    verification_score=preview.verification_score,
+                    strongest_proof_kind=proof_preview.strongest_proof_kind,
+                    strongest_proof_depth=proof_preview.strongest_proof_depth,
+                    strongest_proof_summary=proof_preview.strongest_proof_summary,
+                    verification_score=proof_preview.verification_score,
                     evidence=proof_summaries,
                 ),
             )
@@ -119,9 +163,9 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
         and not observed_guards
         and not proofs
         and risk_signals
+        and risk_preview is not None
     ):
-        risk_preview = preview_static_risk(risk_signals)
-        if risk_preview is not None and (risk_preview.verification_score or 0) >= _SAFE_VERIFY_THRESHOLD:
+        if risk_score >= _SAFE_VERIFY_THRESHOLD:
             risk_path = verdict.risk_path or risk_preview.evidence
             return Verdict(
                 case_id=verdict.case_id,
@@ -145,18 +189,23 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
 
     if verdict.status == "safe":
         if proofs:
-            preview = preview_static_verification(proofs)
-            if preview is None:
-                return verdict
-            strongest_score = preview.verification_score or 0
-            proof_summaries = preview.evidence
+            strongest_score = proof_score
+            proof_summaries = proof_preview.evidence if proof_preview is not None else ()
             safety_evidence = verdict.safety_evidence or proof_summaries
             verification_summary = VerificationSummary(
                 mode="structured_static_proof",
-                strongest_proof_kind=preview.strongest_proof_kind,
-                strongest_proof_depth=preview.strongest_proof_depth,
-                strongest_proof_summary=preview.strongest_proof_summary,
-                verification_score=preview.verification_score,
+                strongest_proof_kind=(
+                    proof_preview.strongest_proof_kind if proof_preview is not None else None
+                ),
+                strongest_proof_depth=(
+                    proof_preview.strongest_proof_depth if proof_preview is not None else None
+                ),
+                strongest_proof_summary=(
+                    proof_preview.strongest_proof_summary if proof_preview is not None else None
+                ),
+                verification_score=(
+                    proof_preview.verification_score if proof_preview is not None else None
+                ),
                 evidence=proof_summaries,
             )
 
@@ -225,6 +274,64 @@ def _tuple_field(packet: EvidencePacket, key: str) -> tuple[str, ...]:
     if isinstance(value, tuple):
         return value
     return ()
+
+
+def _preview_score(preview: VerificationSummary | None) -> int:
+    if preview is None:
+        return 0
+    return int(preview.verification_score or 0)
+
+
+def _has_strong_conflict(proof_score: int, risk_score: int) -> bool:
+    return proof_score >= _SAFE_VERIFY_THRESHOLD and risk_score >= _SAFE_VERIFY_THRESHOLD
+
+
+def _downgrade_conflicting_verdict(
+    verdict: Verdict,
+    *,
+    proof_preview: VerificationSummary | None,
+    risk_preview: VerificationSummary | None,
+) -> Verdict:
+    evidence: list[str] = [
+        "conflicting high-confidence static evidence detected",
+        f"safe_score={_preview_score(proof_preview)}",
+        f"risk_score={_preview_score(risk_preview)}",
+    ]
+    if proof_preview is not None and proof_preview.strongest_proof_summary:
+        evidence.append(f"safe:{proof_preview.strongest_proof_summary}")
+    if risk_preview is not None and risk_preview.strongest_proof_summary:
+        evidence.append(f"risk:{risk_preview.strongest_proof_summary}")
+    risk_path = verdict.risk_path
+    if not risk_path and risk_preview is not None:
+        risk_path = risk_preview.evidence
+    safety_evidence = verdict.safety_evidence
+    if not safety_evidence and proof_preview is not None:
+        safety_evidence = proof_preview.evidence
+    counterarguments = tuple(
+        dict.fromkeys(
+            (
+                *verdict.counterarguments_considered,
+                "strong structured proof and risk signals conflict; downgraded to uncertain",
+            )
+        )
+    )
+    return Verdict(
+        case_id=verdict.case_id,
+        status="uncertain",
+        confidence="low",
+        risk_path=risk_path,
+        safety_evidence=safety_evidence,
+        counterarguments_considered=counterarguments,
+        suggested_fix=verdict.suggested_fix if verdict.status.startswith("risky") else None,
+        needs_human=True,
+        autofix_patch=None,
+        verification_summary=VerificationSummary(
+            mode="structured_conflict_downgrade",
+            strongest_proof_kind="conflicting_static_evidence",
+            verification_score=max(_preview_score(proof_preview), _preview_score(risk_preview)),
+            evidence=tuple(evidence),
+        ),
+    )
 
 
 def _safe_proof_score(proof: StaticProof) -> int:
@@ -308,7 +415,13 @@ def _strongest_risk_signal(signals: tuple[StaticRiskSignal, ...]) -> StaticRiskS
 
 
 def _safe_confidence_floor(score: int) -> str:
-    if score >= 70:
+    if score >= _SAFE_VERIFY_THRESHOLD:
+        return "high"
+    return "medium"
+
+
+def _risk_confidence_floor(score: int) -> str:
+    if score >= _SAFE_VERIFY_THRESHOLD:
         return "high"
     return "medium"
 

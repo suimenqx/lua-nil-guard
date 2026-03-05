@@ -110,15 +110,31 @@ _LUA_KEYWORDS = frozenset(
         "while",
     }
 )
-_MAX_RELATED_FUNCTION_CONTEXTS = 4
-_MAX_RELATED_FUNCTION_CONTEXT_LINES = 48
-_MAX_RELATED_FUNCTION_SUMMARIES = 8
-_EXPANDED_RELATED_FUNCTION_CONTEXTS = 6
-_EXPANDED_RELATED_FUNCTION_CONTEXT_LINES = 72
-_EXPANDED_RELATED_FUNCTION_SUMMARIES = 12
 _TRUNCATED_CONTEXT_MARKER = "  ... (truncated)"
 _DEFAULT_RUN_DB_NAME = "review_runs.sqlite3"
 _RUN_STORE_DIRNAME = ".lua_nil_guard"
+
+
+@dataclass(frozen=True, slots=True)
+class _RelatedEvidenceBudget:
+    max_depth: int
+    max_contexts: int
+    max_context_lines: int
+    max_summary_items: int
+
+
+_FIRST_HOP_RELATED_EVIDENCE_BUDGET = _RelatedEvidenceBudget(
+    max_depth=1,
+    max_contexts=4,
+    max_context_lines=48,
+    max_summary_items=8,
+)
+_SECOND_HOP_RELATED_EVIDENCE_BUDGET = _RelatedEvidenceBudget(
+    max_depth=2,
+    max_contexts=6,
+    max_context_lines=72,
+    max_summary_items=12,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +171,10 @@ class ReviewRunStatus:
     static_unknown_cases: int
     llm_enqueued_cases: int
     llm_processed_cases: int
+    llm_second_hop_cases: int
+    safe_verified_cases: int
+    risky_verified_cases: int
+    unknown_reason_distribution: tuple[tuple[str, int], ...]
     created_at: str
     updated_at: str
     completed_at: str | None
@@ -431,10 +451,14 @@ class _ReviewRunStore:
                     sink_rule_id TEXT NOT NULL,
                     static_state TEXT NOT NULL,
                     candidate_source TEXT NOT NULL DEFAULT 'ast_exact',
+                    unknown_reason TEXT NOT NULL DEFAULT '',
+                    origin_unknown_reason TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL,
                     verdict_status TEXT,
                     verdict_confidence TEXT,
                     verdict_payload TEXT,
+                    llm_attempts INTEGER NOT NULL DEFAULT 0,
+                    second_hop_used INTEGER NOT NULL DEFAULT 0,
                     error_message TEXT,
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (run_id, case_id)
@@ -519,6 +543,22 @@ class _ReviewRunStore:
                 self._conn.execute(
                     "ALTER TABLE case_tasks ADD COLUMN candidate_source TEXT NOT NULL DEFAULT 'ast_exact'"
                 )
+            if "unknown_reason" not in case_task_columns:
+                self._conn.execute(
+                    "ALTER TABLE case_tasks ADD COLUMN unknown_reason TEXT NOT NULL DEFAULT ''"
+                )
+            if "origin_unknown_reason" not in case_task_columns:
+                self._conn.execute(
+                    "ALTER TABLE case_tasks ADD COLUMN origin_unknown_reason TEXT NOT NULL DEFAULT ''"
+                )
+            if "llm_attempts" not in case_task_columns:
+                self._conn.execute(
+                    "ALTER TABLE case_tasks ADD COLUMN llm_attempts INTEGER NOT NULL DEFAULT 0"
+                )
+            if "second_hop_used" not in case_task_columns:
+                self._conn.execute(
+                    "ALTER TABLE case_tasks ADD COLUMN second_hop_used INTEGER NOT NULL DEFAULT 0"
+                )
 
     def _table_columns(self, table_name: str) -> tuple[tuple[str, str], ...]:
         rows = self._conn.execute(f"PRAGMA table_info({table_name})").fetchall()
@@ -594,9 +634,13 @@ class _ReviewRunStore:
                         sink_rule_id,
                         static_state,
                         candidate_source,
+                        unknown_reason,
+                        origin_unknown_reason,
+                        llm_attempts,
+                        second_hop_used,
                         status,
                         updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(run_id, case_id) DO NOTHING
                     """,
                     (
@@ -608,6 +652,14 @@ class _ReviewRunStore:
                         assessment.candidate.sink_rule_id,
                         assessment.candidate.static_state,
                         assessment.candidate.candidate_source,
+                        (
+                            assessment.static_analysis.unknown_reason
+                            or assessment.static_analysis.origin_unknown_reason
+                            or ""
+                        ),
+                        assessment.static_analysis.origin_unknown_reason or "",
+                        0,
+                        0,
                         "pending",
                         now,
                     ),
@@ -705,7 +757,14 @@ class _ReviewRunStore:
                     ("running", now, run_id, str(row["file"])),
                 )
 
-    def mark_case_completed(self, *, run_id: int, verdict: Verdict) -> None:
+    def mark_case_completed(
+        self,
+        *,
+        run_id: int,
+        verdict: Verdict,
+        llm_attempts: int = 0,
+        second_hop_used: bool = False,
+    ) -> None:
         now = _utc_now_iso()
         with self._conn:
             self._conn.execute(
@@ -715,6 +774,8 @@ class _ReviewRunStore:
                     verdict_status = ?,
                     verdict_confidence = ?,
                     verdict_payload = ?,
+                    llm_attempts = ?,
+                    second_hop_used = ?,
                     error_message = NULL,
                     updated_at = ?
                 WHERE run_id = ? AND case_id = ?
@@ -724,6 +785,8 @@ class _ReviewRunStore:
                     verdict.status,
                     verdict.confidence,
                     _serialize_run_verdict(verdict),
+                    max(0, llm_attempts),
+                    1 if second_hop_used else 0,
                     now,
                     run_id,
                     verdict.case_id,
@@ -1025,6 +1088,41 @@ class _ReviewRunStore:
                 ("failed", now, run_id),
             )
 
+    def _load_unknown_reason_distribution(self, *, run_id: int) -> tuple[tuple[str, int], ...]:
+        rows = self._conn.execute(
+            """
+            SELECT unknown_reason, COUNT(*) AS reason_count
+            FROM case_tasks
+            WHERE run_id = ?
+              AND static_state = 'unknown_static'
+              AND TRIM(unknown_reason) <> ''
+            GROUP BY unknown_reason
+            ORDER BY reason_count DESC, unknown_reason ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        return tuple((str(row["unknown_reason"]), int(row["reason_count"])) for row in rows)
+
+    def _load_case_stage_metrics(self, *, run_id: int) -> tuple[int, int, int]:
+        row = self._conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN second_hop_used = 1 THEN 1 ELSE 0 END) AS llm_second_hop_cases,
+                SUM(CASE WHEN verdict_status = 'safe_verified' THEN 1 ELSE 0 END) AS safe_verified_cases,
+                SUM(CASE WHEN verdict_status = 'risky_verified' THEN 1 ELSE 0 END) AS risky_verified_cases
+            FROM case_tasks
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return (0, 0, 0)
+        return (
+            int(row["llm_second_hop_cases"] or 0),
+            int(row["safe_verified_cases"] or 0),
+            int(row["risky_verified_cases"] or 0),
+        )
+
     def load_run_status(self, *, run_id: int) -> ReviewRunStatus | None:
         row = self._conn.execute(
             """
@@ -1053,6 +1151,10 @@ class _ReviewRunStore:
         ).fetchone()
         if row is None:
             return None
+        llm_second_hop_cases, safe_verified_cases, risky_verified_cases = (
+            self._load_case_stage_metrics(run_id=run_id)
+        )
+        unknown_reason_distribution = self._load_unknown_reason_distribution(run_id=run_id)
         return ReviewRunStatus(
             run_id=int(row["run_id"]),
             repository_root=str(row["repository_root"]),
@@ -1069,6 +1171,10 @@ class _ReviewRunStore:
             static_unknown_cases=int(row["static_unknown_cases"]),
             llm_enqueued_cases=int(row["llm_enqueued_cases"]),
             llm_processed_cases=int(row["llm_processed_cases"]),
+            llm_second_hop_cases=llm_second_hop_cases,
+            safe_verified_cases=safe_verified_cases,
+            risky_verified_cases=risky_verified_cases,
+            unknown_reason_distribution=unknown_reason_distribution,
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
             completed_at=(str(row["completed_at"]) if row["completed_at"] is not None else None),
@@ -1667,11 +1773,14 @@ def _run_review_from_assessments(
                     run_id=run_id,
                     case_id=case_id,
                 )
+            llm_attempts = 0
+            second_hop_used = False
             related_evidence = _build_related_evidence(
                 assessment,
                 summary_text_by_name=summary_text_by_name,
                 function_context_by_name=function_context_by_name,
                 file_module_by_path=file_module_by_path,
+                budget=_FIRST_HOP_RELATED_EVIDENCE_BUDGET,
             )
             knowledge_facts = _knowledge_facts_for_assessment(
                 assessment,
@@ -1698,6 +1807,7 @@ def _run_review_from_assessments(
                         packet,
                         sink_rule_by_id[assessment.candidate.sink_rule_id],
                     )
+                    llm_attempts += 1
                     verdict = attach_autofix_patch(
                         adjudication.judge,
                         packet,
@@ -1712,22 +1822,23 @@ def _run_review_from_assessments(
                             backend_model=backend_model,
                         )
                     final_verdict = verify_verdict(verdict, packet)
-                    if _should_retry_with_expanded_evidence(
-                        adjudication_backend,
-                        adjudication,
-                        final_verdict,
+                    if (
+                        assessment.static_analysis.state == "unknown_static"
+                        and _should_retry_with_expanded_evidence(
+                            adjudication_backend,
+                            adjudication,
+                            final_verdict,
+                        )
                     ):
                         expanded_related_evidence = _build_related_evidence(
                             assessment,
                             summary_text_by_name=summary_text_by_name,
                             function_context_by_name=function_context_by_name,
                             file_module_by_path=file_module_by_path,
-                            max_depth=2,
-                            max_contexts=_EXPANDED_RELATED_FUNCTION_CONTEXTS,
-                            max_context_lines=_EXPANDED_RELATED_FUNCTION_CONTEXT_LINES,
-                            max_summary_items=_EXPANDED_RELATED_FUNCTION_SUMMARIES,
+                            budget=_SECOND_HOP_RELATED_EVIDENCE_BUDGET,
                         )
                         if expanded_related_evidence != related_evidence:
+                            second_hop_used = True
                             expanded_packet = prepare_evidence_packet(
                                 assessment,
                                 source,
@@ -1749,6 +1860,7 @@ def _run_review_from_assessments(
                                 expanded_packet,
                                 sink_rule_by_id[assessment.candidate.sink_rule_id],
                             )
+                            llm_attempts += 1
                             expanded_verdict = attach_autofix_patch(
                                 expanded_adjudication.judge,
                                 expanded_packet,
@@ -1776,6 +1888,8 @@ def _run_review_from_assessments(
                 run_store.mark_case_completed(
                     run_id=run_id,
                     verdict=final_verdict,
+                    llm_attempts=llm_attempts,
+                    second_hop_used=second_hop_used,
                 )
             verdict_cache[case_id] = final_verdict
             verdicts.append(final_verdict)
@@ -2111,6 +2225,7 @@ def export_adjudication_tasks(
                 summary_text_by_name=summary_text_by_name,
                 function_context_by_name=function_context_by_name,
                 file_module_by_path=file_module_by_path,
+                budget=_FIRST_HOP_RELATED_EVIDENCE_BUDGET,
             )
             knowledge_facts = tuple(
                 _knowledge_facts_for_assessment(
@@ -2556,10 +2671,7 @@ def _build_related_evidence(
     summary_text_by_name: dict[str, tuple[str, ...]],
     function_context_by_name: dict[str, tuple[_FunctionContextBlock, ...]],
     file_module_by_path: dict[str, str | None],
-    max_depth: int = 1,
-    max_contexts: int = _MAX_RELATED_FUNCTION_CONTEXTS,
-    max_context_lines: int = _MAX_RELATED_FUNCTION_CONTEXT_LINES,
-    max_summary_items: int = _MAX_RELATED_FUNCTION_SUMMARIES,
+    budget: _RelatedEvidenceBudget = _FIRST_HOP_RELATED_EVIDENCE_BUDGET,
 ) -> _RelatedEvidenceSelection:
     current_file_key = _normalize_path_key(assessment.candidate.file)
     known_function_names = frozenset(
@@ -2573,15 +2685,15 @@ def _build_related_evidence(
     ordered_functions, depth_by_function = _expand_related_functions(
         direct_related_functions,
         function_context_by_name,
-        max_depth=max_depth,
+        max_depth=budget.max_depth,
     )
     selected_contexts = _select_related_function_contexts(
         ordered_functions,
         depth_by_function=depth_by_function,
         function_context_by_name=function_context_by_name,
         current_file=assessment.candidate.file,
-        max_contexts=max_contexts,
-        max_context_lines=max_context_lines,
+        max_contexts=budget.max_contexts,
+        max_context_lines=budget.max_context_lines,
     )
 
     function_names: list[str] = list(direct_related_functions)
@@ -2597,7 +2709,7 @@ def _build_related_evidence(
     summary_texts = _select_function_summaries(
         tuple(function_names),
         summary_text_by_name=summary_text_by_name,
-        max_items=max_summary_items,
+        max_items=budget.max_summary_items,
     )
     context_texts = tuple(rendered for _, rendered in selected_contexts)
 
