@@ -118,6 +118,10 @@ def test_run_repository_review_job_routes_only_unknown_cases_to_backend(tmp_path
     assert status.static_unknown_cases == 1
     assert status.llm_enqueued_cases == 1
     assert status.llm_processed_cases == 1
+    assert status.llm_second_hop_cases == 0
+    assert status.safe_verified_cases == 1
+    assert status.risky_verified_cases == 1
+    assert status.unknown_reason_distribution == (("no_bounded_ast_proof", 1),)
     assert backend.calls == 1
     assert len(verdicts) == 2
 
@@ -128,6 +132,7 @@ def test_run_repository_review_job_routes_only_unknown_cases_to_backend(tmp_path
     )
     assert loaded.run_id == status.run_id
     assert loaded.completed_cases == 2
+    assert loaded.unknown_reason_distribution == (("no_bounded_ast_proof", 1),)
 
     backend_resume = CountingBackend()
     resumed_status, resumed_verdicts = run_repository_review_job(
@@ -168,3 +173,141 @@ def test_repository_review_run_status_defaults_to_latest_run(tmp_path: Path) -> 
     latest = repository_review_run_status(tmp_path, run_db_path=run_db)
     assert latest.run_id == second_status.run_id
     assert latest.run_id > first_status.run_id
+
+
+def test_run_repository_review_job_tracks_second_hop_metrics(tmp_path: Path) -> None:
+    _write_review_config(tmp_path)
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local function parse_user()",
+                "  local username = normalize_name(req.params.username)",
+                "  return string.match(username, '^a')",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "normalizer.lua").write_text(
+        "\n".join(
+            [
+                "function normalize_name(value)",
+                "  return coerce_name(value)",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "coerce.lua").write_text(
+        "\n".join(
+            [
+                "function coerce_name(value)",
+                "  return ensure_name(value)",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "lib" / "ensure.lua").write_text(
+        "\n".join(
+            [
+                "function ensure_name(value)",
+                "  value = value or ''",
+                "  return value",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    snapshot = bootstrap_repository(tmp_path)
+    run_db = tmp_path / "runs.sqlite3"
+
+    class ExpansionAwareBackend:
+        supports_expanded_evidence_retry = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def adjudicate(self, packet, sink_rule):  # noqa: ANN001
+            self.calls += 1
+            if any("ensure_name @ " in context for context in packet.related_function_contexts):
+                return AdjudicationRecord(
+                    prosecutor=RoleOpinion(
+                        role="prosecutor",
+                        status="uncertain",
+                        confidence="low",
+                        risk_path=(),
+                        safety_evidence=(),
+                        missing_evidence=("second hop context resolved sanitizer",),
+                        recommended_next_action="suppress",
+                        suggested_fix=None,
+                    ),
+                    defender=RoleOpinion(
+                        role="defender",
+                        status="safe",
+                        confidence="medium",
+                        risk_path=(),
+                        safety_evidence=("ensure_name returns fallback",),
+                        missing_evidence=(),
+                        recommended_next_action="suppress",
+                        suggested_fix=None,
+                    ),
+                    judge=Verdict(
+                        case_id=packet.case_id,
+                        status="safe",
+                        confidence="medium",
+                        risk_path=(),
+                        safety_evidence=("ensure_name returns fallback",),
+                        counterarguments_considered=(),
+                        suggested_fix=None,
+                        needs_human=False,
+                    ),
+                )
+            return AdjudicationRecord(
+                prosecutor=RoleOpinion(
+                    role="prosecutor",
+                    status="uncertain",
+                    confidence="low",
+                    risk_path=(),
+                    safety_evidence=(),
+                    missing_evidence=("need deeper helper context",),
+                    recommended_next_action="expand_context",
+                    suggested_fix=None,
+                ),
+                defender=RoleOpinion(
+                    role="defender",
+                    status="uncertain",
+                    confidence="low",
+                    risk_path=(),
+                    safety_evidence=(),
+                    missing_evidence=("first hop inconclusive",),
+                    recommended_next_action="expand_context",
+                    suggested_fix=None,
+                ),
+                judge=Verdict(
+                    case_id=packet.case_id,
+                    status="uncertain",
+                    confidence="medium",
+                    risk_path=(),
+                    safety_evidence=(),
+                    counterarguments_considered=("first hop inconclusive",),
+                    suggested_fix=None,
+                    needs_human=True,
+                ),
+            )
+
+    backend = ExpansionAwareBackend()
+    status, _verdicts = run_repository_review_job(
+        snapshot,
+        backend=backend,
+        run_db_path=run_db,
+    )
+
+    assert backend.calls == 2
+    assert status.llm_enqueued_cases == 1
+    assert status.llm_processed_cases == 1
+    assert status.llm_second_hop_cases == 1
+
+    loaded = repository_review_run_status(tmp_path, run_db_path=run_db, run_id=status.run_id)
+    assert loaded.llm_second_hop_cases == 1

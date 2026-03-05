@@ -249,6 +249,8 @@ def test_cli_run_start_status_and_resume(tmp_path: Path) -> None:
     assert "Status: completed" in status_output
     assert "AST exact candidates:" in status_output
     assert "LLM processed cases:" in status_output
+    assert "Stage metrics:" in status_output
+    assert "Unknown reasons:" in status_output
 
     exit_code, resume_output = run(
         ["run-resume", "--run-db", str(run_db), str(tmp_path), str(run_id)]
@@ -262,6 +264,8 @@ def test_cli_run_start_status_and_resume(tmp_path: Path) -> None:
     )
     assert exit_code == 0
     assert f"Run ID: {run_id}" in run_report_output
+    assert "# Lua Nil Guard Run Status" in run_report_output
+    assert "Stage metrics:" in run_report_output
     assert "# Lua Nil Risk Report" in run_report_output
 
     json_output = tmp_path / "run-report.json"
@@ -278,7 +282,14 @@ def test_cli_run_start_status_and_resume(tmp_path: Path) -> None:
     assert exit_code == 0
     assert "Run JSON export complete." in export_output
     exported_payload = json.loads(json_output.read_text(encoding="utf-8"))
-    assert isinstance(exported_payload, list)
+    assert isinstance(exported_payload, dict)
+    assert "run" in exported_payload
+    assert "findings" in exported_payload
+    assert isinstance(exported_payload["findings"], list)
+    run_payload = exported_payload["run"]
+    assert run_payload["run_id"] == run_id
+    assert "stage_metrics" in run_payload
+    assert "unknown_reason_distribution" in run_payload
 
 
 def test_cli_doctor_reports_parser_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1759,7 +1770,7 @@ def test_cli_report_outputs_markdown_findings(tmp_path: Path) -> None:
     (tmp_path / "src" / "demo.lua").write_text(
         "\n".join(
             [
-                "local username = nil",
+                "local username = req.params.username",
                 "return string.match(username, '^a')",
             ]
         ),
@@ -1806,7 +1817,7 @@ def test_cli_export_autofix_outputs_machine_readable_patches(tmp_path: Path) -> 
     (tmp_path / "src" / "demo.lua").write_text(
         "\n".join(
             [
-                "local username = nil",
+                "local username = req.params.username",
                 "return string.match(username, '^a')",
             ]
         ),
@@ -2101,7 +2112,7 @@ def test_cli_baseline_create_writes_baseline_file(tmp_path: Path) -> None:
     (tmp_path / "src" / "demo.lua").write_text(
         "\n".join(
             [
-                "local username = nil",
+                "local username = req.params.username",
                 "return string.match(username, '^a')",
             ]
         ),
@@ -2149,7 +2160,7 @@ def test_cli_report_new_applies_baseline_filter(tmp_path: Path) -> None:
     (tmp_path / "src" / "demo.lua").write_text(
         "\n".join(
             [
-                "local username = nil",
+                "local username = req.params.username",
                 "return string.match(username, '^a')",
             ]
         ),
@@ -2299,7 +2310,7 @@ def test_cli_ci_check_fails_when_new_findings_exist(tmp_path: Path) -> None:
     (tmp_path / "src" / "demo.lua").write_text(
         "\n".join(
             [
-                "local username = nil",
+                "local username = req.params.username",
                 "return string.match(username, '^a')",
             ]
         ),

@@ -2841,7 +2841,7 @@ def test_clear_backend_cache_removes_cache_file_and_counts_entries(tmp_path: Pat
     assert not cache_path.exists()
 
 
-def test_export_autofix_patches_writes_reportable_patch_file(tmp_path: Path) -> None:
+def test_export_autofix_patches_writes_patch_file_in_audit_mode(tmp_path: Path) -> None:
     config_dir = tmp_path / "config"
     src_dir = tmp_path / "src"
     config_dir.mkdir()
@@ -2878,7 +2878,7 @@ def test_export_autofix_patches_writes_reportable_patch_file(tmp_path: Path) -> 
     snapshot = bootstrap_repository(tmp_path)
     output_path = tmp_path / "data" / "autofix.json"
 
-    patches = export_autofix_patches(snapshot, output_path=output_path)
+    patches = export_autofix_patches(snapshot, output_path=output_path, audit_mode=True)
 
     assert len(patches) == 1
     patch = patches[0]

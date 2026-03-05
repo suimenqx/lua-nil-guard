@@ -10,7 +10,7 @@ from lua_nil_guard.models import (
 from lua_nil_guard.verification import preview_static_risk, preview_static_verification, verify_verdict
 
 
-def test_verify_verdict_upgrades_clear_risk_to_risky_verified() -> None:
+def test_verify_verdict_keeps_risky_without_structured_risk_evidence() -> None:
     verdict = Verdict(
         case_id="case_risky",
         status="risky",
@@ -44,8 +44,8 @@ def test_verify_verdict_upgrades_clear_risk_to_risky_verified() -> None:
 
     result = verify_verdict(verdict, packet)
 
-    assert result.status == "risky_verified"
-    assert result.confidence == "high"
+    assert result.status == "risky"
+    assert result.confidence == "medium"
     assert result.verification_summary is not None
     assert result.verification_summary.mode == "risk_no_guard"
 
@@ -447,3 +447,61 @@ def test_verify_verdict_does_not_let_legacy_guards_override_weak_structured_proo
     assert result.confidence == "low"
     assert result.safety_evidence == ()
     assert result.verification_summary is None
+
+
+def test_verify_verdict_downgrades_when_strong_safe_and_risk_evidence_conflict() -> None:
+    verdict = Verdict(
+        case_id="case_conflict_structured",
+        status="safe",
+        confidence="high",
+        risk_path=(),
+        safety_evidence=("if username then",),
+        counterarguments_considered=(),
+        suggested_fix=None,
+        needs_human=False,
+    )
+    packet = EvidencePacket(
+        case_id="case_conflict_structured",
+        target=EvidenceTarget(
+            file="demo.lua",
+            line=17,
+            column=1,
+            sink="string.match",
+            arg_index=1,
+            expression="username",
+        ),
+        local_context="if username then\n  return string.match(username, '^a')\nend",
+        related_functions=(),
+        function_summaries=(),
+        knowledge_facts=(),
+        static_reasoning={
+            "state": "unknown_static",
+            "origin_candidates": ("req.params.username",),
+            "observed_guards": ("if username then",),
+        },
+        static_proofs=(
+            StaticProof(
+                kind="direct_guard",
+                summary="if username then",
+                subject="username",
+                depth=0,
+            ),
+        ),
+        static_risk_signals=(
+            StaticRiskSignal(
+                kind="direct_sink_field_path",
+                summary="req.params.username reaches string.match directly",
+                subject="req.params.username",
+                source_expression="req.params.username",
+                depth=0,
+            ),
+        ),
+    )
+
+    result = verify_verdict(verdict, packet)
+
+    assert result.status == "uncertain"
+    assert result.confidence == "low"
+    assert result.needs_human is True
+    assert result.verification_summary is not None
+    assert result.verification_summary.mode == "structured_conflict_downgrade"
