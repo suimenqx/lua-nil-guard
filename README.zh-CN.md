@@ -65,6 +65,53 @@ lua-nil-guard scan /path/to/target-repo
 lua-nil-guard report /path/to/target-repo
 ```
 
+## 持久化 Run 工作流
+
+如果你希望使用“可恢复”的全仓作业链路（start/status/report/export/resume），请使用：
+
+```sh
+lua-nil-guard run-start /path/to/target-repo
+lua-nil-guard run-status /path/to/target-repo [run_id]
+lua-nil-guard run-report /path/to/target-repo [run_id]
+lua-nil-guard run-export-json /path/to/target-repo [run_id] [output]
+lua-nil-guard run-resume /path/to/target-repo <run_id>
+```
+
+`run-status` 与 `run-report` 现在会输出阶段指标和 `unknown_reason` 分布，包含：
+
+- 候选来源计数（`ast_exact`、`lexical_fallback`）
+- 静态层计数（`safe_static`、`unknown_static`）
+- LLM 层计数（`llm_enqueued`、`llm_processed`、`llm_second_hop`）
+- verify 层计数（`safe_verified`、`risky_verified`）
+- `unknown_static` case 的 `unknown_reason` 分布
+
+`run-export-json` 现在导出对象结构（不再是纯 findings 数组）：
+
+```json
+{
+  "run": {
+    "run_id": 12,
+    "stage_metrics": {
+      "static": {"total_cases": 120, "safe_static_cases": 80, "unknown_static_cases": 40},
+      "queue": {"llm_enqueued_cases": 40},
+      "llm": {"llm_processed_cases": 40, "llm_second_hop_cases": 7},
+      "verify": {"safe_verified_cases": 86, "risky_verified_cases": 21},
+      "finalize": {"completed_cases": 120, "failed_cases": 0}
+    },
+    "unknown_reason_distribution": [
+      {"reason": "no_bounded_ast_proof", "count": 31}
+    ]
+  },
+  "findings": [
+    {
+      "case_id": "...",
+      "status": "risky_verified",
+      "confidence": "high"
+    }
+  ]
+}
+```
+
 如果你希望先做一轮更快的“字符串风险专项排查”（仅关注字符串库首参与字符串拼接），可用：
 
 ```sh

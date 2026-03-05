@@ -63,6 +63,53 @@ lua-nil-guard scan /path/to/target-repo
 lua-nil-guard report /path/to/target-repo
 ```
 
+## Persistent Run Workflow
+
+For long-running repository review jobs with resume/status/report/export support, use:
+
+```sh
+lua-nil-guard run-start /path/to/target-repo
+lua-nil-guard run-status /path/to/target-repo [run_id]
+lua-nil-guard run-report /path/to/target-repo [run_id]
+lua-nil-guard run-export-json /path/to/target-repo [run_id] [output]
+lua-nil-guard run-resume /path/to/target-repo <run_id>
+```
+
+`run-status` and `run-report` now include stage metrics and unknown-reason distribution, including:
+
+- candidate/source counters (`ast_exact`, `lexical_fallback`)
+- static-layer counters (`safe_static`, `unknown_static`)
+- LLM-layer counters (`llm_enqueued`, `llm_processed`, `llm_second_hop`)
+- verify-layer counters (`safe_verified`, `risky_verified`)
+- `unknown_reason` distribution for `unknown_static` cases
+
+`run-export-json` now exports a structured object:
+
+```json
+{
+  "run": {
+    "run_id": 12,
+    "stage_metrics": {
+      "static": {"total_cases": 120, "safe_static_cases": 80, "unknown_static_cases": 40},
+      "queue": {"llm_enqueued_cases": 40},
+      "llm": {"llm_processed_cases": 40, "llm_second_hop_cases": 7},
+      "verify": {"safe_verified_cases": 86, "risky_verified_cases": 21},
+      "finalize": {"completed_cases": 120, "failed_cases": 0}
+    },
+    "unknown_reason_distribution": [
+      {"reason": "no_bounded_ast_proof", "count": 31}
+    ]
+  },
+  "findings": [
+    {
+      "case_id": "...",
+      "status": "risky_verified",
+      "confidence": "high"
+    }
+  ]
+}
+```
+
 If you want a faster first pass that only focuses on string-library and string-concat nil hazards, use:
 
 ```sh
