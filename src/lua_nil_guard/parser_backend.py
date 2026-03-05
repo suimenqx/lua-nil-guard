@@ -88,6 +88,17 @@ class BinaryOperand:
     right_column: int
 
 
+@dataclass(frozen=True, slots=True)
+class SourceAstIndex:
+    """A one-pass AST index for one Lua source text."""
+
+    has_error: bool
+    call_sites: tuple[CallSite, ...]
+    receiver_accesses: tuple[ReceiverAccess, ...]
+    length_operands: tuple[LengthOperand, ...]
+    binary_operands: tuple[BinaryOperand, ...]
+
+
 def get_parser_backend_info() -> ParserBackendInfo:
     """Return the active parser backend description."""
 
@@ -104,35 +115,20 @@ def get_parser_backend_info() -> ParserBackendInfo:
 def collect_call_sites(source: str, qualified_name: str) -> tuple[CallSite, ...]:
     """Collect call sites for a qualified name using the active backend."""
 
-    language = _require_tree_sitter_language()
-    tree_sitter_calls = _collect_call_sites_tree_sitter(source, qualified_name, language)
-    if tree_sitter_calls is None:
-        raise ParserBackendUnavailableError("tree_sitter Parser unavailable for call-site collection")
-    return tree_sitter_calls
+    index = build_source_ast_index(source)
+    return tuple(call for call in index.call_sites if call.callee == qualified_name)
 
 
 def collect_receiver_accesses(source: str) -> tuple[ReceiverAccess, ...]:
     """Collect non-call member access expressions using the active backend."""
 
-    language = _require_tree_sitter_language()
-    tree_sitter_accesses = _collect_receiver_accesses_tree_sitter(source, language)
-    if tree_sitter_accesses is None:
-        raise ParserBackendUnavailableError(
-            "tree_sitter Parser unavailable for receiver-access collection"
-        )
-    return tree_sitter_accesses
+    return build_source_ast_index(source).receiver_accesses
 
 
 def collect_length_operands(source: str) -> tuple[LengthOperand, ...]:
     """Collect length-operator operands using the active backend."""
 
-    language = _require_tree_sitter_language()
-    tree_sitter_operands = _collect_length_operands_tree_sitter(source, language)
-    if tree_sitter_operands is None:
-        raise ParserBackendUnavailableError(
-            "tree_sitter Parser unavailable for length-operand collection"
-        )
-    return tree_sitter_operands
+    return build_source_ast_index(source).length_operands
 
 
 def collect_binary_operands(
@@ -141,13 +137,65 @@ def collect_binary_operands(
 ) -> tuple[BinaryOperand, ...]:
     """Collect binary expressions using the active backend."""
 
+    operands = build_source_ast_index(source).binary_operands
+    if operator is None:
+        return operands
+    return tuple(operand for operand in operands if operand.operator == operator)
+
+
+def build_source_ast_index(source: str) -> SourceAstIndex:
+    """Parse one Lua source once and return reusable AST-derived collections."""
+
     language = _require_tree_sitter_language()
-    tree_sitter_operands = _collect_binary_operands_tree_sitter(source, language, operator)
-    if tree_sitter_operands is None:
+    try:
+        from tree_sitter import Parser
+    except Exception as exc:
         raise ParserBackendUnavailableError(
-            "tree_sitter Parser unavailable for binary-operand collection"
-        )
-    return tree_sitter_operands
+            f"tree_sitter Parser unavailable for AST indexing: {exc}"
+        ) from exc
+
+    parser = Parser()
+    parser.language = language
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
+    call_sites: list[CallSite] = []
+    receiver_accesses: list[ReceiverAccess] = []
+    length_operands: list[LengthOperand] = []
+    binary_operands: list[BinaryOperand] = []
+
+    stack = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "function_call":
+            call_site = _call_site_from_tree_sitter_node(node, source_bytes)
+            if call_site is not None:
+                call_sites.append(call_site)
+        elif node.type in {"dot_index_expression", "bracket_index_expression"}:
+            access = _receiver_access_from_tree_sitter_node(node, source_bytes)
+            if access is not None:
+                receiver_accesses.append(access)
+        elif node.type == "unary_expression":
+            operand = _length_operand_from_tree_sitter_node(node, source_bytes)
+            if operand is not None:
+                length_operands.append(operand)
+        elif node.type == "binary_expression":
+            binary_operand = _binary_operand_from_tree_sitter_node(node, source_bytes)
+            if binary_operand is not None:
+                binary_operands.append(binary_operand)
+        stack.extend(reversed(node.children))
+
+    call_sites.sort(key=lambda item: (item.line, item.column))
+    receiver_accesses.sort(key=lambda item: (item.line, item.column))
+    length_operands.sort(key=lambda item: (item.line, item.column))
+    binary_operands.sort(key=lambda item: (item.left_line, item.left_column))
+
+    return SourceAstIndex(
+        has_error=bool(getattr(tree.root_node, "has_error", False)),
+        call_sites=tuple(call_sites),
+        receiver_accesses=tuple(receiver_accesses),
+        length_operands=tuple(length_operands),
+        binary_operands=tuple(binary_operands),
+    )
 
 
 def _require_tree_sitter_language():
@@ -358,83 +406,26 @@ def _collect_call_sites_tree_sitter(
     qualified_name: str,
     language,
 ) -> tuple[CallSite, ...] | None:
-    try:
-        from tree_sitter import Parser
-    except Exception:
-        return None
-
-    parser = Parser()
-    parser.language = language
-    source_bytes = source.encode("utf-8")
-    tree = parser.parse(source_bytes)
-    calls: list[CallSite] = []
-    stack = [tree.root_node]
-
-    while stack:
-        node = stack.pop()
-        if node.type == "function_call":
-            call_site = _call_site_from_tree_sitter_node(node, source_bytes)
-            if call_site is not None and call_site.callee == qualified_name:
-                calls.append(call_site)
-        stack.extend(reversed(node.children))
-
-    return tuple(calls)
+    del language
+    return tuple(
+        call for call in build_source_ast_index(source).call_sites if call.callee == qualified_name
+    )
 
 
 def _collect_receiver_accesses_tree_sitter(
     source: str,
     language,
 ) -> tuple[ReceiverAccess, ...] | None:
-    try:
-        from tree_sitter import Parser
-    except Exception:
-        return None
-
-    parser = Parser()
-    parser.language = language
-    source_bytes = source.encode("utf-8")
-    tree = parser.parse(source_bytes)
-    accesses: list[ReceiverAccess] = []
-    stack = [tree.root_node]
-
-    while stack:
-        node = stack.pop()
-        if node.type in {"dot_index_expression", "bracket_index_expression"}:
-            access = _receiver_access_from_tree_sitter_node(node, source_bytes)
-            if access is not None:
-                accesses.append(access)
-        stack.extend(reversed(node.children))
-
-    accesses.sort(key=lambda item: (item.line, item.column))
-    return tuple(accesses)
+    del language
+    return build_source_ast_index(source).receiver_accesses
 
 
 def _collect_length_operands_tree_sitter(
     source: str,
     language,
 ) -> tuple[LengthOperand, ...] | None:
-    try:
-        from tree_sitter import Parser
-    except Exception:
-        return None
-
-    parser = Parser()
-    parser.language = language
-    source_bytes = source.encode("utf-8")
-    tree = parser.parse(source_bytes)
-    operands: list[LengthOperand] = []
-    stack = [tree.root_node]
-
-    while stack:
-        node = stack.pop()
-        if node.type == "unary_expression":
-            operand = _length_operand_from_tree_sitter_node(node, source_bytes)
-            if operand is not None:
-                operands.append(operand)
-        stack.extend(reversed(node.children))
-
-    operands.sort(key=lambda item: (item.line, item.column))
-    return tuple(operands)
+    del language
+    return build_source_ast_index(source).length_operands
 
 
 def _collect_binary_operands_tree_sitter(
@@ -442,28 +433,11 @@ def _collect_binary_operands_tree_sitter(
     language,
     operator: str | None,
 ) -> tuple[BinaryOperand, ...] | None:
-    try:
-        from tree_sitter import Parser
-    except Exception:
-        return None
-
-    parser = Parser()
-    parser.language = language
-    source_bytes = source.encode("utf-8")
-    tree = parser.parse(source_bytes)
-    operands: list[BinaryOperand] = []
-    stack = [tree.root_node]
-
-    while stack:
-        node = stack.pop()
-        if node.type == "binary_expression":
-            binary_operand = _binary_operand_from_tree_sitter_node(node, source_bytes)
-            if binary_operand is not None and (operator is None or binary_operand.operator == operator):
-                operands.append(binary_operand)
-        stack.extend(reversed(node.children))
-
-    operands.sort(key=lambda item: (item.left_line, item.left_column))
-    return tuple(operands)
+    del language
+    operands = build_source_ast_index(source).binary_operands
+    if operator is None:
+        return operands
+    return tuple(operand for operand in operands if operand.operator == operator)
 
 
 def _call_site_from_tree_sitter_node(node, source_bytes: bytes) -> CallSite | None:

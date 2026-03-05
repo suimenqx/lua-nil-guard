@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import lua_nil_guard.collector as collector_module
 from lua_nil_guard.collector import collect_candidates
 from lua_nil_guard.models import SinkRule
+from lua_nil_guard.parser_backend import ParserBackendUnavailableError, SourceAstIndex
 
 
 def test_collect_candidates_finds_configured_function_sinks() -> None:
@@ -37,6 +39,70 @@ def test_collect_candidates_finds_configured_function_sinks() -> None:
     assert candidate.expression == "username"
     assert candidate.symbol == "username"
     assert candidate.static_state == "unknown_static"
+    assert candidate.candidate_source == "ast_exact"
+
+
+def test_collect_candidates_falls_back_to_lexical_when_ast_backend_is_unavailable(
+    monkeypatch,
+) -> None:
+    sink_rules = (
+        SinkRule(
+            id="string.match.arg1",
+            kind="function_arg",
+            qualified_name="string.match",
+            arg_index=1,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("x or ''",),
+        ),
+    )
+    source = "return string.match(username, '^a')"
+
+    def _raise_unavailable(_: str) -> SourceAstIndex:
+        raise ParserBackendUnavailableError("tree_sitter unavailable")
+
+    monkeypatch.setattr(collector_module, "build_source_ast_index", _raise_unavailable)
+
+    candidates = collect_candidates(Path("foo/bar.lua"), source, sink_rules)
+
+    assert len(candidates) == 1
+    assert candidates[0].candidate_source == "lexical_fallback"
+
+
+def test_collect_candidates_falls_back_to_lexical_when_ast_has_parse_errors(
+    monkeypatch,
+) -> None:
+    sink_rules = (
+        SinkRule(
+            id="string.match.arg1",
+            kind="function_arg",
+            qualified_name="string.match",
+            arg_index=1,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("x or ''",),
+        ),
+    )
+    source = "return string.match(username, '^a')"
+
+    monkeypatch.setattr(
+        collector_module,
+        "build_source_ast_index",
+        lambda _: SourceAstIndex(
+            has_error=True,
+            call_sites=(),
+            receiver_accesses=(),
+            length_operands=(),
+            binary_operands=(),
+        ),
+    )
+
+    candidates = collect_candidates(Path("foo/bar.lua"), source, sink_rules)
+
+    assert len(candidates) == 1
+    assert candidates[0].candidate_source == "lexical_fallback"
 
 
 def test_collect_candidates_tracks_enclosing_function_name() -> None:

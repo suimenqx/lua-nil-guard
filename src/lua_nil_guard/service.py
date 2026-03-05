@@ -3,8 +3,10 @@ from __future__ import annotations
 from collections import Counter
 import difflib
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import re
+import sqlite3
 from pathlib import Path
 from typing import Callable
 
@@ -115,6 +117,8 @@ _EXPANDED_RELATED_FUNCTION_CONTEXTS = 6
 _EXPANDED_RELATED_FUNCTION_CONTEXT_LINES = 72
 _EXPANDED_RELATED_FUNCTION_SUMMARIES = 12
 _TRUNCATED_CONTEXT_MARKER = "  ... (truncated)"
+_DEFAULT_RUN_DB_NAME = "review_runs.sqlite3"
+_RUN_STORE_DIRNAME = ".lua_nil_guard"
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +136,28 @@ class _RelatedEvidenceSelection:
     function_names: tuple[str, ...]
     summary_texts: tuple[str, ...]
     context_texts: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewRunStatus:
+    run_id: int
+    repository_root: str
+    status: str
+    stage: str
+    backend_name: str
+    backend_model: str | None
+    total_cases: int
+    completed_cases: int
+    failed_cases: int
+    ast_exact_cases: int
+    lexical_fallback_cases: int
+    static_safe_cases: int
+    static_unknown_cases: int
+    llm_enqueued_cases: int
+    llm_processed_cases: int
+    created_at: str
+    updated_at: str
+    completed_at: str | None
 
 
 def _resolve_preprocessor_files(root_path: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
@@ -241,6 +267,812 @@ def find_repository_root_for_file(file_path: str | Path) -> Path:
         "Expected config/sink_rules.json and config/confidence_policy.json in this "
         f"directory or an ancestor: {file_path}"
     )
+
+
+def review_run_db_path(root: str | Path) -> Path:
+    """Return the default persistent run-store path for one repository."""
+
+    root_path = Path(root).resolve(strict=False)
+    return root_path / _RUN_STORE_DIRNAME / _DEFAULT_RUN_DB_NAME
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _serialize_run_verdict(verdict: Verdict) -> str:
+    payload: dict[str, object] = {
+        "case_id": verdict.case_id,
+        "status": verdict.status,
+        "confidence": verdict.confidence,
+        "risk_path": list(verdict.risk_path),
+        "safety_evidence": list(verdict.safety_evidence),
+        "counterarguments_considered": list(verdict.counterarguments_considered),
+        "suggested_fix": verdict.suggested_fix,
+        "needs_human": verdict.needs_human,
+    }
+    if verdict.autofix_patch is not None:
+        payload["autofix_patch"] = {
+            "case_id": verdict.autofix_patch.case_id,
+            "file": verdict.autofix_patch.file,
+            "action": verdict.autofix_patch.action,
+            "start_line": verdict.autofix_patch.start_line,
+            "end_line": verdict.autofix_patch.end_line,
+            "replacement": verdict.autofix_patch.replacement,
+            "expected_original": verdict.autofix_patch.expected_original,
+        }
+    if verdict.verification_summary is not None:
+        payload["verification_summary"] = {
+            "mode": verdict.verification_summary.mode,
+            "strongest_proof_kind": verdict.verification_summary.strongest_proof_kind,
+            "strongest_proof_depth": verdict.verification_summary.strongest_proof_depth,
+            "strongest_proof_summary": verdict.verification_summary.strongest_proof_summary,
+            "verification_score": verdict.verification_summary.verification_score,
+            "evidence": list(verdict.verification_summary.evidence),
+        }
+    return json.dumps(payload, sort_keys=True)
+
+
+def _deserialize_run_verdict(payload: str) -> Verdict:
+    data = json.loads(payload)
+    if not isinstance(data, dict):
+        raise ValueError("stored verdict payload must be a JSON object")
+    autofix_payload = data.get("autofix_patch")
+    autofix_patch = None
+    if isinstance(autofix_payload, dict):
+        autofix_patch = AutofixPatch(
+            case_id=str(autofix_payload.get("case_id", "")),
+            file=str(autofix_payload.get("file", "")),
+            action=str(autofix_payload.get("action", "")),
+            start_line=int(autofix_payload.get("start_line", 0)),
+            end_line=int(autofix_payload.get("end_line", 0)),
+            replacement=str(autofix_payload.get("replacement", "")),
+            expected_original=str(autofix_payload.get("expected_original", "")),
+        )
+
+    verification_payload = data.get("verification_summary")
+    verification_summary = None
+    if isinstance(verification_payload, dict):
+        from .models import VerificationSummary
+
+        evidence = verification_payload.get("evidence", ())
+        verification_summary = VerificationSummary(
+            mode=str(verification_payload.get("mode", "")),
+            strongest_proof_kind=(
+                str(verification_payload["strongest_proof_kind"])
+                if verification_payload.get("strongest_proof_kind") is not None
+                else None
+            ),
+            strongest_proof_depth=(
+                int(verification_payload["strongest_proof_depth"])
+                if verification_payload.get("strongest_proof_depth") is not None
+                else None
+            ),
+            strongest_proof_summary=(
+                str(verification_payload["strongest_proof_summary"])
+                if verification_payload.get("strongest_proof_summary") is not None
+                else None
+            ),
+            verification_score=(
+                int(verification_payload["verification_score"])
+                if verification_payload.get("verification_score") is not None
+                else None
+            ),
+            evidence=tuple(str(item) for item in evidence) if isinstance(evidence, list) else (),
+        )
+
+    return Verdict(
+        case_id=str(data.get("case_id", "")),
+        status=str(data.get("status", "uncertain")),
+        confidence=str(data.get("confidence", "low")),
+        risk_path=tuple(str(item) for item in data.get("risk_path", ()) if isinstance(item, str)),
+        safety_evidence=tuple(
+            str(item) for item in data.get("safety_evidence", ()) if isinstance(item, str)
+        ),
+        counterarguments_considered=tuple(
+            str(item)
+            for item in data.get("counterarguments_considered", ())
+            if isinstance(item, str)
+        ),
+        suggested_fix=(
+            str(data["suggested_fix"]) if data.get("suggested_fix") is not None else None
+        ),
+        needs_human=bool(data.get("needs_human", False)),
+        autofix_patch=autofix_patch,
+        verification_summary=verification_summary,
+    )
+
+
+class _ReviewRunStore:
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path).resolve(strict=False)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(self.path)
+        self._conn.row_factory = sqlite3.Row
+        self._initialize()
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def _initialize(self) -> None:
+        with self._conn:
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runs (
+                    run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    repository_root TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    backend_name TEXT NOT NULL,
+                    backend_model TEXT,
+                    total_cases INTEGER NOT NULL DEFAULT 0,
+                    completed_cases INTEGER NOT NULL DEFAULT 0,
+                    failed_cases INTEGER NOT NULL DEFAULT 0,
+                    ast_exact_cases INTEGER NOT NULL DEFAULT 0,
+                    lexical_fallback_cases INTEGER NOT NULL DEFAULT 0,
+                    static_safe_cases INTEGER NOT NULL DEFAULT 0,
+                    static_unknown_cases INTEGER NOT NULL DEFAULT 0,
+                    llm_enqueued_cases INTEGER NOT NULL DEFAULT 0,
+                    llm_processed_cases INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS case_tasks (
+                    run_id INTEGER NOT NULL,
+                    case_id TEXT NOT NULL,
+                    file TEXT NOT NULL,
+                    line INTEGER NOT NULL,
+                    column INTEGER NOT NULL,
+                    sink_rule_id TEXT NOT NULL,
+                    static_state TEXT NOT NULL,
+                    candidate_source TEXT NOT NULL DEFAULT 'ast_exact',
+                    status TEXT NOT NULL,
+                    verdict_status TEXT,
+                    verdict_confidence TEXT,
+                    verdict_payload TEXT,
+                    error_message TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, case_id)
+                )
+                """
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_case_tasks_run_status ON case_tasks(run_id, status)"
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS file_tasks (
+                    run_id INTEGER NOT NULL,
+                    file TEXT NOT NULL,
+                    total_cases INTEGER NOT NULL DEFAULT 0,
+                    completed_cases INTEGER NOT NULL DEFAULT 0,
+                    failed_cases INTEGER NOT NULL DEFAULT 0,
+                    llm_enqueued_cases INTEGER NOT NULL DEFAULT 0,
+                    llm_processed_cases INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, file)
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS adjudication_records (
+                    run_id INTEGER NOT NULL,
+                    case_id TEXT NOT NULL,
+                    adjudication_status TEXT NOT NULL,
+                    adjudication_confidence TEXT NOT NULL,
+                    adjudication_payload TEXT NOT NULL,
+                    backend_name TEXT,
+                    backend_model TEXT,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, case_id)
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS verdict_snapshots (
+                    run_id INTEGER NOT NULL,
+                    case_id TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    verdict_payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_file_tasks_run_status ON file_tasks(run_id, status)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_verdict_snapshots_run_case ON verdict_snapshots(run_id, case_id)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_adjudication_records_run_case ON adjudication_records(run_id, case_id)"
+            )
+        self._ensure_schema_migrations()
+
+    def _ensure_schema_migrations(self) -> None:
+        run_columns = {name for name, _type in self._table_columns("runs")}
+        run_column_defaults: dict[str, tuple[str, str]] = {
+            "ast_exact_cases": ("INTEGER", "0"),
+            "lexical_fallback_cases": ("INTEGER", "0"),
+            "static_safe_cases": ("INTEGER", "0"),
+            "static_unknown_cases": ("INTEGER", "0"),
+            "llm_enqueued_cases": ("INTEGER", "0"),
+            "llm_processed_cases": ("INTEGER", "0"),
+        }
+        case_task_columns = {name for name, _type in self._table_columns("case_tasks")}
+        with self._conn:
+            for column_name, (column_type, default_value) in run_column_defaults.items():
+                if column_name in run_columns:
+                    continue
+                self._conn.execute(
+                    f"ALTER TABLE runs ADD COLUMN {column_name} {column_type} NOT NULL DEFAULT {default_value}"
+                )
+            if "candidate_source" not in case_task_columns:
+                self._conn.execute(
+                    "ALTER TABLE case_tasks ADD COLUMN candidate_source TEXT NOT NULL DEFAULT 'ast_exact'"
+                )
+
+    def _table_columns(self, table_name: str) -> tuple[tuple[str, str], ...]:
+        rows = self._conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return tuple((str(row["name"]), str(row["type"])) for row in rows)
+
+    def create_run(
+        self,
+        *,
+        repository_root: str,
+        backend_name: str,
+        backend_model: str | None,
+    ) -> int:
+        now = _utc_now_iso()
+        with self._conn:
+            cursor = self._conn.execute(
+                """
+                INSERT INTO runs (
+                    repository_root,
+                    status,
+                    stage,
+                    backend_name,
+                    backend_model,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    repository_root,
+                    "running",
+                    "INIT",
+                    backend_name,
+                    backend_model,
+                    now,
+                    now,
+                ),
+            )
+        return int(cursor.lastrowid)
+
+    def latest_run_id(self, *, repository_root: str) -> int | None:
+        row = self._conn.execute(
+            "SELECT run_id FROM runs WHERE repository_root = ? ORDER BY run_id DESC LIMIT 1",
+            (repository_root,),
+        ).fetchone()
+        if row is None:
+            return None
+        return int(row["run_id"])
+
+    def update_stage(self, *, run_id: int, stage: str) -> None:
+        now = _utc_now_iso()
+        with self._conn:
+            self._conn.execute(
+                "UPDATE runs SET stage = ?, updated_at = ?, status = ? WHERE run_id = ?",
+                (stage, now, "running", run_id),
+            )
+
+    def ensure_case_tasks(self, *, run_id: int, assessments: tuple[CandidateAssessment, ...]) -> None:
+        now = _utc_now_iso()
+        per_file_totals: Counter[str] = Counter()
+        per_file_llm_enqueued: Counter[str] = Counter()
+        with self._conn:
+            for assessment in assessments:
+                per_file_totals[assessment.candidate.file] += 1
+                if assessment.candidate.static_state == "unknown_static":
+                    per_file_llm_enqueued[assessment.candidate.file] += 1
+                self._conn.execute(
+                    """
+                    INSERT INTO case_tasks (
+                        run_id,
+                        case_id,
+                        file,
+                        line,
+                        column,
+                        sink_rule_id,
+                        static_state,
+                        candidate_source,
+                        status,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(run_id, case_id) DO NOTHING
+                    """,
+                    (
+                        run_id,
+                        assessment.candidate.case_id,
+                        assessment.candidate.file,
+                        assessment.candidate.line,
+                        assessment.candidate.column,
+                        assessment.candidate.sink_rule_id,
+                        assessment.candidate.static_state,
+                        assessment.candidate.candidate_source,
+                        "pending",
+                        now,
+                    ),
+                )
+            for file_path, total in per_file_totals.items():
+                self._conn.execute(
+                    """
+                    INSERT INTO file_tasks (
+                        run_id,
+                        file,
+                        total_cases,
+                        llm_enqueued_cases,
+                        status,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(run_id, file) DO UPDATE SET
+                        total_cases = excluded.total_cases,
+                        llm_enqueued_cases = excluded.llm_enqueued_cases,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        run_id,
+                        file_path,
+                        total,
+                        per_file_llm_enqueued[file_path],
+                        "pending",
+                        now,
+                    ),
+                )
+            self._conn.execute(
+                """
+                UPDATE runs
+                SET total_cases = (
+                    SELECT COUNT(*)
+                    FROM case_tasks
+                    WHERE run_id = ?
+                ),
+                ast_exact_cases = (
+                    SELECT COUNT(*)
+                    FROM case_tasks
+                    WHERE run_id = ? AND candidate_source = 'ast_exact'
+                ),
+                lexical_fallback_cases = (
+                    SELECT COUNT(*)
+                    FROM case_tasks
+                    WHERE run_id = ? AND candidate_source = 'lexical_fallback'
+                ),
+                static_safe_cases = (
+                    SELECT COUNT(*)
+                    FROM case_tasks
+                    WHERE run_id = ? AND static_state = 'safe_static'
+                ),
+                static_unknown_cases = (
+                    SELECT COUNT(*)
+                    FROM case_tasks
+                    WHERE run_id = ? AND static_state = 'unknown_static'
+                ),
+                llm_enqueued_cases = (
+                    SELECT COUNT(*)
+                    FROM case_tasks
+                    WHERE run_id = ? AND static_state = 'unknown_static'
+                ),
+                updated_at = ?
+                WHERE run_id = ?
+                """,
+                (run_id, run_id, run_id, run_id, run_id, run_id, now, run_id),
+            )
+
+    def mark_case_running(self, *, run_id: int, case_id: str) -> None:
+        now = _utc_now_iso()
+        with self._conn:
+            self._conn.execute(
+                """
+                UPDATE case_tasks
+                SET status = ?, error_message = NULL, updated_at = ?
+                WHERE run_id = ? AND case_id = ?
+                """,
+                ("running", now, run_id, case_id),
+            )
+            row = self._conn.execute(
+                """
+                SELECT file
+                FROM case_tasks
+                WHERE run_id = ? AND case_id = ?
+                """,
+                (run_id, case_id),
+            ).fetchone()
+            if row is not None:
+                self._conn.execute(
+                    """
+                    UPDATE file_tasks
+                    SET status = ?, updated_at = ?
+                    WHERE run_id = ? AND file = ?
+                    """,
+                    ("running", now, run_id, str(row["file"])),
+                )
+
+    def mark_case_completed(self, *, run_id: int, verdict: Verdict) -> None:
+        now = _utc_now_iso()
+        with self._conn:
+            self._conn.execute(
+                """
+                UPDATE case_tasks
+                SET status = ?,
+                    verdict_status = ?,
+                    verdict_confidence = ?,
+                    verdict_payload = ?,
+                    error_message = NULL,
+                    updated_at = ?
+                WHERE run_id = ? AND case_id = ?
+                """,
+                (
+                    "completed",
+                    verdict.status,
+                    verdict.confidence,
+                    _serialize_run_verdict(verdict),
+                    now,
+                    run_id,
+                    verdict.case_id,
+                ),
+            )
+            case_row = self._conn.execute(
+                """
+                SELECT file, static_state
+                FROM case_tasks
+                WHERE run_id = ? AND case_id = ?
+                """,
+                (run_id, verdict.case_id),
+            ).fetchone()
+            if case_row is not None:
+                file_path = str(case_row["file"])
+                static_state = str(case_row["static_state"])
+                self._refresh_file_task_progress(
+                    run_id=run_id,
+                    file_path=file_path,
+                    now=now,
+                )
+                if static_state == "unknown_static":
+                    self._conn.execute(
+                        """
+                        UPDATE runs
+                        SET llm_processed_cases = (
+                            SELECT COUNT(*)
+                            FROM case_tasks
+                            WHERE run_id = ? AND status = 'completed' AND static_state = 'unknown_static'
+                        ),
+                        updated_at = ?
+                        WHERE run_id = ?
+                        """,
+                        (run_id, now, run_id),
+                    )
+            self._conn.execute(
+                """
+                UPDATE runs
+                SET completed_cases = (
+                    SELECT COUNT(*)
+                    FROM case_tasks
+                    WHERE run_id = ? AND status = 'completed'
+                ),
+                failed_cases = (
+                    SELECT COUNT(*)
+                    FROM case_tasks
+                    WHERE run_id = ? AND status = 'failed'
+                ),
+                updated_at = ?
+                WHERE run_id = ?
+                """,
+                (run_id, run_id, now, run_id),
+            )
+            self._conn.execute(
+                """
+                INSERT INTO verdict_snapshots (
+                    run_id,
+                    case_id,
+                    stage,
+                    verdict_payload,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    verdict.case_id,
+                    "final",
+                    _serialize_run_verdict(verdict),
+                    now,
+                ),
+            )
+
+    def mark_case_failed(self, *, run_id: int, case_id: str, message: str) -> None:
+        now = _utc_now_iso()
+        with self._conn:
+            self._conn.execute(
+                """
+                UPDATE case_tasks
+                SET status = ?, error_message = ?, updated_at = ?
+                WHERE run_id = ? AND case_id = ?
+                """,
+                ("failed", message, now, run_id, case_id),
+            )
+            case_row = self._conn.execute(
+                """
+                SELECT file
+                FROM case_tasks
+                WHERE run_id = ? AND case_id = ?
+                """,
+                (run_id, case_id),
+            ).fetchone()
+            if case_row is not None:
+                self._refresh_file_task_progress(
+                    run_id=run_id,
+                    file_path=str(case_row["file"]),
+                    now=now,
+                )
+            self._conn.execute(
+                """
+                UPDATE runs
+                SET failed_cases = (
+                    SELECT COUNT(*)
+                    FROM case_tasks
+                    WHERE run_id = ? AND status = 'failed'
+                ),
+                updated_at = ?
+                WHERE run_id = ?
+                """,
+                (run_id, now, run_id),
+            )
+
+    def record_adjudication(
+        self,
+        *,
+        run_id: int,
+        case_id: str,
+        verdict: Verdict,
+        backend_name: str | None,
+        backend_model: str | None,
+    ) -> None:
+        now = _utc_now_iso()
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO adjudication_records (
+                    run_id,
+                    case_id,
+                    adjudication_status,
+                    adjudication_confidence,
+                    adjudication_payload,
+                    backend_name,
+                    backend_model,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, case_id) DO UPDATE SET
+                    adjudication_status = excluded.adjudication_status,
+                    adjudication_confidence = excluded.adjudication_confidence,
+                    adjudication_payload = excluded.adjudication_payload,
+                    backend_name = excluded.backend_name,
+                    backend_model = excluded.backend_model,
+                    created_at = excluded.created_at
+                """,
+                (
+                    run_id,
+                    case_id,
+                    verdict.status,
+                    verdict.confidence,
+                    _serialize_run_verdict(verdict),
+                    backend_name,
+                    backend_model,
+                    now,
+                ),
+            )
+
+    def load_run_verdicts_ordered(self, *, run_id: int) -> tuple[Verdict, ...]:
+        rows = self._conn.execute(
+            """
+            SELECT case_id, verdict_payload
+            FROM case_tasks
+            WHERE run_id = ? AND status = 'completed' AND verdict_payload IS NOT NULL
+            ORDER BY file ASC, line ASC, column ASC, case_id ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        verdicts: list[Verdict] = []
+        for row in rows:
+            payload = row["verdict_payload"]
+            if not isinstance(payload, str):
+                continue
+            try:
+                verdicts.append(_deserialize_run_verdict(payload))
+            except (ValueError, json.JSONDecodeError):
+                continue
+        return tuple(verdicts)
+
+    def _refresh_file_task_progress(self, *, run_id: int, file_path: str, now: str) -> None:
+        row = self._conn.execute(
+            """
+            SELECT COUNT(*) AS total_cases,
+                   SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_cases,
+                   SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_cases,
+                   SUM(
+                       CASE WHEN status = 'completed' AND static_state = 'unknown_static'
+                       THEN 1 ELSE 0 END
+                   ) AS llm_processed_cases,
+                   SUM(
+                       CASE WHEN static_state = 'unknown_static'
+                       THEN 1 ELSE 0 END
+                   ) AS llm_enqueued_cases
+            FROM case_tasks
+            WHERE run_id = ? AND file = ?
+            """,
+            (run_id, file_path),
+        ).fetchone()
+        if row is None:
+            return
+        total_cases = int(row["total_cases"] or 0)
+        completed_cases = int(row["completed_cases"] or 0)
+        failed_cases = int(row["failed_cases"] or 0)
+        llm_processed_cases = int(row["llm_processed_cases"] or 0)
+        llm_enqueued_cases = int(row["llm_enqueued_cases"] or 0)
+        if completed_cases + failed_cases >= total_cases:
+            status = "completed"
+        elif completed_cases > 0 or failed_cases > 0:
+            status = "running"
+        else:
+            status = "pending"
+        self._conn.execute(
+            """
+            UPDATE file_tasks
+            SET completed_cases = ?,
+                failed_cases = ?,
+                llm_processed_cases = ?,
+                llm_enqueued_cases = ?,
+                status = ?,
+                updated_at = ?
+            WHERE run_id = ? AND file = ?
+            """,
+            (
+                completed_cases,
+                failed_cases,
+                llm_processed_cases,
+                llm_enqueued_cases,
+                status,
+                now,
+                run_id,
+                file_path,
+            ),
+        )
+
+    def is_case_completed(self, *, run_id: int, case_id: str) -> bool:
+        row = self._conn.execute(
+            """
+            SELECT status
+            FROM case_tasks
+            WHERE run_id = ? AND case_id = ?
+            """,
+            (run_id, case_id),
+        ).fetchone()
+        if row is None:
+            return False
+        return str(row["status"]) == "completed"
+
+    def load_completed_verdicts(self, *, run_id: int) -> dict[str, Verdict]:
+        rows = self._conn.execute(
+            """
+            SELECT case_id, verdict_payload
+            FROM case_tasks
+            WHERE run_id = ? AND status = 'completed' AND verdict_payload IS NOT NULL
+            """,
+            (run_id,),
+        ).fetchall()
+        verdicts: dict[str, Verdict] = {}
+        for row in rows:
+            payload = row["verdict_payload"]
+            if not isinstance(payload, str):
+                continue
+            try:
+                verdicts[str(row["case_id"])] = _deserialize_run_verdict(payload)
+            except (ValueError, json.JSONDecodeError):
+                continue
+        return verdicts
+
+    def mark_run_completed(self, *, run_id: int) -> None:
+        now = _utc_now_iso()
+        with self._conn:
+            self._conn.execute(
+                """
+                UPDATE runs
+                SET status = ?,
+                    stage = ?,
+                    completed_cases = (
+                        SELECT COUNT(*)
+                        FROM case_tasks
+                        WHERE run_id = ? AND status = 'completed'
+                    ),
+                    failed_cases = (
+                        SELECT COUNT(*)
+                        FROM case_tasks
+                        WHERE run_id = ? AND status = 'failed'
+                    ),
+                    llm_processed_cases = (
+                        SELECT COUNT(*)
+                        FROM case_tasks
+                        WHERE run_id = ? AND status = 'completed' AND static_state = 'unknown_static'
+                    ),
+                    updated_at = ?,
+                    completed_at = ?
+                WHERE run_id = ?
+                """,
+                ("completed", "FINALIZE", run_id, run_id, run_id, now, now, run_id),
+            )
+
+    def mark_run_failed(self, *, run_id: int) -> None:
+        now = _utc_now_iso()
+        with self._conn:
+            self._conn.execute(
+                "UPDATE runs SET status = ?, updated_at = ? WHERE run_id = ?",
+                ("failed", now, run_id),
+            )
+
+    def load_run_status(self, *, run_id: int) -> ReviewRunStatus | None:
+        row = self._conn.execute(
+            """
+            SELECT run_id,
+                   repository_root,
+                   status,
+                   stage,
+                   backend_name,
+                   backend_model,
+                   total_cases,
+                   completed_cases,
+                   failed_cases,
+                   ast_exact_cases,
+                   lexical_fallback_cases,
+                   static_safe_cases,
+                   static_unknown_cases,
+                   llm_enqueued_cases,
+                   llm_processed_cases,
+                   created_at,
+                   updated_at,
+                   completed_at
+            FROM runs
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return ReviewRunStatus(
+            run_id=int(row["run_id"]),
+            repository_root=str(row["repository_root"]),
+            status=str(row["status"]),
+            stage=str(row["stage"]),
+            backend_name=str(row["backend_name"]),
+            backend_model=(str(row["backend_model"]) if row["backend_model"] is not None else None),
+            total_cases=int(row["total_cases"]),
+            completed_cases=int(row["completed_cases"]),
+            failed_cases=int(row["failed_cases"]),
+            ast_exact_cases=int(row["ast_exact_cases"]),
+            lexical_fallback_cases=int(row["lexical_fallback_cases"]),
+            static_safe_cases=int(row["static_safe_cases"]),
+            static_unknown_cases=int(row["static_unknown_cases"]),
+            llm_enqueued_cases=int(row["llm_enqueued_cases"]),
+            llm_processed_cases=int(row["llm_processed_cases"]),
+            created_at=str(row["created_at"]),
+            updated_at=str(row["updated_at"]),
+            completed_at=(str(row["completed_at"]) if row["completed_at"] is not None else None),
+        )
 
 
 def review_source(
@@ -449,6 +1281,137 @@ def run_repository_review(
         file_module_by_path=file_module_by_path,
         facts=facts,
     )
+
+
+def run_repository_review_job(
+    snapshot: RepositorySnapshot,
+    *,
+    backend: AdjudicationBackend | None = None,
+    knowledge_path: str | Path | None = None,
+    run_db_path: str | Path | None = None,
+    run_id: int | None = None,
+) -> tuple[ReviewRunStatus, tuple[Verdict, ...]]:
+    """Run one persistent review job and return run status with ordered verdicts."""
+
+    adjudication_backend = backend or HeuristicAdjudicationBackend()
+    db_path = (
+        Path(run_db_path).resolve(strict=False)
+        if run_db_path is not None
+        else review_run_db_path(snapshot.root)
+    )
+    store = _ReviewRunStore(db_path)
+    effective_run_id: int | None = run_id
+    repository_key = str(Path(snapshot.root).resolve(strict=False))
+    try:
+        backend_name = _backend_name(adjudication_backend)
+        backend_model = _backend_optional_string(adjudication_backend, "model")
+        if effective_run_id is None:
+            effective_run_id = store.create_run(
+                repository_root=repository_key,
+                backend_name=backend_name,
+                backend_model=backend_model,
+            )
+        status = store.load_run_status(run_id=effective_run_id)
+        if status is None:
+            raise ValueError(f"Run id not found: {effective_run_id}")
+
+        store.update_stage(run_id=effective_run_id, stage="STATIC")
+        assessments = review_repository(snapshot)
+        store.ensure_case_tasks(run_id=effective_run_id, assessments=assessments)
+        existing_verdicts = store.load_completed_verdicts(run_id=effective_run_id)
+
+        summaries = _collect_repository_summaries(snapshot)
+        summary_text_by_name = _build_summary_text_index(summaries)
+        function_context_by_name = _build_function_context_index(snapshot, summaries)
+        file_module_by_path = _build_file_module_index(snapshot)
+        facts = _load_knowledge_facts(snapshot, knowledge_path)
+
+        store.update_stage(run_id=effective_run_id, stage="QUEUE")
+        store.update_stage(run_id=effective_run_id, stage="LLM")
+        verdicts = _run_review_from_assessments(
+            snapshot,
+            assessments,
+            adjudication_backend=adjudication_backend,
+            summary_text_by_name=summary_text_by_name,
+            function_context_by_name=function_context_by_name,
+            file_module_by_path=file_module_by_path,
+            facts=facts,
+            run_store=store,
+            run_id=effective_run_id,
+            only_unknown_for_agent=True,
+            existing_verdicts=existing_verdicts,
+        )
+        store.update_stage(run_id=effective_run_id, stage="VERIFY")
+        store.mark_run_completed(run_id=effective_run_id)
+        final_status = store.load_run_status(run_id=effective_run_id)
+        if final_status is None:
+            raise ValueError(f"Run id not found after completion: {effective_run_id}")
+        return final_status, verdicts
+    except Exception:
+        if effective_run_id is not None:
+            store.mark_run_failed(run_id=effective_run_id)
+        raise
+    finally:
+        store.close()
+
+
+def repository_review_run_status(
+    root: str | Path,
+    *,
+    run_db_path: str | Path | None = None,
+    run_id: int | None = None,
+) -> ReviewRunStatus:
+    """Load persisted status for the latest or specified review run."""
+
+    root_path = Path(root).resolve(strict=False)
+    db_path = (
+        Path(run_db_path).resolve(strict=False)
+        if run_db_path is not None
+        else review_run_db_path(root_path)
+    )
+    store = _ReviewRunStore(db_path)
+    try:
+        effective_run_id = run_id
+        if effective_run_id is None:
+            effective_run_id = store.latest_run_id(repository_root=str(root_path))
+            if effective_run_id is None:
+                raise ValueError(f"No review runs found for repository: {root_path}")
+        status = store.load_run_status(run_id=effective_run_id)
+        if status is None:
+            raise ValueError(f"Run id not found: {effective_run_id}")
+        return status
+    finally:
+        store.close()
+
+
+def repository_review_run_verdicts(
+    root: str | Path,
+    *,
+    run_db_path: str | Path | None = None,
+    run_id: int | None = None,
+) -> tuple[ReviewRunStatus, tuple[Verdict, ...]]:
+    """Load persisted verdicts for the latest or specified run."""
+
+    root_path = Path(root).resolve(strict=False)
+    db_path = (
+        Path(run_db_path).resolve(strict=False)
+        if run_db_path is not None
+        else review_run_db_path(root_path)
+    )
+    store = _ReviewRunStore(db_path)
+    try:
+        effective_run_id = run_id
+        if effective_run_id is None:
+            effective_run_id = store.latest_run_id(repository_root=str(root_path))
+            if effective_run_id is None:
+                raise ValueError(f"No review runs found for repository: {root_path}")
+        status = store.load_run_status(run_id=effective_run_id)
+        if status is None:
+            raise ValueError(f"Run id not found: {effective_run_id}")
+        verdicts = store.load_run_verdicts_ordered(run_id=effective_run_id)
+        return status, verdicts
+    finally:
+        store.close()
 
 
 def run_file_review(
@@ -667,16 +1630,39 @@ def _run_review_from_assessments(
     function_context_by_name: dict[str, tuple[_FunctionContextBlock, ...]],
     file_module_by_path: dict[str, str | None],
     facts: tuple[object, ...],
+    run_store: _ReviewRunStore | None = None,
+    run_id: int | None = None,
+    only_unknown_for_agent: bool = False,
+    existing_verdicts: dict[str, Verdict] | None = None,
 ) -> tuple[Verdict, ...]:
+    if run_store is not None and run_id is None:
+        raise ValueError("run_id is required when run_store is provided")
     sink_rule_by_id = {rule.id: rule for rule in snapshot.sink_rules}
     assessments_by_file: dict[str, list[CandidateAssessment]] = {}
     for assessment in assessments:
         assessments_by_file.setdefault(assessment.candidate.file, []).append(assessment)
 
+    verdict_cache = dict(existing_verdicts or {})
+    backend_name = _backend_name(adjudication_backend) if run_store is not None else None
+    backend_model = (
+        _backend_optional_string(adjudication_backend, "model")
+        if run_store is not None
+        else None
+    )
     verdicts: list[Verdict] = []
     for file_path in snapshot.lua_files:
         source = read_lua_source_text(file_path)
         for assessment in assessments_by_file.get(str(file_path), ()):
+            case_id = assessment.candidate.case_id
+            cached_verdict = verdict_cache.get(case_id)
+            if cached_verdict is not None:
+                verdicts.append(cached_verdict)
+                continue
+            if run_store is not None and run_id is not None:
+                run_store.mark_case_running(
+                    run_id=run_id,
+                    case_id=case_id,
+                )
             related_evidence = _build_related_evidence(
                 assessment,
                 summary_text_by_name=summary_text_by_name,
@@ -699,61 +1685,110 @@ def _run_review_from_assessments(
                 knowledge_facts=knowledge_facts,
                 related_function_contexts=related_evidence.context_texts,
             )
-            adjudication = adjudication_backend.adjudicate(
-                packet,
-                sink_rule_by_id[assessment.candidate.sink_rule_id],
-            )
-            verdict = attach_autofix_patch(
-                adjudication.judge,
-                packet,
-                sink_rule_by_id[assessment.candidate.sink_rule_id],
-            )
-            final_verdict = verify_verdict(verdict, packet)
-            if _should_retry_with_expanded_evidence(
-                adjudication_backend,
-                adjudication,
-                final_verdict,
-            ):
-                expanded_related_evidence = _build_related_evidence(
-                    assessment,
-                    summary_text_by_name=summary_text_by_name,
-                    function_context_by_name=function_context_by_name,
-                    file_module_by_path=file_module_by_path,
-                    max_depth=2,
-                    max_contexts=_EXPANDED_RELATED_FUNCTION_CONTEXTS,
-                    max_context_lines=_EXPANDED_RELATED_FUNCTION_CONTEXT_LINES,
-                    max_summary_items=_EXPANDED_RELATED_FUNCTION_SUMMARIES,
-                )
-                if expanded_related_evidence != related_evidence:
-                    expanded_packet = prepare_evidence_packet(
-                        assessment,
-                        source,
-                        related_functions=expanded_related_evidence.function_names,
-                        function_summaries=expanded_related_evidence.summary_texts,
-                        knowledge_facts=_knowledge_facts_for_assessment(
+            try:
+                if only_unknown_for_agent and assessment.static_analysis.state != "unknown_static":
+                    seeded_verdict = _static_only_seed_verdict(case_id)
+                    final_verdict = verify_verdict(seeded_verdict, packet)
+                else:
+                    adjudication = adjudication_backend.adjudicate(
+                        packet,
+                        sink_rule_by_id[assessment.candidate.sink_rule_id],
+                    )
+                    verdict = attach_autofix_patch(
+                        adjudication.judge,
+                        packet,
+                        sink_rule_by_id[assessment.candidate.sink_rule_id],
+                    )
+                    if run_store is not None and run_id is not None:
+                        run_store.record_adjudication(
+                            run_id=run_id,
+                            case_id=case_id,
+                            verdict=verdict,
+                            backend_name=backend_name,
+                            backend_model=backend_model,
+                        )
+                    final_verdict = verify_verdict(verdict, packet)
+                    if _should_retry_with_expanded_evidence(
+                        adjudication_backend,
+                        adjudication,
+                        final_verdict,
+                    ):
+                        expanded_related_evidence = _build_related_evidence(
                             assessment,
-                            expanded_related_evidence.function_names,
-                            facts,
-                            function_contracts=snapshot.function_contracts,
-                            current_module=file_module_by_path.get(
-                                _normalize_path_key(assessment.candidate.file)
-                            ),
-                            source=source,
-                        ),
-                        related_function_contexts=expanded_related_evidence.context_texts,
+                            summary_text_by_name=summary_text_by_name,
+                            function_context_by_name=function_context_by_name,
+                            file_module_by_path=file_module_by_path,
+                            max_depth=2,
+                            max_contexts=_EXPANDED_RELATED_FUNCTION_CONTEXTS,
+                            max_context_lines=_EXPANDED_RELATED_FUNCTION_CONTEXT_LINES,
+                            max_summary_items=_EXPANDED_RELATED_FUNCTION_SUMMARIES,
+                        )
+                        if expanded_related_evidence != related_evidence:
+                            expanded_packet = prepare_evidence_packet(
+                                assessment,
+                                source,
+                                related_functions=expanded_related_evidence.function_names,
+                                function_summaries=expanded_related_evidence.summary_texts,
+                                knowledge_facts=_knowledge_facts_for_assessment(
+                                    assessment,
+                                    expanded_related_evidence.function_names,
+                                    facts,
+                                    function_contracts=snapshot.function_contracts,
+                                    current_module=file_module_by_path.get(
+                                        _normalize_path_key(assessment.candidate.file)
+                                    ),
+                                    source=source,
+                                ),
+                                related_function_contexts=expanded_related_evidence.context_texts,
+                            )
+                            expanded_adjudication = adjudication_backend.adjudicate(
+                                expanded_packet,
+                                sink_rule_by_id[assessment.candidate.sink_rule_id],
+                            )
+                            expanded_verdict = attach_autofix_patch(
+                                expanded_adjudication.judge,
+                                expanded_packet,
+                                sink_rule_by_id[assessment.candidate.sink_rule_id],
+                            )
+                            if run_store is not None and run_id is not None:
+                                run_store.record_adjudication(
+                                    run_id=run_id,
+                                    case_id=case_id,
+                                    verdict=expanded_verdict,
+                                    backend_name=backend_name,
+                                    backend_model=backend_model,
+                                )
+                            final_verdict = verify_verdict(expanded_verdict, expanded_packet)
+            except Exception as exc:
+                if run_store is not None and run_id is not None:
+                    run_store.mark_case_failed(
+                        run_id=run_id,
+                        case_id=case_id,
+                        message=str(exc),
                     )
-                    expanded_adjudication = adjudication_backend.adjudicate(
-                        expanded_packet,
-                        sink_rule_by_id[assessment.candidate.sink_rule_id],
-                    )
-                    expanded_verdict = attach_autofix_patch(
-                        expanded_adjudication.judge,
-                        expanded_packet,
-                        sink_rule_by_id[assessment.candidate.sink_rule_id],
-                    )
-                    final_verdict = verify_verdict(expanded_verdict, expanded_packet)
+                raise
+
+            if run_store is not None and run_id is not None:
+                run_store.mark_case_completed(
+                    run_id=run_id,
+                    verdict=final_verdict,
+                )
+            verdict_cache[case_id] = final_verdict
             verdicts.append(final_verdict)
     return tuple(verdicts)
+
+
+def _static_only_seed_verdict(case_id: str) -> Verdict:
+    return Verdict(
+        case_id=case_id,
+        status="uncertain",
+        confidence="low",
+        risk_path=(),
+        safety_evidence=(),
+        counterarguments_considered=("static-only evaluation path",),
+        suggested_fix=None,
+        needs_human=False,
+    )
 
 
 def refresh_summary_cache(

@@ -44,6 +44,7 @@ class CandidateCase:
     symbol: str
     function_scope: str
     static_state: str
+    candidate_source: str = "ast_exact"
 
 
 @dataclass(frozen=True, slots=True)

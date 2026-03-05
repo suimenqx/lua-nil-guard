@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from lua_nil_guard.models import CandidateCase, FunctionContract, MacroFact, MacroIndex
+from pathlib import Path
+
+from lua_nil_guard.collector import collect_candidates
+from lua_nil_guard.models import CandidateCase, FunctionContract, MacroFact, MacroIndex, SinkRule
 from lua_nil_guard.parser_backend import get_parser_backend_info
 from lua_nil_guard.static_analysis import analyze_candidate
 
@@ -65,6 +68,102 @@ def test_analyze_candidate_marks_defaulted_symbol_safe() -> None:
     assert result.state == "safe_static"
     assert result.observed_guards == ("username = username or ...",)
     assert result.origin_candidates == ("req.params.username or ''",)
+
+
+def test_analyze_candidate_treats_numeric_for_index_as_non_nil() -> None:
+    source = "\n".join(
+        [
+            "for i = 1, #arr do",
+            "  local next_i = i + 1",
+            "end",
+        ]
+    )
+    sink_rules = (
+        SinkRule(
+            id="arithmetic.add.left",
+            kind="binary_operand",
+            qualified_name="+",
+            arg_index=1,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("x or 0",),
+        ),
+    )
+    candidates = collect_candidates(Path("demo.lua"), source, sink_rules)
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.expression == "i"
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "safe_static"
+    assert any(proof.kind == "loop_index_guard" for proof in result.proofs)
+    assert result.observed_guards == ("for-loop control `i` is non-nil",)
+
+
+def test_analyze_candidate_treats_generic_for_first_index_as_non_nil() -> None:
+    source = "\n".join(
+        [
+            "for idx, value in ipairs(arr) do",
+            "  local ok = idx >= 1",
+            "end",
+        ]
+    )
+    sink_rules = (
+        SinkRule(
+            id="compare.gte.left",
+            kind="binary_operand",
+            qualified_name=">=",
+            arg_index=1,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("x or 0",),
+        ),
+    )
+    candidates = collect_candidates(Path("demo.lua"), source, sink_rules)
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.expression == "idx"
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "safe_static"
+    assert any(proof.kind == "loop_index_guard" for proof in result.proofs)
+    assert result.observed_guards == ("for-loop control `idx` is non-nil",)
+
+
+def test_analyze_candidate_does_not_treat_reassigned_for_index_as_non_nil() -> None:
+    source = "\n".join(
+        [
+            "for i = 1, #arr do",
+            "  i = nil",
+            "  local next_i = i + 1",
+            "end",
+        ]
+    )
+    sink_rules = (
+        SinkRule(
+            id="arithmetic.add.left",
+            kind="binary_operand",
+            qualified_name="+",
+            arg_index=1,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("x or 0",),
+        ),
+    )
+    candidates = collect_candidates(Path("demo.lua"), source, sink_rules)
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.expression == "i"
+
+    result = analyze_candidate(source, candidate)
+
+    assert result.state == "unknown_static"
+    assert all(proof.kind != "loop_index_guard" for proof in result.proofs)
 
 
 def test_analyze_candidate_leaves_unguarded_value_unknown() -> None:

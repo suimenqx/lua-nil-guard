@@ -46,9 +46,12 @@ from .service import (
     macro_cache_status_for_repository,
     refresh_knowledge_base,
     refresh_summary_cache,
+    repository_review_run_status,
+    repository_review_run_verdicts,
     review_repository_file,
     review_repository,
     run_file_review,
+    run_repository_review_job,
     run_repository_review,
 )
 
@@ -475,6 +478,241 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         return 0, "\n".join(
             [
                 "Benchmark comparison export complete.",
+                f"Output: {output_path}",
+            ]
+        )
+
+    if command == "run-start":
+        try:
+            run_db_path, remaining = _parse_run_db_option(args[1:])
+            focus_mode, review_args = _parse_focus_options(remaining)
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_manifest_path,
+                backend_timeout,
+                backend_attempts,
+                expanded_evidence_retry,
+                backend_cache_path,
+                backend_config_overrides,
+                positional,
+            ) = _parse_review_options(review_args)
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 1:
+            return 2, "run-start requires exactly one repository path"
+        root = Path(positional[0])
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
+        snapshot, error = _load_repository_snapshot(root)
+        if error is not None:
+            return 2, error
+        snapshot = _apply_focus_mode(snapshot, focus_mode)
+        try:
+            status, verdicts = run_repository_review_job(
+                snapshot,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                    executable=executable,
+                    backend_manifest_path=backend_manifest_path,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
+                    cache_path=backend_cache_path,
+                    config_overrides=backend_config_overrides,
+                ),
+                run_db_path=run_db_path,
+            )
+        except (SkillRuntimeError, BackendError, ValueError, OSError) as exc:
+            return 2, str(exc)
+        report = render_markdown_report(verdicts, snapshot.confidence_policy)
+        return 0, "\n".join(
+            [
+                f"Run ID: {status.run_id}",
+                f"Run DB: {run_db_path or (snapshot.root / '.lua_nil_guard' / 'review_runs.sqlite3')}",
+                f"Run Stage: {status.stage}",
+                f"Run Status: {status.status}",
+                "",
+                report,
+            ]
+        )
+
+    if command == "run-resume":
+        try:
+            run_db_path, remaining = _parse_run_db_option(args[1:])
+            focus_mode, review_args = _parse_focus_options(remaining)
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_manifest_path,
+                backend_timeout,
+                backend_attempts,
+                expanded_evidence_retry,
+                backend_cache_path,
+                backend_config_overrides,
+                positional,
+            ) = _parse_review_options(review_args)
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 2:
+            return 2, "run-resume requires <repository> <run_id>"
+        root = Path(positional[0])
+        try:
+            run_id = int(positional[1])
+        except ValueError:
+            return 2, "run-resume run_id must be an integer"
+        parser_error = _require_tree_sitter_backend()
+        if parser_error is not None:
+            return 2, parser_error
+        snapshot, error = _load_repository_snapshot(root)
+        if error is not None:
+            return 2, error
+        snapshot = _apply_focus_mode(snapshot, focus_mode)
+        try:
+            status, verdicts = run_repository_review_job(
+                snapshot,
+                backend=_create_review_backend(
+                    backend_name=backend_name,
+                    root=root,
+                    model=model,
+                    skill_path=skill_path,
+                    strict_skill=strict_skill,
+                    executable=executable,
+                    backend_manifest_path=backend_manifest_path,
+                    timeout_seconds=backend_timeout,
+                    max_attempts=backend_attempts,
+                    expanded_evidence_retry=expanded_evidence_retry,
+                    cache_path=backend_cache_path,
+                    config_overrides=backend_config_overrides,
+                ),
+                run_db_path=run_db_path,
+                run_id=run_id,
+            )
+        except (SkillRuntimeError, BackendError, ValueError, OSError) as exc:
+            return 2, str(exc)
+        report = render_markdown_report(verdicts, snapshot.confidence_policy)
+        return 0, "\n".join(
+            [
+                f"Run ID: {status.run_id}",
+                f"Run DB: {run_db_path or (snapshot.root / '.lua_nil_guard' / 'review_runs.sqlite3')}",
+                f"Run Stage: {status.stage}",
+                f"Run Status: {status.status}",
+                "",
+                report,
+            ]
+        )
+
+    if command == "run-status":
+        try:
+            run_db_path, positional = _parse_run_db_option(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) not in {1, 2}:
+            return 2, "run-status requires <repository> and optional <run_id>"
+        root = Path(positional[0])
+        run_id = None
+        if len(positional) == 2:
+            try:
+                run_id = int(positional[1])
+            except ValueError:
+                return 2, "run-status run_id must be an integer"
+        try:
+            status = repository_review_run_status(
+                root,
+                run_db_path=run_db_path,
+                run_id=run_id,
+            )
+        except (ValueError, OSError) as exc:
+            return 2, str(exc)
+        return 0, _render_run_status(status, run_db_path=run_db_path)
+
+    if command == "run-report":
+        try:
+            run_db_path, positional = _parse_run_db_option(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) not in {1, 2}:
+            return 2, "run-report requires <repository> and optional <run_id>"
+        root = Path(positional[0])
+        run_id = None
+        if len(positional) == 2:
+            try:
+                run_id = int(positional[1])
+            except ValueError:
+                return 2, "run-report run_id must be an integer"
+        try:
+            status, verdicts = repository_review_run_verdicts(
+                root,
+                run_db_path=run_db_path,
+                run_id=run_id,
+            )
+            snapshot, error = _load_repository_snapshot(root)
+            if error is not None:
+                return 2, error
+        except (ValueError, OSError) as exc:
+            return 2, str(exc)
+        report = render_markdown_report(verdicts, snapshot.confidence_policy)
+        return 0, "\n".join(
+            [
+                f"Run ID: {status.run_id}",
+                f"Run DB: {run_db_path or (root / '.lua_nil_guard' / 'review_runs.sqlite3')}",
+                "",
+                report,
+            ]
+        )
+
+    if command == "run-export-json":
+        try:
+            run_db_path, positional = _parse_run_db_option(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) not in {1, 2, 3}:
+            return 2, "run-export-json requires <repository> [run_id] [output]"
+        root = Path(positional[0])
+        run_id = None
+        output_path: Path | None = None
+        if len(positional) == 2:
+            try:
+                run_id = int(positional[1])
+            except ValueError:
+                output_path = Path(positional[1])
+        elif len(positional) == 3:
+            try:
+                run_id = int(positional[1])
+            except ValueError:
+                return 2, "run-export-json run_id must be an integer when output is provided"
+            output_path = Path(positional[2])
+        try:
+            status, verdicts = repository_review_run_verdicts(
+                root,
+                run_db_path=run_db_path,
+                run_id=run_id,
+            )
+            snapshot, error = _load_repository_snapshot(root)
+            if error is not None:
+                return 2, error
+        except (ValueError, OSError) as exc:
+            return 2, str(exc)
+        rendered = render_json_report(verdicts, snapshot.confidence_policy)
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Run JSON export complete.",
+                f"Run ID: {status.run_id}",
                 f"Output: {output_path}",
             ]
         )
@@ -2428,6 +2666,11 @@ def _usage() -> str:
             "  {cli} register-backend-manifest [--replace] <manifest-path>",
             "  {cli} register-backend-manifest-json [--replace] <manifest-path> [output]",
             "  {cli} compare-benchmark-json <before> <after> [output]",
+            "  {cli} run-start [--run-db PATH] [--focus MODE] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  {cli} run-resume [--run-db PATH] [--focus MODE] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <run_id>",
+            "  {cli} run-status [--run-db PATH] <repository> [run_id]",
+            "  {cli} run-report [--run-db PATH] <repository> [run_id]",
+            "  {cli} run-export-json [--run-db PATH] <repository> [run_id] [output]",
             "  {cli} report [--focus MODE] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  {cli} report-json [--focus MODE] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  {cli} benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
@@ -2489,6 +2732,50 @@ def _apply_focus_mode(snapshot, focus_mode: str):  # noqa: ANN001
         if any(rule.id.startswith(prefix) for prefix in _STRING_FOCUS_RULE_PREFIXES)
     )
     return replace(snapshot, sink_rules=filtered_rules)
+
+
+def _parse_run_db_option(args: list[str]) -> tuple[Path | None, list[str]]:
+    run_db_path: Path | None = None
+    positional: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--run-db":
+            if index + 1 >= len(args):
+                raise ValueError("--run-db requires a value")
+            run_db_path = Path(args[index + 1])
+            index += 2
+            continue
+        positional.append(token)
+        index += 1
+    return run_db_path, positional
+
+
+def _render_run_status(status: object, *, run_db_path: Path | None = None) -> str:
+    lines = [
+        "# Lua Nil Guard Run Status",
+        "",
+        f"Run ID: {status.run_id}",
+        f"Repository: {status.repository_root}",
+        f"Run DB: {run_db_path if run_db_path is not None else '(default)'}",
+        f"Status: {status.status}",
+        f"Stage: {status.stage}",
+        f"Backend: {status.backend_name}",
+        f"Model: {status.backend_model or '(default)'}",
+        f"Total cases: {status.total_cases}",
+        f"Completed cases: {status.completed_cases}",
+        f"Failed cases: {status.failed_cases}",
+        f"AST exact candidates: {status.ast_exact_cases}",
+        f"Lexical fallback candidates: {status.lexical_fallback_cases}",
+        f"Static safe cases: {status.static_safe_cases}",
+        f"Static unknown cases: {status.static_unknown_cases}",
+        f"LLM enqueued cases: {status.llm_enqueued_cases}",
+        f"LLM processed cases: {status.llm_processed_cases}",
+        f"Created at: {status.created_at}",
+        f"Updated at: {status.updated_at}",
+        f"Completed at: {status.completed_at or '(running)'}",
+    ]
+    return "\n".join(lines)
 
 
 def _parse_review_options(

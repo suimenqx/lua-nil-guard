@@ -232,6 +232,7 @@ def _safe_proof_score(proof: StaticProof) -> int:
         "direct_guard": 100,
         "loop_exit_guard": 100,
         "loop_break_guard": 100,
+        "loop_index_guard": 100,
         "early_exit_guard": 100,
         "assert_guard": 100,
         "contract_guard": 95,

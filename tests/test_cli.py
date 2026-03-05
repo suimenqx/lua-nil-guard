@@ -67,6 +67,11 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "proposal-export-json" in output
     assert "proposal-analytics" in output
     assert "proposal-analytics-json" in output
+    assert "run-start" in output
+    assert "run-resume" in output
+    assert "run-status" in output
+    assert "run-report" in output
+    assert "run-export-json" in output
 
 
 def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
@@ -183,6 +188,97 @@ def test_cli_scan_supports_string_focus_filter(tmp_path: Path) -> None:
     assert exit_code == 0
     assert "Focus mode: string" in output
     assert "Total candidates: 1" in output
+
+
+def test_cli_run_start_status_and_resume(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local username = req.params.username",
+                "if username then",
+                "  return string.match(username, '^a')",
+                "end",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    run_db = tmp_path / "run-store.sqlite3"
+
+    exit_code, output = run(["run-start", "--run-db", str(run_db), str(tmp_path)])
+    assert exit_code == 0
+    assert "Run ID:" in output
+    assert "Run Status: completed" in output
+
+    run_id_line = next(line for line in output.splitlines() if line.startswith("Run ID: "))
+    run_id = int(run_id_line.split(":", 1)[1].strip())
+
+    exit_code, status_output = run(
+        ["run-status", "--run-db", str(run_db), str(tmp_path), str(run_id)]
+    )
+    assert exit_code == 0
+    assert f"Run ID: {run_id}" in status_output
+    assert "Status: completed" in status_output
+    assert "AST exact candidates:" in status_output
+    assert "LLM processed cases:" in status_output
+
+    exit_code, resume_output = run(
+        ["run-resume", "--run-db", str(run_db), str(tmp_path), str(run_id)]
+    )
+    assert exit_code == 0
+    assert f"Run ID: {run_id}" in resume_output
+    assert "Run Status: completed" in resume_output
+
+    exit_code, run_report_output = run(
+        ["run-report", "--run-db", str(run_db), str(tmp_path), str(run_id)]
+    )
+    assert exit_code == 0
+    assert f"Run ID: {run_id}" in run_report_output
+    assert "# Lua Nil Risk Report" in run_report_output
+
+    json_output = tmp_path / "run-report.json"
+    exit_code, export_output = run(
+        [
+            "run-export-json",
+            "--run-db",
+            str(run_db),
+            str(tmp_path),
+            str(run_id),
+            str(json_output),
+        ]
+    )
+    assert exit_code == 0
+    assert "Run JSON export complete." in export_output
+    exported_payload = json.loads(json_output.read_text(encoding="utf-8"))
+    assert isinstance(exported_payload, list)
 
 
 def test_cli_doctor_reports_parser_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:

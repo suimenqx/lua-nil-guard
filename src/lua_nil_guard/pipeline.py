@@ -48,6 +48,7 @@ def build_evidence_packet(
         knowledge_facts=tuple(knowledge_facts),
         static_reasoning={
             "state": candidate.static_state,
+            "candidate_source": candidate.candidate_source,
             "origin_candidates": tuple(origin_candidates),
             "origin_usage_modes": tuple(origin_usage_modes),
             "origin_return_slots": tuple(str(slot) for slot in origin_return_slots),

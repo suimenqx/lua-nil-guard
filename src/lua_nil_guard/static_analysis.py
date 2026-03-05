@@ -31,6 +31,8 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SIMPLE_CALL_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_:.]*)\s*\((.*)\)\s*$")
 _FUNCTION_DEF_RE = re.compile(r"^\s*(?:local\s+)?function\s+([A-Za-z_][A-Za-z0-9_:.]*)\s*\((.*?)\)\s*$")
 _ASSIGNMENT_RE = re.compile(r"^\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$")
+_FOR_NUMERIC_OPEN_RE = re.compile(r"^\s*for\s+([A-Za-z_][A-Za-z0-9_]*)\s*=")
+_FOR_GENERIC_OPEN_RE = re.compile(r"^\s*for\s+(.+?)\s+in\b")
 _REQUIRE_CALL_RE = re.compile(
     r"^\s*require(?:\s*\(\s*(['\"])([^'\"]+)\1\s*\)|\s+(['\"])([^'\"]+)\3)\s*$"
 )
@@ -167,6 +169,9 @@ def analyze_candidate(
             proofs.append(_build_early_exit_guard_proof(candidate.symbol))
         if _has_active_assert(prior_lines, candidate.symbol):
             proofs.append(_build_assert_guard_proof(candidate.symbol))
+        loop_index_guard = _active_for_loop_index_guard(prior_lines, candidate.symbol)
+        if loop_index_guard is not None:
+            proofs.append(loop_index_guard)
     contract_guard = _active_contract_guard(
         prior_lines,
         candidate.symbol,
@@ -312,6 +317,9 @@ def _analyze_guards_with_ast(
         )
 
     proofs: list[StaticProof] = []
+    loop_index_guard = _ast_loop_index_guard_proof(target_node, candidate.symbol, context.source_bytes)
+    if loop_index_guard is not None:
+        proofs.append(loop_index_guard)
     positive_guard = _ast_positive_guard_proof(target_node, candidate.symbol, context.source_bytes)
     if positive_guard is not None:
         proofs.append(positive_guard)
@@ -765,6 +773,72 @@ def _ast_loop_break_guard_proof(target_node, symbol: str, source_bytes: bytes) -
 def _ast_repeat_until_guard_proof(target_node, symbol: str, source_bytes: bytes) -> StaticProof | None:
     if _find_preceding_repeat_until_guard(target_node, symbol, source_bytes):
         return _build_repeat_until_guard_proof(symbol)
+    return None
+
+
+def _ast_loop_index_guard_proof(target_node, symbol: str, source_bytes: bytes) -> StaticProof | None:
+    if _IDENTIFIER_RE.match(symbol) is None:
+        return None
+
+    ancestor = target_node
+    while ancestor is not None:
+        if ancestor.type != "for_statement":
+            ancestor = ancestor.parent
+            continue
+
+        body = _for_statement_body_node(ancestor)
+        if body is None or not _node_contains(body, target_node):
+            ancestor = ancestor.parent
+            continue
+
+        loop_kind = _for_statement_control_var_kind(ancestor, symbol, source_bytes)
+        if loop_kind is None:
+            ancestor = ancestor.parent
+            continue
+
+        if _path_has_assignment_between(body, target_node, symbol, source_bytes):
+            return None
+
+        return _build_loop_index_guard_proof(symbol, loop_kind)
+
+    return None
+
+
+def _for_statement_body_node(for_statement):
+    for child in for_statement.children:
+        if child.type == "block":
+            return child
+    return None
+
+
+def _for_statement_control_var_kind(
+    for_statement,
+    symbol: str,
+    source_bytes: bytes,
+) -> str | None:
+    for child in for_statement.children:
+        if child.type == "for_numeric_clause":
+            named_children = list(child.named_children)
+            if not named_children:
+                return None
+            control_var = named_children[0]
+            if control_var.type != "identifier":
+                return None
+            if _node_text(source_bytes, control_var).strip() == symbol:
+                return "numeric"
+            return None
+
+        if child.type == "for_generic_clause":
+            for clause_child in child.children:
+                if clause_child.type != "variable_list":
+                    continue
+                loop_vars = [node for node in clause_child.named_children if node.type == "identifier"]
+                if not loop_vars:
+                    return None
+                if _node_text(source_bytes, loop_vars[0]).strip() == symbol:
+                    return "generic_first"
+                return None
+
     return None
 
 
@@ -1261,6 +1335,87 @@ def _has_active_assert(lines: list[str], symbol: str) -> bool:
     return active_assert
 
 
+def _active_for_loop_index_guard(lines: list[str], symbol: str) -> StaticProof | None:
+    if _IDENTIFIER_RE.match(symbol) is None:
+        return None
+
+    stack: list[dict[str, object]] = []
+
+    for raw_line in lines:
+        stripped = _strip_lua_comment(raw_line).strip()
+        if not stripped:
+            continue
+
+        if stripped.startswith("until "):
+            if stack and stack[-1]["type"] == "repeat":
+                stack.pop()
+            continue
+
+        if stripped == "end":
+            if stack:
+                stack.pop()
+            continue
+
+        numeric_match = _FOR_NUMERIC_OPEN_RE.match(stripped)
+        if numeric_match is not None and stripped.endswith(" do"):
+            stack.append(
+                {
+                    "type": "for_index",
+                    "symbol": numeric_match.group(1),
+                    "loop_kind": "numeric",
+                    "reassigned": False,
+                }
+            )
+            continue
+
+        generic_match = _FOR_GENERIC_OPEN_RE.match(stripped)
+        if generic_match is not None and stripped.endswith(" do"):
+            first_var = generic_match.group(1).split(",", 1)[0].strip()
+            if _IDENTIFIER_RE.match(first_var):
+                stack.append(
+                    {
+                        "type": "for_index",
+                        "symbol": first_var,
+                        "loop_kind": "generic_first",
+                        "reassigned": False,
+                    }
+                )
+            else:
+                stack.append({"type": "block"})
+            continue
+
+        if stripped == "repeat":
+            stack.append({"type": "repeat"})
+            continue
+
+        if _FUNCTION_DEF_RE.match(stripped):
+            stack.append({"type": "block"})
+            continue
+        if _opens_non_if_block(stripped):
+            stack.append({"type": "block"})
+            continue
+
+        if _assigns_symbol(stripped, symbol):
+            for entry in reversed(stack):
+                if entry.get("type") != "for_index":
+                    continue
+                if entry.get("symbol") == symbol:
+                    entry["reassigned"] = True
+                    break
+
+    for entry in reversed(stack):
+        if entry.get("type") != "for_index":
+            continue
+        if entry.get("symbol") != symbol:
+            continue
+        if entry.get("reassigned"):
+            return None
+        loop_kind = str(entry.get("loop_kind") or "generic_first")
+        return _build_loop_index_guard_proof(symbol, loop_kind)
+
+    return None
+
+
 def _has_defaulting_origin(origin: str | None) -> bool:
     if origin is None:
         return False
@@ -1324,6 +1479,25 @@ def _build_assert_guard_proof(symbol: str) -> StaticProof:
         subject=symbol,
         source_symbol=symbol,
         provenance=(f"`assert` aborts execution if `{symbol}` is nil",),
+        depth=0,
+    )
+
+
+def _build_loop_index_guard_proof(symbol: str, loop_kind: str) -> StaticProof:
+    if loop_kind == "numeric":
+        provenance = (
+            f"`for {symbol} = ... do` binds `{symbol}` to a numeric non-nil control value",
+        )
+    else:
+        provenance = (
+            f"`for {symbol}, ... in ... do` executes loop body only when `{symbol}` is non-nil",
+        )
+    return StaticProof(
+        kind="loop_index_guard",
+        summary=f"for-loop control `{symbol}` is non-nil",
+        subject=symbol,
+        source_symbol=symbol,
+        provenance=provenance,
         depth=0,
     )
 

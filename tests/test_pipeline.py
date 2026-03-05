@@ -57,6 +57,7 @@ def test_build_evidence_packet_preserves_core_case_data() -> None:
     assert packet.static_reasoning["origin_candidates"] == ("req.params.username",)
     assert packet.static_reasoning["origin_return_slots"] == ("1",)
     assert packet.static_reasoning["analysis_mode"] == "ast_primary"
+    assert packet.static_reasoning["candidate_source"] == "ast_exact"
     assert packet.static_reasoning["unknown_reason"] == "unsupported_control_flow"
     assert packet.static_reasoning["origin_analysis_mode"] == "ast_origin_fallback_to_legacy"
     assert packet.static_reasoning["origin_unknown_reason"] == "no_bounded_ast_origin"
