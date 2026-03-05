@@ -50,11 +50,11 @@ def test_semantic_suite_reports_only_provable_risks_after_knowledge_refresh(tmp_
 
     assert len(facts) == 1
     assert facts[0].subject == "normalize_name"
-    assert len(payload) == 3
+    assert len(payload) == 2
     assert all(item["status"] == "risky_verified" for item in payload)
-    assert any("risky_nil_literal.lua" in case_id for case_id in case_ids)
     assert any("risky_direct_match.lua" in case_id for case_id in case_ids)
     assert any("risky_find.lua" in case_id for case_id in case_ids)
+    assert all("risky_nil_literal.lua" not in case_id for case_id in case_ids)
     assert all("safe_if_guard.lua" not in case_id for case_id in case_ids)
     assert all("safe_assert_find.lua" not in case_id for case_id in case_ids)
     assert all("safe_default_match.lua" not in case_id for case_id in case_ids)

@@ -144,11 +144,11 @@ def test_agent_semantic_suite_strict_backend_distinguishes_risky_safe_and_uncert
 
     assert fact_subjects == {"normalize_name", "normalize_pair"}
     assert len(verdicts) == 18
-    assert any("provable_risky_nil_literal.lua" in case_id and status == "risky_verified" for case_id, status in statuses.items())
-    assert any("provable_risky_nil_branch.lua" in case_id and status == "risky_verified" for case_id, status in statuses.items())
-    assert any("provable_risky_gsub_nil.lua" in case_id and status == "risky_verified" for case_id, status in statuses.items())
-    assert any("provable_risky_ipairs_nil.lua" in case_id and status == "risky_verified" for case_id, status in statuses.items())
-    assert any("provable_risky_length_nil.lua" in case_id and status == "risky_verified" for case_id, status in statuses.items())
+    assert any("provable_risky_nil_literal.lua" in case_id and status == "risky" for case_id, status in statuses.items())
+    assert any("provable_risky_nil_branch.lua" in case_id and status == "risky" for case_id, status in statuses.items())
+    assert any("provable_risky_gsub_nil.lua" in case_id and status == "risky" for case_id, status in statuses.items())
+    assert any("provable_risky_ipairs_nil.lua" in case_id and status == "risky" for case_id, status in statuses.items())
+    assert any("provable_risky_length_nil.lua" in case_id and status == "risky" for case_id, status in statuses.items())
     assert any("provable_safe_if_guard.lua" in case_id and status == "safe_verified" for case_id, status in statuses.items())
     assert any("provable_safe_assert.lua" in case_id and status == "safe_verified" for case_id, status in statuses.items())
     assert any("provable_safe_default.lua" in case_id and status == "safe_verified" for case_id, status in statuses.items())

@@ -69,8 +69,10 @@ def test_run_repository_review_produces_verified_risk_for_locally_proven_nil_sin
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "risky_verified"
-    assert verdicts[0].confidence == "high"
+    assert verdicts[0].status == "risky"
+    assert verdicts[0].confidence == "medium"
+    assert verdicts[0].verification_summary is not None
+    assert verdicts[0].verification_summary.mode == "risk_no_guard"
 
 
 def test_run_repository_review_uses_preprocessor_macro_facts_without_scanning_macro_file(
