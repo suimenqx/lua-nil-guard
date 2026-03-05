@@ -16,13 +16,13 @@ This audit marks current status for Plan5 by code and test contract:
 | P5-2 | `candidate_source` trace (`ast_exact/lexical_fallback`) | completed | `collector.py` + `service.py` + run status counters | Source is propagated and counted. |
 | P5-3 | Structured static proof/risk + `unknown_reason` plumbing | completed | `static_analysis.py`, `pipeline.py`, `prompting.py` | Structured outputs available in packet/prompt path. |
 | P5-4 | uncertain-first default (`only_unknown_for_agent=True`) | completed | `run_repository_review_job`, `run_file_review` | `safe_static` goes static verify path by default. |
-| P5-5 | Context budget parameters unified (`depth/lines/summaries`) | needs_refactor | `service.py` | First-hop and second-hop constants are split; no unified budget object. |
-| P5-5 | Second-hop trigger rule traceability | incomplete | `service.py` | Trigger exists, but lacks explicit per-case persisted metrics. |
-| P5-6 | High-confidence threshold unified for safe/risky | needs_refactor | `verification.py` | `safe` uses threshold, `risky` path still has unconditional high-confidence upgrade branch. |
-| P5-6 | Conflict downgrade (safe vs risk evidence conflict) | incomplete | `verification.py` | Missing conservative downgrade gate for contradictory strong evidence. |
-| P5-7 | `run-status` stage metrics completeness | needs_refactor | `cli.py`, `service.py` | Base counters exist; verify-stage and second-hop indicators missing. |
-| P5-7 | `run-report` and `run-export-json` unknown_reason distribution output | incomplete | `cli.py`, `service.py` | No unknown_reason distribution in run-level outputs. |
-| P5-8 | Test contracts aligned with uncertain-first + new verify gates | needs_refactor | `tests/` | Core tests exist, but several assertions still reflect old verification behavior/output shape. |
+| P5-5 | Context budget parameters unified (`depth/lines/summaries`) | completed | `service.py` | Unified first-hop/second-hop budget model landed (`_RelatedEvidenceBudget`). |
+| P5-5 | Second-hop trigger rule traceability | completed | `service.py` | Retry is gated by `unknown_static + uncertain + backend support`; run store persists `llm_attempts/second_hop_used`. |
+| P5-6 | High-confidence threshold unified for safe/risky | completed | `verification.py` | Strict score threshold now controls verified upgrade paths; weak risky evidence no longer auto-promotes to `risky_verified/high`. |
+| P5-6 | Conflict downgrade (safe vs risk evidence conflict) | completed | `verification.py` | Added conservative conflict gate (`structured_conflict_downgrade`) that downgrades to `uncertain`. |
+| P5-7 | `run-status` stage metrics completeness | completed | `cli.py`, `service.py` | Status/report now expose stage metrics including second-hop and verify counts. |
+| P5-7 | `run-report` and `run-export-json` unknown_reason distribution output | completed | `cli.py`, `service.py` | `run-export-json` includes `run` payload with `unknown_reason_distribution` and stage metrics. |
+| P5-8 | Test contracts aligned with uncertain-first + new verify gates | completed | `tests/` | Test suite migrated to new verification and run-export contracts. |
 
 ## Test Points
 
@@ -31,13 +31,13 @@ This audit marks current status for Plan5 by code and test contract:
 | P5-1 | run start/resume/status/report/export job flow | completed | `tests/test_cli.py`, `tests/test_run_jobs.py` | Basic lifecycle and latest run selection covered. |
 | P5-2 | candidate source tracking | completed | `tests/test_repository.py`, `tests/test_cli.py` | AST/fallback and counters have coverage. |
 | P5-4 | uncertain-first default routing | completed | `tests/test_run_jobs.py`, `tests/test_service.py` | Default only unknown cases call backend. |
-| P5-5 | second-hop trigger matrix (supports retry / no support / CLI override) | completed | `tests/test_service.py` | Main matrix exists; missing persisted observability assertions. |
-| P5-6 | conflict downgrade + strict high-confidence gate | incomplete | `tests/test_verification.py` | No dedicated conflict downgrade test; old risky high-confidence path still expected. |
-| P5-7 | run outputs include unknown_reason distribution + phase indicators | incomplete | `tests/test_cli.py`, `tests/test_run_jobs.py` | No assertions for unknown_reason dist and verify-stage metrics in run outputs. |
-| P5-8 | legacy assertions cleanup and new contract tests | incomplete | `tests/test_verification.py`, `tests/test_cli.py`, `tests/test_service.py` | Needs migration to new run-export payload and verify conflict contract. |
+| P5-5 | second-hop trigger matrix (supports retry / no support / CLI override) | completed | `tests/test_service.py`, `tests/test_run_jobs.py` | Matrix and persisted second-hop metrics are both covered. |
+| P5-6 | conflict downgrade + strict high-confidence gate | completed | `tests/test_verification.py` | Dedicated conflict downgrade and strict risk verification gate tests added. |
+| P5-7 | run outputs include unknown_reason distribution + phase indicators | completed | `tests/test_cli.py`, `tests/test_run_jobs.py` | Status/report/export contracts assert stage metrics and unknown-reason distribution. |
+| P5-8 | legacy assertions cleanup and new contract tests | completed | `tests/test_verification.py`, `tests/test_cli.py`, `tests/test_service.py`, `tests/test_mvp_*` | Old assertions migrated to uncertain-first + strict verification semantics. |
 
-## Immediate Execution Order
+## Execution Result
 
-1. P5-5/P5-6: unify budget config, lock second-hop gating + traceability, add verify conflict downgrade and high-confidence guard.
-2. P5-7: surface unknown_reason distribution and stage metrics in run status/report/export JSON.
-3. P5-8: migrate tests to new contract, remove obsolete assertions, add conflict and observability contract tests.
+1. Full regression passed: `447 passed`.
+2. Key scenario regressions passed (macro dictionary, cross-file, module/require): `15 passed`.
+3. Plan5 implementation and test migration work items are closed.
