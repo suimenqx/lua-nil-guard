@@ -665,8 +665,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         report = render_markdown_report(verdicts, snapshot.confidence_policy)
         return 0, "\n".join(
             [
-                f"Run ID: {status.run_id}",
-                f"Run DB: {run_db_path or (root / '.lua_nil_guard' / 'review_runs.sqlite3')}",
+                _render_run_status(status, run_db_path=run_db_path),
                 "",
                 report,
             ]
@@ -704,7 +703,18 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 return 2, error
         except (ValueError, OSError) as exc:
             return 2, str(exc)
-        rendered = render_json_report(verdicts, snapshot.confidence_policy)
+        findings_payload = json.loads(render_json_report(verdicts, snapshot.confidence_policy))
+        if not isinstance(findings_payload, list):
+            raise ValueError("run-export-json expected report payload to be a JSON array")
+        rendered = json.dumps(
+            _build_run_export_payload(
+                status,
+                run_db_path=run_db_path,
+                findings=findings_payload,
+            ),
+            indent=2,
+            sort_keys=True,
+        )
         if output_path is None:
             return 0, rendered
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2752,12 +2762,14 @@ def _parse_run_db_option(args: list[str]) -> tuple[Path | None, list[str]]:
 
 
 def _render_run_status(status: object, *, run_db_path: Path | None = None) -> str:
+    stage_metrics = _run_stage_metrics_payload(status)
+    unknown_reason_distribution = _unknown_reason_distribution_payload(status)
     lines = [
         "# Lua Nil Guard Run Status",
         "",
         f"Run ID: {status.run_id}",
         f"Repository: {status.repository_root}",
-        f"Run DB: {run_db_path if run_db_path is not None else '(default)'}",
+        f"Run DB: {_run_db_label(run_db_path)}",
         f"Status: {status.status}",
         f"Stage: {status.stage}",
         f"Backend: {status.backend_name}",
@@ -2771,11 +2783,129 @@ def _render_run_status(status: object, *, run_db_path: Path | None = None) -> st
         f"Static unknown cases: {status.static_unknown_cases}",
         f"LLM enqueued cases: {status.llm_enqueued_cases}",
         f"LLM processed cases: {status.llm_processed_cases}",
+        f"LLM second-hop cases: {status.llm_second_hop_cases}",
+        f"Verify safe_verified cases: {status.safe_verified_cases}",
+        f"Verify risky_verified cases: {status.risky_verified_cases}",
         f"Created at: {status.created_at}",
         f"Updated at: {status.updated_at}",
         f"Completed at: {status.completed_at or '(running)'}",
+        "",
+        "Stage metrics:",
+        (
+            "  STATIC: "
+            f"total={stage_metrics['static']['total_cases']}, "
+            f"safe_static={stage_metrics['static']['safe_static_cases']}, "
+            f"unknown_static={stage_metrics['static']['unknown_static_cases']}"
+        ),
+        f"  QUEUE: llm_enqueued={stage_metrics['queue']['llm_enqueued_cases']}",
+        (
+            "  LLM: "
+            f"llm_processed={stage_metrics['llm']['llm_processed_cases']}, "
+            f"second_hop={stage_metrics['llm']['llm_second_hop_cases']}"
+        ),
+        (
+            "  VERIFY: "
+            f"safe_verified={stage_metrics['verify']['safe_verified_cases']}, "
+            f"risky_verified={stage_metrics['verify']['risky_verified_cases']}"
+        ),
+        (
+            "  FINALIZE: "
+            f"completed={stage_metrics['finalize']['completed_cases']}, "
+            f"failed={stage_metrics['finalize']['failed_cases']}"
+        ),
+        "",
+        "Unknown reasons:",
     ]
+    if not unknown_reason_distribution:
+        lines.append("  (none)")
+    else:
+        for entry in unknown_reason_distribution:
+            lines.append(f"  - {entry['reason']}: {entry['count']}")
     return "\n".join(lines)
+
+
+def _run_db_label(run_db_path: Path | None) -> str:
+    return str(run_db_path) if run_db_path is not None else "(default)"
+
+
+def _run_stage_metrics_payload(status: object) -> dict[str, dict[str, int]]:
+    return {
+        "static": {
+            "total_cases": int(status.total_cases),
+            "safe_static_cases": int(status.static_safe_cases),
+            "unknown_static_cases": int(status.static_unknown_cases),
+        },
+        "queue": {
+            "llm_enqueued_cases": int(status.llm_enqueued_cases),
+        },
+        "llm": {
+            "llm_processed_cases": int(status.llm_processed_cases),
+            "llm_second_hop_cases": int(status.llm_second_hop_cases),
+        },
+        "verify": {
+            "safe_verified_cases": int(status.safe_verified_cases),
+            "risky_verified_cases": int(status.risky_verified_cases),
+        },
+        "finalize": {
+            "completed_cases": int(status.completed_cases),
+            "failed_cases": int(status.failed_cases),
+        },
+    }
+
+
+def _unknown_reason_distribution_payload(status: object) -> list[dict[str, object]]:
+    distribution = getattr(status, "unknown_reason_distribution", ())
+    payload: list[dict[str, object]] = []
+    if isinstance(distribution, tuple):
+        for entry in distribution:
+            if not isinstance(entry, tuple) or len(entry) != 2:
+                continue
+            reason, count = entry
+            payload.append({"reason": str(reason), "count": int(count)})
+    return payload
+
+
+def _run_status_payload(status: object, *, run_db_path: Path | None = None) -> dict[str, object]:
+    return {
+        "run_id": int(status.run_id),
+        "repository_root": str(status.repository_root),
+        "run_db": _run_db_label(run_db_path),
+        "status": str(status.status),
+        "stage": str(status.stage),
+        "backend_name": str(status.backend_name),
+        "backend_model": str(status.backend_model) if status.backend_model is not None else None,
+        "created_at": str(status.created_at),
+        "updated_at": str(status.updated_at),
+        "completed_at": str(status.completed_at) if status.completed_at is not None else None,
+        "candidate_metrics": {
+            "total_cases": int(status.total_cases),
+            "ast_exact_cases": int(status.ast_exact_cases),
+            "lexical_fallback_cases": int(status.lexical_fallback_cases),
+            "static_safe_cases": int(status.static_safe_cases),
+            "static_unknown_cases": int(status.static_unknown_cases),
+            "llm_enqueued_cases": int(status.llm_enqueued_cases),
+            "llm_processed_cases": int(status.llm_processed_cases),
+            "llm_second_hop_cases": int(status.llm_second_hop_cases),
+            "safe_verified_cases": int(status.safe_verified_cases),
+            "risky_verified_cases": int(status.risky_verified_cases),
+            "completed_cases": int(status.completed_cases),
+            "failed_cases": int(status.failed_cases),
+        },
+        "stage_metrics": _run_stage_metrics_payload(status),
+        "unknown_reason_distribution": _unknown_reason_distribution_payload(status),
+    }
+
+
+def _build_run_export_payload(
+    status: object,
+    *,
+    run_db_path: Path | None = None,
+    findings: list[object],
+) -> dict[str, object]:
+    return {
+        "run": _run_status_payload(status, run_db_path=run_db_path),
+        "findings": findings,
+    }
 
 
 def _parse_review_options(
