@@ -141,8 +141,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             adj_policy_path.write_text(
                 json.dumps(
                     {
-                        "adjudication_mode": "multi_agent",
-                        "ab_test": {"enabled": False, "split_ratio": 0.5, "seed": 42},
+                        "adjudication_mode": "single_pass",
                         "calibration": {"cold_start_threshold": 30, "recalibrate_interval_runs": 5},
                     },
                     indent=2,
@@ -2000,12 +1999,8 @@ def _create_review_backend(
     config_overrides: tuple[str, ...],
     adjudication_mode: str | None = None,
 ):
-    # When single_pass mode is requested and using heuristic backend,
-    # return the single-pass heuristic backend directly.
-    if adjudication_mode == "single_pass" and backend_name == "heuristic":
-        from .agent_backend import SinglePassHeuristicBackend
-
-        return SinglePassHeuristicBackend()
+    if adjudication_mode not in {None, "single_pass"}:
+        raise ValueError("LuaNilGuard v3 supports only adjudication mode: single_pass")
 
     if backend_manifest_path is not None:
         register_manifest_backed_adjudication_backend(backend_manifest_path, replace=True)
@@ -2945,7 +2940,7 @@ def _usage() -> str:
             "",
             "Backend values: heuristic | codex | claude | gemini",
             "Focus values: all | string",
-            "Adjudication mode values: multi_agent | single_pass | ab_test",
+            "Adjudication mode values: single_pass",
         ]
     )
 
@@ -3186,7 +3181,7 @@ def _parse_review_options(
             if index + 1 >= len(args):
                 raise ValueError("--adjudication-mode requires a value")
             adjudication_mode = args[index + 1]
-            _allowed_modes = {"single_pass", "multi_agent", "ab_test"}
+            _allowed_modes = {"single_pass"}
             if adjudication_mode not in _allowed_modes:
                 raise ValueError(f"--adjudication-mode must be one of: {', '.join(sorted(_allowed_modes))}")
             index += 2

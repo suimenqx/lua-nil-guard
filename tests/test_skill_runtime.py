@@ -98,7 +98,7 @@ def test_compile_adjudicator_skill_header_rejects_incompatible_contract(tmp_path
                 "---",
                 "name: wrong-contract",
                 "description: Wrong contract.",
-                "skill_contract: lua-nil-adjudicator/v2",
+                "skill_contract: lua-nil-adjudicator/legacy",
                 "---",
                 "",
                 "## Goal",

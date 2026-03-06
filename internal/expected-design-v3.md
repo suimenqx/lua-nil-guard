@@ -114,7 +114,7 @@ ALTER TABLE adjudication_records ADD COLUMN calibrated_confidence TEXT;
 ```json
 {
   "adjudication_mode": "single_pass",
-  "ab_test": {
+  "legacy_split": {
     "enabled": false,
     "split_ratio": 0.5,
     "seed": 42

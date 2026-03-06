@@ -4,8 +4,6 @@ from collections.abc import Callable
 from dataclasses import replace
 import re
 
-import hashlib
-
 from .models import AdjudicationRecord, AutofixPatch, EvidencePacket, RoleOpinion, SinglePassJudgment, SinkRule, Verdict
 
 
@@ -16,38 +14,28 @@ _DOT_PATH_RE = re.compile(
 
 
 def adjudicate_packet(packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
-    """Run the default multi-role adjudication flow for a single evidence packet."""
+    """Run v3 single-pass adjudication and return a compatibility record."""
 
-    prosecutor = _prosecutor_opinion(packet, sink_rule)
-    defender = _defender_opinion(packet)
-    judge = _judge_verdict(packet, sink_rule, prosecutor, defender)
-    return AdjudicationRecord(
-        prosecutor=prosecutor,
-        defender=defender,
-        judge=attach_autofix_patch(judge, packet, sink_rule),
-    )
+    verdict = adjudicate_single_pass(packet, sink_rule).verdict
+    return _single_pass_as_record(verdict)
 
 
 def route_adjudication(
     packet: EvidencePacket,
     sink_rule: SinkRule,
     *,
-    mode: str = "multi_agent",
-    ab_seed: int = 42,
+    mode: str = "single_pass",
+    ab_seed: int | None = None,
 ) -> Verdict:
-    """Route adjudication based on mode and return the final verdict."""
+    """Route adjudication and return the final verdict.
 
-    if mode == "single_pass":
-        return adjudicate_single_pass(packet, sink_rule).verdict
-    if mode == "ab_test":
-        digest = hashlib.md5(
-            f"{packet.case_id}:{ab_seed}".encode(), usedforsecurity=False
-        ).hexdigest()
-        use_single = int(digest[:8], 16) % 2 == 0
-        if use_single:
-            return adjudicate_single_pass(packet, sink_rule).verdict
-        return adjudicate_packet(packet, sink_rule).judge
-    return adjudicate_packet(packet, sink_rule).judge
+    LuaNilGuard v3 is single-pass only, so legacy mode values are rejected.
+    """
+
+    _ = ab_seed
+    if mode != "single_pass":
+        raise ValueError("LuaNilGuard v3 supports only adjudication mode: single_pass")
+    return adjudicate_single_pass(packet, sink_rule).verdict
 
 
 def adjudicate_single_pass(packet: EvidencePacket, sink_rule: SinkRule) -> SinglePassJudgment:
@@ -157,13 +145,9 @@ def attach_autofix_patch(
     return replace(verdict, autofix_patch=patch)
 
 
-def _prosecutor_opinion(packet: EvidencePacket, sink_rule: SinkRule) -> RoleOpinion:
-    observed_guards = _tuple_field(packet, "observed_guards")
-    origins = _tuple_field(packet, "origin_candidates")
-    risk_signals = packet.static_risk_signals
-
-    if observed_guards or _has_explicit_safety_fact(packet):
-        return RoleOpinion(
+def _single_pass_as_record(verdict: Verdict) -> AdjudicationRecord:
+    if verdict.status == "safe":
+        prosecutor = RoleOpinion(
             role="prosecutor",
             status="uncertain",
             confidence="low",
@@ -173,110 +157,63 @@ def _prosecutor_opinion(packet: EvidencePacket, sink_rule: SinkRule) -> RoleOpin
             recommended_next_action="suppress",
             suggested_fix=None,
         )
+        defender = RoleOpinion(
+            role="defender",
+            status="safe",
+            confidence=verdict.confidence,
+            risk_path=(),
+            safety_evidence=verdict.safety_evidence,
+            missing_evidence=(),
+            recommended_next_action="suppress",
+            suggested_fix=None,
+        )
+        return AdjudicationRecord(
+            prosecutor=prosecutor,
+            defender=defender,
+            judge=verdict,
+        )
 
-    if risk_signals:
-        risk_summaries = tuple(signal.summary for signal in risk_signals)
-        return RoleOpinion(
+    if verdict.status == "risky":
+        prosecutor = RoleOpinion(
             role="prosecutor",
             status="risky",
-            confidence="high",
-            risk_path=risk_summaries + (f"no guard before {sink_rule.qualified_name}",),
+            confidence=verdict.confidence,
+            risk_path=verdict.risk_path,
             safety_evidence=(),
             missing_evidence=(),
             recommended_next_action="report",
-            suggested_fix=_suggested_fix(packet, sink_rule),
+            suggested_fix=verdict.suggested_fix,
         )
-
-    return RoleOpinion(
-        role="prosecutor",
-        status="risky",
-        confidence="medium",
-        risk_path=origins + (f"no guard before {sink_rule.qualified_name}",),
-        safety_evidence=(),
-        missing_evidence=(),
-        recommended_next_action="report",
-        suggested_fix=_suggested_fix(packet, sink_rule),
-    )
-
-
-def _defender_opinion(packet: EvidencePacket) -> RoleOpinion:
-    observed_guards = _tuple_field(packet, "observed_guards")
-    if observed_guards:
-        return RoleOpinion(
+        defender = RoleOpinion(
             role="defender",
-            status="safe",
-            confidence="high",
+            status="uncertain",
+            confidence="low",
             risk_path=(),
-            safety_evidence=observed_guards,
-            missing_evidence=(),
-            recommended_next_action="suppress",
+            safety_evidence=(),
+            missing_evidence=("no explicit guard or trusted non-nil contract found",),
+            recommended_next_action="expand_context",
             suggested_fix=None,
         )
-
-    safety_facts = tuple(fact for fact in packet.knowledge_facts if _looks_like_safety_fact(fact))
-    if safety_facts:
-        return RoleOpinion(
-            role="defender",
-            status="safe",
-            confidence="medium",
-            risk_path=(),
-            safety_evidence=safety_facts,
-            missing_evidence=(),
-            recommended_next_action="suppress",
-            suggested_fix=None,
+        return AdjudicationRecord(
+            prosecutor=prosecutor,
+            defender=defender,
+            judge=verdict,
         )
 
-    return RoleOpinion(
-        role="defender",
+    uncertain = RoleOpinion(
+        role="single_pass",
         status="uncertain",
-        confidence="low",
-        risk_path=(),
-        safety_evidence=(),
-        missing_evidence=("no explicit guard or trusted non-nil contract found",),
+        confidence=verdict.confidence,
+        risk_path=verdict.risk_path,
+        safety_evidence=verdict.safety_evidence,
+        missing_evidence=("insufficient evidence",),
         recommended_next_action="expand_context",
         suggested_fix=None,
     )
-
-
-def _judge_verdict(
-    packet: EvidencePacket,
-    sink_rule: SinkRule,
-    prosecutor: RoleOpinion,
-    defender: RoleOpinion,
-) -> Verdict:
-    if defender.status == "safe":
-        return Verdict(
-            case_id=packet.case_id,
-            status="safe",
-            confidence="high" if defender.confidence == "high" else "medium",
-            risk_path=(),
-            safety_evidence=defender.safety_evidence,
-            counterarguments_considered=prosecutor.risk_path,
-            suggested_fix=None,
-            needs_human=False,
-        )
-
-    if prosecutor.status == "risky":
-        return Verdict(
-            case_id=packet.case_id,
-            status="risky",
-            confidence=prosecutor.confidence,
-            risk_path=prosecutor.risk_path,
-            safety_evidence=(),
-            counterarguments_considered=defender.missing_evidence,
-            suggested_fix=prosecutor.suggested_fix,
-            needs_human=False,
-        )
-
-    return Verdict(
-        case_id=packet.case_id,
-        status="uncertain",
-        confidence="low",
-        risk_path=(),
-        safety_evidence=(),
-        counterarguments_considered=defender.missing_evidence + prosecutor.missing_evidence,
-        suggested_fix=None,
-        needs_human=False,
+    return AdjudicationRecord(
+        prosecutor=uncertain,
+        defender=uncertain,
+        judge=verdict,
     )
 
 

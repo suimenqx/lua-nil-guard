@@ -14,7 +14,7 @@ LuaNilGuard 是面向 Lua 开发者的 nil 风险筛查 CLI 工具。
 
 ## 2. 目标用户场景
 
-### 场景 A：全仓离线审计（V2.1 已支持）
+### 场景 A：全仓离线审计（历史版本 已支持）
 
 - 典型用户：项目负责人、QA 团队。
 - 工作流：`init-config → scan → report → run-start`。
@@ -34,7 +34,7 @@ LuaNilGuard 是面向 Lua 开发者的 nil 风险筛查 CLI 工具。
 - 工作流：在关键函数上添加 nil 标注 → 工具验证标注与函数体一致性 → 标注覆盖率报告驱动逐步覆盖。
 - 价值：开发者主动声明意图，工具验证而非推断，跨函数推理精度显著提升。
 
-### 场景 D：单文件快速审查（V2.1 已支持）
+### 场景 D：单文件快速审查（历史版本 已支持）
 
 - 典型用户：开发者本地调试。
 - 工作流：`report-file /path/to/file.lua`。
@@ -116,7 +116,7 @@ lua-nil-guard annotation-suggest /path/to/repo/src/core.lua
 
 | 文件 | 阶段 | 用途 |
 |------|------|------|
-| `config/adjudication_policy.json` | Phase A | 裁决模式（`single_pass` / `multi_agent` / `ab_test`），校准冷启动阈值 |
+| `config/adjudication_policy.json` | Phase A | 裁决模式（`single_pass` / `legacy_mode` / `legacy_split`），校准冷启动阈值 |
 | 标注语法（内嵌 Lua 注释） | Phase C | `--- @nil_guard: ...` 风格的 nil 标注 |
 
 ### 5.3 配置优先级
@@ -135,7 +135,7 @@ lua-nil-guard annotation-suggest /path/to/repo/src/core.lua
 
 单次判定后：
 
-| 维度 | V2.1（多 Agent） | V3（单次判定） |
+| 维度 | 历史版本（多 Agent） | V3（单次判定） |
 |------|------------------|----------------|
 | 每 case LLM 调用次数 | 3 | 1 |
 | 单 case token 成本 | ~3x | ~1.5x（更好的上下文） |

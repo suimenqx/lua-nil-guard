@@ -18,13 +18,13 @@ LuaNilGuard 是一个高精度 Lua nil 风险筛查引擎。
 Deterministic Static Floor + Single-Pass Semantic Ceiling + Statistical Calibration Gate
 ```
 
-与 V2.1 的区别：V2.1 使用 `Agent Semantic Ceiling`（多角色对抗），V3 替换为 `Single-Pass Semantic Ceiling`（单次结构化判定）并新增 `Statistical Calibration Gate`（离线统计校准）。
+与 历史版本 的区别：历史版本 使用 `Agent Semantic Ceiling`（多角色对抗），V3 替换为 `Single-Pass Semantic Ceiling`（单次结构化判定）并新增 `Statistical Calibration Gate`（离线统计校准）。
 
 ## 2. 分层架构
 
 ### L0. Repository Snapshot & Input Gate
 
-职责（与 V2.1 一致）：
+职责（与 历史版本 一致）：
 
 1. 仓库发现（Lua 文件、配置、预处理文件）。
 2. UTF-8 强约束与输入一致性门禁。
@@ -34,7 +34,7 @@ Deterministic Static Floor + Single-Pass Semantic Ceiling + Statistical Calibrat
 
 ### L1. Candidate Engine（双通道）
 
-职责（与 V2.1 一致）：
+职责（与 历史版本 一致）：
 
 1. `ast_exact` 主通道：基于语法树精确提取 sink 候选。
 2. `lexical_fallback` 兜底：AST 不可用时保底召回。
@@ -45,13 +45,13 @@ Deterministic Static Floor + Single-Pass Semantic Ceiling + Statistical Calibrat
 
 ### L2. Static Evidence Kernel
 
-职责（与 V2.1 一致）：
+职责（与 历史版本 一致）：
 
 1. 输出 `safe_static` / `unknown_static`。
 2. 产出结构化 `StaticProof` / `StaticRiskSignal`。
 3. 产出 `unknown_reason`（禁止静默回退）。
 
-内建高价值证明（与 V2.1 一致）：
+内建高价值证明（与 历史版本 一致）：
 
 1. guard / assert / defaulting。
 2. loop index non-nil + reassignment invalidation。
@@ -68,7 +68,7 @@ Deterministic Static Floor + Single-Pass Semantic Ceiling + Statistical Calibrat
 
 ### L3. Context Resolver（预算驱动）
 
-职责（与 V2.1 一致）：
+职责（与 历史版本 一致）：
 
 1. 构建最小可判定 `EvidencePacket`。
 2. 控制预算（depth / context lines / summaries）。
@@ -82,7 +82,7 @@ Deterministic Static Floor + Single-Pass Semantic Ceiling + Statistical Calibrat
 
 ### L4. Single-Pass Adjudication（替换多 Agent 模型）
 
-**V2.1（已废弃）**：Prosecutor → Defender → Judge 三角色裁决。
+**历史版本（已废弃）**：Prosecutor → Defender → Judge 三角色裁决。
 
 **V3（目标）**：单次结构化判定。
 
@@ -109,9 +109,9 @@ Prompt 合同（从 SKILL.md 继承的不变原则）：
 
 ### L5. Calibration & Verdict Composer（替换 Verify Gate）
 
-**V2.1**：合成静态证据与 agent 结论，应用证据门槛。
+**历史版本**：合成静态证据与 agent 结论，应用证据门槛。
 
-**V3（目标）**：在 V2.1 基础上增加离线统计校准层。
+**V3（目标）**：在 历史版本 基础上增加离线统计校准层。
 
 1. 合成静态证据与单次判定结论（保持）。
 2. 应用证据门槛防止弱证据高置信（保持）。
@@ -127,11 +127,11 @@ Prompt 合同（从 SKILL.md 继承的不变原则）：
 
 ### L6. Incremental Run Orchestrator（从批处理升级为依赖图驱动）
 
-**V2.1**：批处理流水线 `INIT → STATIC → QUEUE → LLM → VERIFY → FINALIZE`，SQLite 持久化支持断点恢复。
+**历史版本**：批处理流水线 `INIT → STATIC → QUEUE → LLM → VERIFY → FINALIZE`，SQLite 持久化支持断点恢复。
 
 **V3（目标）**：保留批处理作为全量模式，新增增量模式。
 
-全量模式（保持 V2.1）：
+全量模式（保持 历史版本）：
 
 - 阶段机不变。
 - 持久化表结构不变。
@@ -154,7 +154,7 @@ File(helper.lua) ──→ FunctionSummary(helper.resolve) ───────
 
 ### L7. Reporting & Governance
 
-职责（与 V2.1 一致）：
+职责（与 历史版本 一致）：
 
 1. Markdown / JSON 报告。
 2. 提案与分析（proposal export / analytics）。
@@ -167,7 +167,7 @@ File(helper.lua) ──→ FunctionSummary(helper.resolve) ───────
 
 ## 3. 关键数据契约
 
-### 3.1 继承自 V2.1（稳定不变）
+### 3.1 继承自 历史版本（稳定不变）
 
 1. `CandidateCase`（含 `candidate_source`）。
 2. `StaticAnalysisResult`（含 `analysis_mode` / `unknown_reason`）。
@@ -214,17 +214,17 @@ File(helper.lua) ──→ FunctionSummary(helper.resolve) ───────
 
 ## 5. 性能与规模化策略
 
-1. Parse-once：单文件单轮只解析一次（保持 V2.1）。
-2. Uncertain-first：只将 `unknown_static` 送入 LLM（保持 V2.1）。
+1. Parse-once：单文件单轮只解析一次（保持 历史版本）。
+2. Uncertain-first：只将 `unknown_static` 送入 LLM（保持 历史版本）。
 3. Single-pass：每个 LLM case 只调用 1 次（V3 新增，从 3 次降至 1 次）。
 4. Token 再分配：省下的 2/3 token 预算用于更好的上下文组装（V3 新增）。
-5. 预算化上下文（保持 V2.1）。
+5. 预算化上下文（保持 历史版本）。
 6. 增量分析：PR 场景只重算受影响子图（V3 新增）。
-7. 作业持久化：中断恢复避免全量重算（保持 V2.1）。
+7. 作业持久化：中断恢复避免全量重算（保持 历史版本）。
 
 ## 6. 非目标（明确不做）
 
-继承自 V2.1：
+继承自 历史版本：
 
 1. 完整 Lua 语义解释器级推理。
 2. 无界跨文件全图精确分析。
@@ -237,7 +237,7 @@ V3 新增：
 6. Runtime 信号注入（远期可选，不在 V3 范围内）。
 7. 自动化大规模 Autofix（仅保留最小修复建议能力）。
 
-## 7. 与 V2.1 的迁移兼容策略
+## 7. 与 历史版本 的迁移兼容策略
 
 1. **L4（裁决层）**：在 `adjudication.py` 中新增 single-pass 路径，与多 Agent 路径并存，通过 A/B flag 切换。验证精度后再移除旧路径。
 2. **L6（编排层）**：SQLite schema 增加依赖追踪表，现有 `run-start` 不变，新增 `run-incremental` 入口。

@@ -369,9 +369,6 @@ class AdjudicationPolicy:
     """Controls the adjudication mode and calibration settings."""
 
     adjudication_mode: str = "single_pass"
-    ab_test_enabled: bool = False
-    ab_test_split_ratio: float = 0.5
-    ab_test_seed: int = 42
     calibration_cold_start_threshold: int = 30
     calibration_recalibrate_interval_runs: int = 5
 

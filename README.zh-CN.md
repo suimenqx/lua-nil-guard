@@ -328,17 +328,15 @@ lua-nil-guard generate-backend-manifest my-provider stdout_envelope_cli
 
 ## 裁决模式
 
-LuaNilGuard 支持通过 `--adjudication-mode` 切换裁决策略：
+LuaNilGuard v3 仅支持单次结构化裁决。`--adjudication-mode` 仅接受：
 
-- `multi_agent`（默认）：多角色 prosecutor/defender/judge 裁决流程。
-- `single_pass`：单次结构化裁决。token 成本更低，精度相当。
-- `ab_test`：将 case 分流到两种模式做对比。
+- `single_pass`（默认）：单次结构化裁决。
 
 ```sh
 lua-nil-guard report --adjudication-mode single_pass /path/to/target-repo
 ```
 
-默认模式也可以在 `config/adjudication_policy.json` 中设置。
+默认模式也可以在 `config/adjudication_policy.json` 中设置（仅支持 `single_pass`）。
 
 ## 校准
 

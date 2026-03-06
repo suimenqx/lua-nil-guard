@@ -8,7 +8,6 @@ import pytest
 from lua_nil_guard.adjudication import route_adjudication
 from lua_nil_guard.config_loader import ConfigError, load_adjudication_policy
 from lua_nil_guard.models import (
-    AdjudicationPolicy,
     EvidencePacket,
     EvidenceTarget,
     SinkRule,
@@ -51,54 +50,15 @@ def _make_packet(case_id: str = "case_001") -> EvidencePacket:
     )
 
 
-def test_route_multi_agent_uses_adjudicate_packet() -> None:
-    verdict = route_adjudication(_make_packet(), _make_rule(), mode="multi_agent")
-    assert verdict.status in ("safe", "risky", "uncertain")
-
-
 def test_route_single_pass_uses_adjudicate_single_pass() -> None:
     verdict = route_adjudication(_make_packet(), _make_rule(), mode="single_pass")
     assert verdict.status in ("safe", "risky", "uncertain")
 
 
-def test_route_ab_test_splits_deterministically() -> None:
-    """AB test with same seed and case_id always routes to same path."""
-    rule = _make_rule()
-    packet = _make_packet("stable_case")
-
-    v1 = route_adjudication(packet, rule, mode="ab_test", ab_seed=42)
-    v2 = route_adjudication(packet, rule, mode="ab_test", ab_seed=42)
-    assert v1.status == v2.status
-
-
-def test_route_ab_test_approximate_split_ratio() -> None:
-    """AB test with 100 cases should split roughly 50/50."""
-    rule = _make_rule()
-    statuses_single: list[str] = []
-    statuses_multi: list[str] = []
-
-    for i in range(100):
-        packet = _make_packet(f"case_{i:03d}")
-        # All these cases have same evidence, so verdict should be same
-        # but the routing path may differ
-        verdict = route_adjudication(packet, rule, mode="ab_test", ab_seed=42)
-        # We can't easily distinguish which path was taken from verdict alone,
-        # but the distribution shouldn't be degenerate
-        assert verdict.status in ("safe", "risky", "uncertain")
-
-    # Just ensure it completes without error for all 100 cases
-
-
-def test_route_ab_test_different_seed_can_change_path() -> None:
-    rule = _make_rule()
-    packet = _make_packet("test_case")
-
-    v_seed1 = route_adjudication(packet, rule, mode="ab_test", ab_seed=1)
-    v_seed2 = route_adjudication(packet, rule, mode="ab_test", ab_seed=99999)
-    # Different seeds may or may not produce different results for same case
-    # but both should be valid
-    assert v_seed1.status in ("safe", "risky", "uncertain")
-    assert v_seed2.status in ("safe", "risky", "uncertain")
+@pytest.mark.parametrize("mode", ["legacy_mode", "legacy_split"])
+def test_route_rejects_legacy_modes(mode: str) -> None:
+    with pytest.raises(ValueError, match="single_pass"):
+        route_adjudication(_make_packet(), _make_rule(), mode=mode, ab_seed=42)
 
 
 # --- Config loading tests ---
@@ -109,7 +69,6 @@ def test_load_adjudication_policy_reads_valid_json(tmp_path: Path) -> None:
     policy_path.write_text(
         json.dumps({
             "adjudication_mode": "single_pass",
-            "ab_test": {"enabled": True, "split_ratio": 0.3, "seed": 123},
             "calibration": {"cold_start_threshold": 50, "recalibrate_interval_runs": 10},
         }),
         encoding="utf-8",
@@ -118,9 +77,6 @@ def test_load_adjudication_policy_reads_valid_json(tmp_path: Path) -> None:
     policy = load_adjudication_policy(policy_path)
 
     assert policy.adjudication_mode == "single_pass"
-    assert policy.ab_test_enabled is True
-    assert policy.ab_test_split_ratio == 0.3
-    assert policy.ab_test_seed == 123
     assert policy.calibration_cold_start_threshold == 50
     assert policy.calibration_recalibrate_interval_runs == 10
 
@@ -129,7 +85,6 @@ def test_load_adjudication_policy_missing_file_returns_default(tmp_path: Path) -
     policy = load_adjudication_policy(tmp_path / "nonexistent.json")
 
     assert policy.adjudication_mode == "single_pass"
-    assert policy.ab_test_enabled is False
 
 
 def test_load_adjudication_policy_invalid_json_raises(tmp_path: Path) -> None:
@@ -180,8 +135,24 @@ def test_single_pass_heuristic_backend_returns_adjudication_record() -> None:
 
     assert isinstance(result, AdjudicationRecord)
     assert result.judge.status in ("safe", "risky", "uncertain")
-    assert result.prosecutor.role == "single_pass"
-    assert result.defender.role == "single_pass"
+    assert result.prosecutor.role in {"prosecutor", "single_pass"}
+    assert result.defender.role in {"defender", "single_pass"}
+
+
+def test_load_adjudication_policy_rejects_unknown_legacy_section(tmp_path: Path) -> None:
+    policy_path = tmp_path / "adjudication_policy.json"
+    policy_path.write_text(
+        json.dumps(
+            {
+                "adjudication_mode": "single_pass",
+                "legacy_split": {"enabled": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="Unsupported adjudication policy fields"):
+        load_adjudication_policy(policy_path)
 
 
 def test_load_adjudication_policy_invalid_mode_raises(tmp_path: Path) -> None:

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import replace
 from pathlib import Path
 import subprocess
 import tempfile
@@ -23,7 +22,7 @@ from .agent_protocols import (
     StdoutStructuredCliProtocol,
     get_cli_protocol_builder,
 )
-from .adjudication import adjudicate_packet, adjudicate_single_pass
+from .adjudication import adjudicate_packet
 from .models import AdjudicationRecord, EvidencePacket, RoleOpinion, SinglePassJudgment, SinkRule, Verdict
 from .prompting import build_adjudication_prompt
 
@@ -44,7 +43,7 @@ DEFAULT_GEMINI_BACKEND_MODEL = "gemini-3.1-pro-preview"
 
 
 class HeuristicAdjudicationBackend:
-    """Default local backend used when no external agent is configured."""
+    """Default local backend for v3 single-pass adjudication."""
 
     def adjudicate(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
         record = adjudicate_packet(packet, sink_rule)
@@ -64,11 +63,15 @@ class HeuristicAdjudicationBackend:
             recommended_next_action="expand_context",
             suggested_fix=None,
         )
-        defender = replace(
-            record.defender,
+        defender = RoleOpinion(
+            role=record.defender.role,
             status="uncertain",
             confidence="low",
+            risk_path=record.defender.risk_path,
+            safety_evidence=record.defender.safety_evidence,
             missing_evidence=("no explicit guard or trusted non-nil contract found",),
+            recommended_next_action="expand_context",
+            suggested_fix=None,
         )
         judge = Verdict(
             case_id=packet.case_id,
@@ -88,33 +91,10 @@ class HeuristicAdjudicationBackend:
 
 
 class SinglePassHeuristicBackend:
-    """Heuristic backend using single-pass adjudication (V3).
-
-    Returns an ``AdjudicationRecord`` for protocol compatibility, but the
-    verdict is produced by the unified single-pass logic rather than the
-    multi-role prosecutor/defender/judge flow.
-    """
+    """Backward-compatible alias for the v3 heuristic backend."""
 
     def adjudicate(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
-        judgment = adjudicate_single_pass(packet, sink_rule)
-        verdict = judgment.verdict
-
-        # Wrap into AdjudicationRecord for backward-compatible service layer
-        dummy_opinion = RoleOpinion(
-            role="single_pass",
-            status=verdict.status,
-            confidence=verdict.confidence,
-            risk_path=verdict.risk_path,
-            safety_evidence=verdict.safety_evidence,
-            missing_evidence=(),
-            recommended_next_action="suppress" if verdict.status == "safe" else "report",
-            suggested_fix=verdict.suggested_fix,
-        )
-        return AdjudicationRecord(
-            prosecutor=dummy_opinion,
-            defender=dummy_opinion,
-            judge=verdict,
-        )
+        return HeuristicAdjudicationBackend().adjudicate(packet, sink_rule)
 
 
 def _resolve_expanded_evidence_retry_mode(mode: str) -> bool | None:
@@ -1131,6 +1111,13 @@ def _default_runner(
     return result.stdout
 
 
+def _tuple_field(packet: EvidencePacket, key: str) -> tuple[str, ...]:
+    value = packet.static_reasoning.get(key, ())
+    if isinstance(value, tuple):
+        return value
+    return ()
+
+
 def _has_local_risk_proof(packet: EvidencePacket) -> bool:
     if packet.static_risk_signals:
         return True
@@ -1138,13 +1125,6 @@ def _has_local_risk_proof(packet: EvidencePacket) -> bool:
     if any(origin.strip() == "nil" for origin in origins):
         return True
     return " and nil or " in packet.local_context
-
-
-def _tuple_field(packet: EvidencePacket, key: str) -> tuple[str, ...]:
-    value = packet.static_reasoning.get(key, ())
-    if isinstance(value, tuple):
-        return value
-    return ()
 
 
 def _backend_failure_fallback(packet: EvidencePacket, reason: str) -> AdjudicationRecord:

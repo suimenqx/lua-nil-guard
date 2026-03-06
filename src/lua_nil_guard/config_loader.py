@@ -6,7 +6,7 @@ from typing import Any
 
 from .models import AdjudicationPolicy, ConfidencePolicy, FunctionContract, PreprocessorConfig, SinkRule
 
-_SUPPORTED_ADJUDICATION_MODES = frozenset({"multi_agent", "single_pass", "ab_test"})
+_SUPPORTED_ADJUDICATION_MODES = frozenset({"single_pass"})
 
 
 class ConfigError(ValueError):
@@ -152,21 +152,23 @@ def load_adjudication_policy(path: str | Path) -> AdjudicationPolicy:
     if not isinstance(data, dict):
         raise ConfigError("Adjudication policy config must be a JSON object")
 
-    mode = data.get("adjudication_mode", "multi_agent")
+    mode = data.get("adjudication_mode", "single_pass")
     if mode not in _SUPPORTED_ADJUDICATION_MODES:
         raise ConfigError(
             f"Unsupported adjudication_mode: {mode!r}. "
             f"Must be one of: {', '.join(sorted(_SUPPORTED_ADJUDICATION_MODES))}"
         )
-
-    ab_test = data.get("ab_test", {})
+    allowed_keys = {"adjudication_mode", "calibration"}
+    unknown_keys = sorted(set(data) - allowed_keys)
+    if unknown_keys:
+        raise ConfigError(
+            "Unsupported adjudication policy fields: "
+            + ", ".join(unknown_keys)
+        )
     calibration = data.get("calibration", {})
 
     return AdjudicationPolicy(
         adjudication_mode=mode,
-        ab_test_enabled=bool(ab_test.get("enabled", False)),
-        ab_test_split_ratio=float(ab_test.get("split_ratio", 0.5)),
-        ab_test_seed=int(ab_test.get("seed", 42)),
         calibration_cold_start_threshold=int(calibration.get("cold_start_threshold", 30)),
         calibration_recalibrate_interval_runs=int(calibration.get("recalibrate_interval_runs", 5)),
     )

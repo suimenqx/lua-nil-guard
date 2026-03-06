@@ -145,8 +145,8 @@ def test_single_pass_autofix_patch_attached() -> None:
     assert result.verdict.suggested_fix is not None
 
 
-def test_single_pass_agrees_with_multi_agent_judge() -> None:
-    """Regression: single-pass verdict status should match multi-agent judge status."""
+def test_single_pass_matches_adjudicate_packet_wrapper_status() -> None:
+    """Regression: compatibility wrapper must preserve single-pass verdict status."""
     rule = _make_rule()
 
     # Case 1: safe with guard

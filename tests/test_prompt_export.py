@@ -395,7 +395,7 @@ def test_cli_export_prompts_reports_invalid_skill_contract_without_fallback(tmp_
                 "---",
                 "name: wrong-contract",
                 "description: Wrong contract.",
-                "skill_contract: lua-nil-adjudicator/v2",
+                "skill_contract: lua-nil-adjudicator/legacy",
                 "---",
                 "",
                 "## Goal",
