@@ -2940,7 +2940,6 @@ def _usage() -> str:
             "",
             "Backend values: heuristic | codex | claude | gemini",
             "Focus values: all | string",
-            "Adjudication mode values: single_pass",
         ]
     )
 
@@ -3178,14 +3177,9 @@ def _parse_review_options(
     while index < len(args):
         token = args[index]
         if token == "--adjudication-mode":
-            if index + 1 >= len(args):
-                raise ValueError("--adjudication-mode requires a value")
-            adjudication_mode = args[index + 1]
-            _allowed_modes = {"single_pass"}
-            if adjudication_mode not in _allowed_modes:
-                raise ValueError(f"--adjudication-mode must be one of: {', '.join(sorted(_allowed_modes))}")
-            index += 2
-            continue
+            raise ValueError(
+                "--adjudication-mode has been removed; LuaNilGuard v3 always uses single_pass"
+            )
         if token == "--backend":
             if index + 1 >= len(args):
                 raise ValueError("--backend requires a value")

@@ -95,33 +95,20 @@ def test_load_adjudication_policy_invalid_json_raises(tmp_path: Path) -> None:
         load_adjudication_policy(policy_path)
 
 
-def test_cli_help_includes_adjudication_mode() -> None:
+def test_cli_help_no_longer_lists_adjudication_mode() -> None:
     from lua_nil_guard.cli import run
 
     exit_code, output = run(["--help"])
     assert exit_code == 0
-    assert "adjudication-mode" in output.lower() or "Adjudication mode" in output
+    assert "adjudication-mode" not in output.lower()
+    assert "Adjudication mode values" not in output
 
 
-def test_cli_parse_review_options_adjudication_mode() -> None:
-    """_parse_review_options extracts --adjudication-mode correctly."""
-    # Import the private parser for direct testing
+def test_cli_parse_review_options_rejects_removed_adjudication_mode() -> None:
     import lua_nil_guard.cli as cli_module
 
-    result = cli_module._parse_review_options(
-        ["--adjudication-mode", "single_pass", "/path/to/repo"]
-    )
-    # adjudication_mode is the last element
-    assert result[-1] == "single_pass"
-    # positional should have the repo path
-    assert result[-2] == ["/path/to/repo"]
-
-
-def test_cli_parse_review_options_adjudication_mode_invalid() -> None:
-    import lua_nil_guard.cli as cli_module
-
-    with pytest.raises(ValueError, match="adjudication-mode"):
-        cli_module._parse_review_options(["--adjudication-mode", "bogus", "/path"])
+    with pytest.raises(ValueError, match="removed"):
+        cli_module._parse_review_options(["--adjudication-mode", "single_pass", "/path"])
 
 
 def test_single_pass_heuristic_backend_returns_adjudication_record() -> None:

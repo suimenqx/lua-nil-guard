@@ -290,15 +290,9 @@ For dotted assignments (for example `a.b = 1`), LuaNilGuard also infers parent t
 
 ## Adjudication Mode
 
-LuaNilGuard v3 is single-pass only. `--adjudication-mode` accepts:
-
-- `single_pass` (default): Single-pass structured adjudication.
-
-```sh
-lua-nil-guard report --adjudication-mode single_pass /path/to/target-repo
-```
-
-The default mode can also be set in `config/adjudication_policy.json` (only `single_pass` is supported).
+LuaNilGuard v3 always uses single-pass structured adjudication.
+`--adjudication-mode` has been removed from the CLI.
+`config/adjudication_policy.json` also supports only `single_pass`.
 
 ## Calibration
 
