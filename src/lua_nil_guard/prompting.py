@@ -314,6 +314,87 @@ def _verification_calibration(preview) -> str | None:
     )
 
 
+def build_single_pass_prompt(
+    *,
+    packet: EvidencePacket,
+    sink_rule: SinkRule,
+) -> str:
+    """Render a single-pass structured adjudication prompt (V3).
+
+    Replaces the multi-role (Prosecutor/Defender/Judge) prompt with a unified
+    prompt that asks the LLM to consider both attack and defence evidence in a
+    single call.
+    """
+
+    return "\n".join(
+        [
+            "You are a Lua nil-risk adjudicator. Determine whether nil can reach the specified nil-sensitive sink based on the evidence packet below.",
+            "",
+            "## Target",
+            f"- case_id: {packet.case_id}",
+            f"- file: {packet.target.file}",
+            f"- line: {packet.target.line}",
+            f"- column: {packet.target.column}",
+            f"- sink: {packet.target.sink}",
+            f"- arg_index: {packet.target.arg_index}",
+            f"- expression: {packet.target.expression}",
+            "",
+            "## Sink rule",
+            f"- id: {sink_rule.id}",
+            f"- qualified_name: {sink_rule.qualified_name}",
+            f"- nil_sensitive: {sink_rule.nil_sensitive}",
+            f"- failure_mode: {sink_rule.failure_mode}",
+            f"- safe_patterns: {', '.join(sink_rule.safe_patterns) if sink_rule.safe_patterns else '(none)'}",
+            "",
+            "## Static analysis results",
+            f"- state: {packet.static_reasoning['state']}",
+            f"- origin_candidates: {', '.join(packet.static_reasoning['origin_candidates']) or '(none)'}",
+            f"- origin_usage_modes: {', '.join(packet.static_reasoning.get('origin_usage_modes', ())) or '(none)'}",
+            f"- origin_return_slots: {', '.join(packet.static_reasoning.get('origin_return_slots', ())) or '(none)'}",
+            f"- analysis_mode: {packet.static_reasoning.get('analysis_mode', 'legacy_only') or 'legacy_only'}",
+            f"- unknown_reason: {packet.static_reasoning.get('unknown_reason', '') or '(none)'}",
+            f"- observed_guards: {', '.join(packet.static_reasoning['observed_guards']) or '(none)'}",
+            "",
+            "## Structured static proofs",
+            _render_static_proofs(packet.static_proofs),
+            "",
+            "## Structured static risk signals",
+            _render_static_risk_signals(packet.static_risk_signals),
+            "",
+            "## Static verification preview",
+            _render_verification_preview(packet),
+            "",
+            "## Code context",
+            packet.local_context or "(none)",
+            "",
+            "## Function summaries",
+            "\n".join(packet.function_summaries) if packet.function_summaries else "(none)",
+            "",
+            "## Related function contexts",
+            "\n\n".join(packet.related_function_contexts) if packet.related_function_contexts else "(none)",
+            "",
+            "## Knowledge facts",
+            "\n".join(packet.knowledge_facts) if packet.knowledge_facts else "(none)",
+            "",
+            "## Canonical principles",
+            "- Unknown is not risk.",
+            "- Absence of proof is not proof of bug.",
+            "- Only reason from the provided code and declared facts.",
+            "- Do not make speculative bug claims.",
+            "- Check for safety evidence first, then trace risk paths.",
+            "- Return `uncertain` when evidence is incomplete.",
+            "",
+            "## Requirements",
+            "Analyze from both attack and defence perspectives simultaneously.",
+            "Output strict JSON with exactly this schema:",
+            '{"status": "safe|risky|uncertain", "confidence": "low|medium|high", '
+            '"risk_path": [...], "safety_evidence": [...], "missing_evidence": [...], '
+            '"recommended_next_action": "suppress|expand_context|report|autofix", '
+            '"suggested_fix": "...or null"}',
+        ]
+    )
+
+
 def _render_static_risk_signals(signals: tuple[StaticRiskSignal, ...]) -> str:
     if not signals:
         return "(none)"

@@ -49,6 +49,7 @@ Check for these before calling a case risky:
 - defaulting patterns such as `x = x or ""`
 - wrapper or normalizer functions
 - function summaries and repository knowledge facts
+- `@nil_guard` annotations on called functions (when verified consistent)
 
 ## Output Contract
 

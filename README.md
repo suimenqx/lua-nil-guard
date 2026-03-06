@@ -288,6 +288,60 @@ Target repositories are expected to contain:
 
 For dotted assignments (for example `a.b = 1`), LuaNilGuard also infers parent table presence (`a`) as a non-nil table fact. These facts are then used to suppress false positives in high-value nil hazard checks while keeping reports anchored to the original source file the developer edits.
 
+## Adjudication Mode
+
+LuaNilGuard supports multiple adjudication strategies via `--adjudication-mode`:
+
+- `multi_agent` (default): Multi-role prosecutor/defender/judge flow.
+- `single_pass`: Single-pass structured adjudication. Lower token cost, same precision.
+- `ab_test`: Split cases between both modes for comparison.
+
+```sh
+lua-nil-guard report --adjudication-mode single_pass /path/to/target-repo
+```
+
+The default mode can also be set in `config/adjudication_policy.json`.
+
+## Calibration
+
+After running reviews, use `calibration-status` to inspect the offline calibration data:
+
+```sh
+lua-nil-guard calibration-status /path/to/target-repo
+```
+
+Calibration buckets track historical precision by sink type and unknown reason. When enough samples accumulate, the system can automatically downgrade overconfident LLM verdicts.
+
+## Incremental Analysis
+
+For PR-level workflows, use `run-incremental` to only re-analyze files affected by changes:
+
+```sh
+lua-nil-guard run-incremental --changed-files src/a.lua,src/b.lua /path/to/target-repo
+```
+
+This requires a previous full run (`run-start`) to have populated file fingerprints and dependency data. If incremental analysis is not available, it will suggest falling back to a full run.
+
+## Nil Guard Annotations
+
+Developers can annotate functions with `--- @nil_guard` comments to declare nil contracts:
+
+```lua
+--- @nil_guard: returns_non_nil
+function normalize_name(raw)
+    return raw or ""
+end
+```
+
+LuaNilGuard uses annotations as high-priority evidence for cross-function reasoning. See `docs/annotations.md` for the full syntax reference.
+
+Related commands:
+
+```sh
+lua-nil-guard annotation-coverage /path/to/target-repo
+lua-nil-guard annotation-suggest /path/to/target-repo/src/demo.lua
+```
+
 ## Notes
 
 - This release is intended for developer trial use. Start with a few real files or one small module before using it across a large repository.

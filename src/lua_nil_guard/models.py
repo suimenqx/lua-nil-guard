@@ -329,6 +329,54 @@ class AdjudicationRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class SinglePassJudgment:
+    """A single-pass structured adjudication result (V3 replacement for multi-role)."""
+
+    verdict: Verdict
+    raw_response: str
+    backend_metadata: dict = field(default_factory=dict, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class AnnotationFact:
+    """A nil-guard annotation parsed from a Lua comment."""
+
+    function_id: str
+    file: str
+    line: int
+    annotation_type: str
+    param_name: str | None = None
+    param_index: int | None = None
+    return_slot: int | None = None
+    nullability: str = "non_nil"
+    condition: str | None = None
+    raw_text: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AnnotationVerification:
+    """Result of verifying an annotation against its function body."""
+
+    annotation: AnnotationFact
+    consistent: bool
+    evidence: tuple[str, ...] = ()
+    conflicts: tuple[str, ...] = ()
+    confidence: str = "low"
+
+
+@dataclass(frozen=True, slots=True)
+class AdjudicationPolicy:
+    """Controls the adjudication mode and calibration settings."""
+
+    adjudication_mode: str = "single_pass"
+    ab_test_enabled: bool = False
+    ab_test_split_ratio: float = 0.5
+    ab_test_seed: int = 42
+    calibration_cold_start_threshold: int = 30
+    calibration_recalibrate_interval_runs: int = 5
+
+
+@dataclass(frozen=True, slots=True)
 class BenchmarkCaseResult:
     """One labeled benchmark case compared against an observed verdict."""
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -122,6 +124,82 @@ def inspect_lua_source_encoding(path: str | Path) -> tuple[LuaSourceEncodingReco
             reason="could not decode with utf-8, utf-8-sig, or gb18030",
         ),
         None,
+    )
+
+
+def compute_file_fingerprint(path: str | Path) -> str:
+    """Compute a SHA-256 content hash for a file."""
+
+    file_path = Path(path)
+    content = file_path.read_bytes()
+    return hashlib.sha256(content).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Dependency tracking schema
+# ---------------------------------------------------------------------------
+
+_FINGERPRINT_SCHEMA = """\
+CREATE TABLE IF NOT EXISTS file_fingerprints (
+    file_path TEXT PRIMARY KEY,
+    content_hash TEXT NOT NULL,
+    mtime_ns INTEGER NOT NULL,
+    last_analyzed_run_id INTEGER
+);
+"""
+
+_FACT_DEPS_SCHEMA = """\
+CREATE TABLE IF NOT EXISTS fact_dependencies (
+    fact_id TEXT NOT NULL,
+    fact_type TEXT NOT NULL,
+    depends_on_file TEXT NOT NULL,
+    depends_on_function TEXT,
+    run_id INTEGER NOT NULL,
+    PRIMARY KEY (fact_id, depends_on_file)
+);
+CREATE INDEX IF NOT EXISTS idx_fact_deps_file ON fact_dependencies(depends_on_file);
+CREATE INDEX IF NOT EXISTS idx_fact_deps_run ON fact_dependencies(run_id);
+"""
+
+
+def ensure_dependency_schema(conn: sqlite3.Connection) -> None:
+    """Create file_fingerprints and fact_dependencies tables if absent."""
+
+    conn.executescript(_FINGERPRINT_SCHEMA)
+    conn.executescript(_FACT_DEPS_SCHEMA)
+
+
+def upsert_file_fingerprint(
+    conn: sqlite3.Connection,
+    file_path: str,
+    content_hash: str,
+    mtime_ns: int,
+    run_id: int | None = None,
+) -> None:
+    """Insert or update a file fingerprint record."""
+
+    conn.execute(
+        "INSERT OR REPLACE INTO file_fingerprints (file_path, content_hash, mtime_ns, last_analyzed_run_id) "
+        "VALUES (?, ?, ?, ?)",
+        (file_path, content_hash, mtime_ns, run_id),
+    )
+
+
+def insert_fact_dependency(
+    conn: sqlite3.Connection,
+    fact_id: str,
+    fact_type: str,
+    depends_on_file: str,
+    run_id: int,
+    depends_on_function: str | None = None,
+) -> None:
+    """Record a single fact dependency edge."""
+
+    conn.execute(
+        "INSERT OR IGNORE INTO fact_dependencies "
+        "(fact_id, fact_type, depends_on_file, depends_on_function, run_id) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (fact_id, fact_type, depends_on_file, depends_on_function, run_id),
     )
 
 

@@ -326,6 +326,58 @@ lua-nil-guard generate-backend-manifest my-provider stdout_envelope_cli
 
 对于点号路径赋值（例如 `a.b = 1`），LuaNilGuard 还会推导父级表存在性（`a`）并作为非 nil 表事实。然后在正式扫描原始源码时，把这些事实作为额外的非 nil 证据来减少误报，同时保持报告仍然指向开发者真正维护的原始源码。
 
+## 裁决模式
+
+LuaNilGuard 支持通过 `--adjudication-mode` 切换裁决策略：
+
+- `multi_agent`（默认）：多角色 prosecutor/defender/judge 裁决流程。
+- `single_pass`：单次结构化裁决。token 成本更低，精度相当。
+- `ab_test`：将 case 分流到两种模式做对比。
+
+```sh
+lua-nil-guard report --adjudication-mode single_pass /path/to/target-repo
+```
+
+默认模式也可以在 `config/adjudication_policy.json` 中设置。
+
+## 校准
+
+运行审查后，使用 `calibration-status` 查看离线校准数据：
+
+```sh
+lua-nil-guard calibration-status /path/to/target-repo
+```
+
+## 增量分析
+
+对于 PR 级工作流，使用 `run-incremental` 只重新分析受变更影响的文件：
+
+```sh
+lua-nil-guard run-incremental --changed-files src/a.lua,src/b.lua /path/to/target-repo
+```
+
+需要先通过 `run-start` 完成一次全量运行。如果增量分析不可用，会提示回退到全量运行。
+
+## Nil Guard 标注
+
+开发者可以在函数上方添加 `--- @nil_guard` 注释来声明 nil 契约：
+
+```lua
+--- @nil_guard: returns_non_nil
+function normalize_name(raw)
+    return raw or ""
+end
+```
+
+LuaNilGuard 将标注作为高优先级证据用于跨函数推理。完整语法参见 `docs/annotations.md`。
+
+相关命令：
+
+```sh
+lua-nil-guard annotation-coverage /path/to/target-repo
+lua-nil-guard annotation-suggest /path/to/target-repo/src/demo.lua
+```
+
 ## 已知边界
 
 - 当前版本面向开发者试用，推荐先从少量真实文件或一个小模块开始。

@@ -23,8 +23,8 @@ from .agent_protocols import (
     StdoutStructuredCliProtocol,
     get_cli_protocol_builder,
 )
-from .adjudication import adjudicate_packet
-from .models import AdjudicationRecord, EvidencePacket, RoleOpinion, SinkRule, Verdict
+from .adjudication import adjudicate_packet, adjudicate_single_pass
+from .models import AdjudicationRecord, EvidencePacket, RoleOpinion, SinglePassJudgment, SinkRule, Verdict
 from .prompting import build_adjudication_prompt
 
 
@@ -84,6 +84,36 @@ class HeuristicAdjudicationBackend:
             prosecutor=prosecutor,
             defender=defender,
             judge=judge,
+        )
+
+
+class SinglePassHeuristicBackend:
+    """Heuristic backend using single-pass adjudication (V3).
+
+    Returns an ``AdjudicationRecord`` for protocol compatibility, but the
+    verdict is produced by the unified single-pass logic rather than the
+    multi-role prosecutor/defender/judge flow.
+    """
+
+    def adjudicate(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
+        judgment = adjudicate_single_pass(packet, sink_rule)
+        verdict = judgment.verdict
+
+        # Wrap into AdjudicationRecord for backward-compatible service layer
+        dummy_opinion = RoleOpinion(
+            role="single_pass",
+            status=verdict.status,
+            confidence=verdict.confidence,
+            risk_path=verdict.risk_path,
+            safety_evidence=verdict.safety_evidence,
+            missing_evidence=(),
+            recommended_next_action="suppress" if verdict.status == "safe" else "report",
+            suggested_fix=verdict.suggested_fix,
+        )
+        return AdjudicationRecord(
+            prosecutor=dummy_opinion,
+            defender=dummy_opinion,
+            judge=verdict,
         )
 
 

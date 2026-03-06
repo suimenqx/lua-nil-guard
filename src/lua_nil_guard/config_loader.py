@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .models import ConfidencePolicy, FunctionContract, PreprocessorConfig, SinkRule
+from .models import AdjudicationPolicy, ConfidencePolicy, FunctionContract, PreprocessorConfig, SinkRule
+
+_SUPPORTED_ADJUDICATION_MODES = frozenset({"multi_agent", "single_pass", "ab_test"})
 
 
 class ConfigError(ValueError):
@@ -133,6 +135,40 @@ def load_preprocessor_config(path: str | Path) -> PreprocessorConfig:
     return PreprocessorConfig(
         preprocessor_files=tuple(dict.fromkeys(explicit_files)),
         preprocessor_globs=tuple(dict.fromkeys(globs)),
+    )
+
+
+def load_adjudication_policy(path: str | Path) -> AdjudicationPolicy:
+    """Load adjudication mode and calibration policy.
+
+    Returns the default policy when the file does not exist.
+    """
+
+    file_path = Path(path)
+    if not file_path.is_file():
+        return AdjudicationPolicy()
+
+    data = _read_json(file_path)
+    if not isinstance(data, dict):
+        raise ConfigError("Adjudication policy config must be a JSON object")
+
+    mode = data.get("adjudication_mode", "multi_agent")
+    if mode not in _SUPPORTED_ADJUDICATION_MODES:
+        raise ConfigError(
+            f"Unsupported adjudication_mode: {mode!r}. "
+            f"Must be one of: {', '.join(sorted(_SUPPORTED_ADJUDICATION_MODES))}"
+        )
+
+    ab_test = data.get("ab_test", {})
+    calibration = data.get("calibration", {})
+
+    return AdjudicationPolicy(
+        adjudication_mode=mode,
+        ab_test_enabled=bool(ab_test.get("enabled", False)),
+        ab_test_split_ratio=float(ab_test.get("split_ratio", 0.5)),
+        ab_test_seed=int(ab_test.get("seed", 42)),
+        calibration_cold_start_threshold=int(calibration.get("cold_start_threshold", 30)),
+        calibration_recalibrate_interval_runs=int(calibration.get("recalibrate_interval_runs", 5)),
     )
 
 

@@ -4,7 +4,9 @@ from collections.abc import Callable
 from dataclasses import replace
 import re
 
-from .models import AdjudicationRecord, AutofixPatch, EvidencePacket, RoleOpinion, SinkRule, Verdict
+import hashlib
+
+from .models import AdjudicationRecord, AutofixPatch, EvidencePacket, RoleOpinion, SinglePassJudgment, SinkRule, Verdict
 
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -23,6 +25,120 @@ def adjudicate_packet(packet: EvidencePacket, sink_rule: SinkRule) -> Adjudicati
         prosecutor=prosecutor,
         defender=defender,
         judge=attach_autofix_patch(judge, packet, sink_rule),
+    )
+
+
+def route_adjudication(
+    packet: EvidencePacket,
+    sink_rule: SinkRule,
+    *,
+    mode: str = "multi_agent",
+    ab_seed: int = 42,
+) -> Verdict:
+    """Route adjudication based on mode and return the final verdict."""
+
+    if mode == "single_pass":
+        return adjudicate_single_pass(packet, sink_rule).verdict
+    if mode == "ab_test":
+        digest = hashlib.md5(
+            f"{packet.case_id}:{ab_seed}".encode(), usedforsecurity=False
+        ).hexdigest()
+        use_single = int(digest[:8], 16) % 2 == 0
+        if use_single:
+            return adjudicate_single_pass(packet, sink_rule).verdict
+        return adjudicate_packet(packet, sink_rule).judge
+    return adjudicate_packet(packet, sink_rule).judge
+
+
+def adjudicate_single_pass(packet: EvidencePacket, sink_rule: SinkRule) -> SinglePassJudgment:
+    """Run a single-pass structured adjudication (V3 replacement for multi-role).
+
+    This combines the prosecutor/defender/judge logic into a single deterministic
+    pass that considers both attack and defence evidence at once.
+    """
+
+    observed_guards = _tuple_field(packet, "observed_guards")
+    origins = _tuple_field(packet, "origin_candidates")
+    risk_signals = packet.static_risk_signals
+
+    # Defence: explicit guards or safety facts
+    if observed_guards or _has_explicit_safety_fact(packet):
+        safety_evidence = observed_guards or tuple(
+            f for f in packet.knowledge_facts if _looks_like_safety_fact(f)
+        )
+        verdict = Verdict(
+            case_id=packet.case_id,
+            status="safe",
+            confidence="high" if observed_guards else "medium",
+            risk_path=(),
+            safety_evidence=safety_evidence,
+            counterarguments_considered=(),
+            suggested_fix=None,
+            needs_human=False,
+        )
+        verdict = attach_autofix_patch(verdict, packet, sink_rule)
+        return SinglePassJudgment(
+            verdict=verdict,
+            raw_response="",
+            backend_metadata={},
+        )
+
+    # Attack: structured risk signals are strong evidence
+    if risk_signals:
+        risk_summaries = tuple(signal.summary for signal in risk_signals)
+        risk_path = risk_summaries + (f"no guard before {sink_rule.qualified_name}",)
+        verdict = Verdict(
+            case_id=packet.case_id,
+            status="risky",
+            confidence="high",
+            risk_path=risk_path,
+            safety_evidence=(),
+            counterarguments_considered=("no explicit guard or trusted non-nil contract found",),
+            suggested_fix=_suggested_fix(packet, sink_rule),
+            needs_human=False,
+        )
+        verdict = attach_autofix_patch(verdict, packet, sink_rule)
+        return SinglePassJudgment(
+            verdict=verdict,
+            raw_response="",
+            backend_metadata={},
+        )
+
+    # Attack: origin candidates but no safety evidence
+    if origins:
+        risk_path = origins + (f"no guard before {sink_rule.qualified_name}",)
+        verdict = Verdict(
+            case_id=packet.case_id,
+            status="risky",
+            confidence="medium",
+            risk_path=risk_path,
+            safety_evidence=(),
+            counterarguments_considered=("no explicit guard or trusted non-nil contract found",),
+            suggested_fix=_suggested_fix(packet, sink_rule),
+            needs_human=False,
+        )
+        verdict = attach_autofix_patch(verdict, packet, sink_rule)
+        return SinglePassJudgment(
+            verdict=verdict,
+            raw_response="",
+            backend_metadata={},
+        )
+
+    # Insufficient evidence
+    verdict = Verdict(
+        case_id=packet.case_id,
+        status="uncertain",
+        confidence="low",
+        risk_path=(),
+        safety_evidence=(),
+        counterarguments_considered=("no explicit guard or trusted non-nil contract found",),
+        suggested_fix=None,
+        needs_human=False,
+    )
+    return SinglePassJudgment(
+        verdict=verdict,
+        raw_response="",
+        backend_metadata={},
     )
 
 

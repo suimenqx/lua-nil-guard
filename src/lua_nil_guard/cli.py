@@ -135,6 +135,20 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             )
         except (ConfigError, OSError) as exc:
             return 2, str(exc)
+        # Write default adjudication_policy.json if it does not exist
+        adj_policy_path = root / "config" / "adjudication_policy.json"
+        if not adj_policy_path.exists() or force:
+            adj_policy_path.write_text(
+                json.dumps(
+                    {
+                        "adjudication_mode": "multi_agent",
+                        "ab_test": {"enabled": False, "split_ratio": 0.5, "seed": 42},
+                        "calibration": {"cold_start_threshold": 30, "recalibrate_interval_runs": 5},
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
         return 0, "\n".join(
             [
                 "Repository config initialized.",
@@ -143,8 +157,36 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 f"Confidence policy: {policy_path}",
                 f"Function contracts: {contracts_path}",
                 f"Preprocessor config: {preprocessor_path}",
+                f"Adjudication policy: {adj_policy_path}",
             ]
         )
+
+    if command == "calibration-status":
+        if len(args) != 2:
+            return 2, "calibration-status requires exactly one repository path"
+        root = Path(args[1])
+        run_db_path = root / ".lua_nil_guard" / "review_runs.sqlite3"
+        if not run_db_path.is_file():
+            return 0, "No run database found. Run a review first to collect calibration data."
+        import sqlite3 as _sqlite3
+
+        from .calibration import ensure_calibration_schema, list_buckets
+
+        conn = _sqlite3.connect(str(run_db_path))
+        ensure_calibration_schema(conn)
+        buckets = list_buckets(conn)
+        conn.close()
+        if not buckets:
+            return 0, "No calibration data available yet. Calibration requires adjudication records with actual_outcome annotations."
+        lines = ["Calibration Status", "==================", ""]
+        for bucket in buckets:
+            cold = " (cold start)" if bucket.sample_count < 30 else ""
+            precision_str = f"{bucket.actual_precision:.2%}" if bucket.actual_precision is not None else "N/A"
+            lines.append(
+                f"  {bucket.sink_type} / {bucket.unknown_reason or '(none)'} / {bucket.predicted_confidence}: "
+                f"samples={bucket.sample_count}, precision={precision_str}{cold}"
+            )
+        return 0, "\n".join(lines)
 
     if command == "macro-audit":
         if len(args) not in {2, 3}:
@@ -499,6 +541,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(review_args)
         except ValueError as exc:
             return 2, str(exc)
@@ -528,6 +571,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
                 run_db_path=run_db_path,
             )
@@ -562,6 +606,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(review_args)
         except ValueError as exc:
             return 2, str(exc)
@@ -595,6 +640,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
                 run_db_path=run_db_path,
                 run_id=run_id,
@@ -727,6 +773,154 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             ]
         )
 
+    if command == "run-incremental":
+        try:
+            run_db_path, remaining = _parse_run_db_option(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        changed_files_raw: str | None = None
+        positional_inc: list[str] = []
+        idx = 0
+        while idx < len(remaining):
+            if remaining[idx] == "--changed-files":
+                if idx + 1 >= len(remaining):
+                    return 2, "--changed-files requires a comma-separated list of files"
+                changed_files_raw = remaining[idx + 1]
+                idx += 2
+                continue
+            positional_inc.append(remaining[idx])
+            idx += 1
+        if changed_files_raw is None:
+            return 2, "run-incremental requires --changed-files FILE1,FILE2,..."
+        if not positional_inc:
+            return 2, "run-incremental requires a repository path"
+        root = Path(positional_inc[0])
+        changed_files = {f.strip() for f in changed_files_raw.split(",") if f.strip()}
+        if not changed_files:
+            return 2, "--changed-files must not be empty"
+        import sqlite3 as _sqlite3
+
+        from .incremental import compute_invalidated_facts, should_fallback_to_full
+        from .repository import ensure_dependency_schema
+
+        db_path = run_db_path or (root / ".lua_nil_guard" / "review_runs.sqlite3")
+        if not db_path.is_file():
+            return 0, "No previous run database found. Running full analysis instead.\nUse run-start for a full run first."
+        conn = _sqlite3.connect(str(db_path))
+        ensure_dependency_schema(conn)
+        snapshot, error = _load_repository_snapshot(root)
+        if error is not None:
+            conn.close()
+            return 2, error
+        total_files = len(snapshot.lua_files)
+        if should_fallback_to_full(conn, changed_files, total_files):
+            conn.close()
+            return 0, f"Incremental analysis not available (fallback to full). Changed {len(changed_files)} of {total_files} files.\nUse run-start for a full run."
+        invalidated = compute_invalidated_facts(conn, changed_files)
+        conn.close()
+        return 0, "\n".join(
+            [
+                "Incremental analysis summary",
+                f"Changed files: {len(changed_files)}",
+                f"Invalidated facts: {len(invalidated)}",
+                f"Total repository files: {total_files}",
+                "",
+                "Invalidated fact IDs:" if invalidated else "No facts invalidated.",
+            ]
+            + [f"  - {fid}" for fid in sorted(invalidated)]
+        )
+
+    if command == "annotation-coverage":
+        if len(args) != 2:
+            return 2, "annotation-coverage requires exactly one repository path"
+        root = Path(args[1])
+        import re as _re
+
+        from .annotations import parse_annotations
+        from .repository import discover_lua_files, read_lua_source_text
+
+        try:
+            lua_files = discover_lua_files(root)
+        except (OSError, ValueError) as exc:
+            return 2, str(exc)
+        total_functions = 0
+        annotated_functions: set[str] = set()
+        module_stats: dict[str, tuple[int, int]] = {}
+        for lua_file in lua_files:
+            try:
+                source = read_lua_source_text(lua_file)
+            except Exception:
+                continue
+            rel_path = str(lua_file.relative_to(root))
+            module = str(lua_file.parent.relative_to(root)) if lua_file.parent != root else "(root)"
+            fn_count = len(_re.findall(r"(?:local\s+)?function\s+[\w.:]+\s*\(", source))
+            facts = parse_annotations(source, rel_path)
+            ann_fns = {f.function_id for f in facts}
+            total_functions += fn_count
+            annotated_functions |= ann_fns
+            prev_total, prev_ann = module_stats.get(module, (0, 0))
+            module_stats[module] = (prev_total + fn_count, prev_ann + len(ann_fns))
+        coverage_pct = (len(annotated_functions) / total_functions * 100) if total_functions > 0 else 0
+        lines = [
+            "Annotation Coverage Report",
+            "=========================",
+            f"Total functions: {total_functions}",
+            f"Annotated functions: {len(annotated_functions)} ({coverage_pct:.1f}%)",
+            f"Unannotated functions: {total_functions - len(annotated_functions)}",
+            "",
+            "By module:",
+        ]
+        for mod, (total, ann) in sorted(module_stats.items()):
+            pct = (ann / total * 100) if total > 0 else 0
+            lines.append(f"  {mod}: {ann}/{total} ({pct:.1f}%)")
+        return 0, "\n".join(lines)
+
+    if command == "annotation-suggest":
+        if len(args) != 2:
+            return 2, "annotation-suggest requires exactly one Lua file path"
+        file_path = Path(args[1])
+        if not file_path.is_file():
+            return 2, f"File not found: {file_path}"
+        import re as _re
+
+        from .repository import read_lua_source_text
+
+        try:
+            source = read_lua_source_text(file_path)
+        except Exception as exc:
+            return 2, str(exc)
+        lines_src = source.splitlines()
+        suggestions: list[str] = []
+        func_pattern = _re.compile(r"^(?:local\s+)?function\s+([\w.:]+)\s*\(([^)]*)\)")
+        for i, line in enumerate(lines_src):
+            m = func_pattern.match(line.strip())
+            if m is None:
+                continue
+            func_name = m.group(1)
+            # Find function body (until matching end)
+            body_lines = []
+            depth = 1
+            for j in range(i + 1, len(lines_src)):
+                s = lines_src[j].strip()
+                if any(s.startswith(k) for k in ("function ", "local function ", "if ", "for ", "while ")) and (s.endswith(" do") or s.endswith(" then")):
+                    depth += 1
+                if s == "end":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                body_lines.append(lines_src[j])
+            body = "\n".join(body_lines)
+            return_lines = [ln for ln in body_lines if ln.strip().startswith("return ") and ln.strip() != "return"]
+            all_defaulted = bool(return_lines) and all(" or " in ln for ln in return_lines)
+            has_return_nil = any(ln.strip() in ("return", "return nil") for ln in body_lines)
+            if all_defaulted and not has_return_nil:
+                suggestions.append(f"  L{i + 1}: function {func_name} → --- @nil_guard: returns_non_nil (high confidence)")
+            elif has_return_nil or not return_lines:
+                suggestions.append(f"  L{i + 1}: function {func_name} → --- @nil_guard return 1: may_nil (medium confidence)")
+        if not suggestions:
+            return 0, "No annotation suggestions for this file."
+        return 0, "\n".join(["Annotation Suggestions", "=====================", ""] + suggestions)
+
     if command == "report":
         try:
             focus_mode, review_args = _parse_focus_options(args[1:])
@@ -743,6 +937,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(review_args)
         except ValueError as exc:
             return 2, str(exc)
@@ -772,6 +967,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
@@ -794,6 +990,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(review_args)
         except ValueError as exc:
             return 2, str(exc)
@@ -823,6 +1020,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
             )
         except (OSError, SkillRuntimeError, BackendError, ValueError) as exc:
@@ -845,6 +1043,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(review_args)
         except ValueError as exc:
             return 2, str(exc)
@@ -874,6 +1073,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
@@ -896,6 +1096,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(review_args)
         except ValueError as exc:
             return 2, str(exc)
@@ -925,6 +1126,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
             )
         except (OSError, SkillRuntimeError, BackendError, ValueError) as exc:
@@ -946,6 +1148,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
@@ -972,6 +1175,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
@@ -993,6 +1197,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
@@ -1020,6 +1225,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
@@ -1051,6 +1257,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
@@ -1078,6 +1285,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
@@ -1110,6 +1318,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
@@ -1137,6 +1346,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
@@ -1168,6 +1378,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
@@ -1195,6 +1406,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
@@ -1226,6 +1438,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
@@ -1253,6 +1466,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
@@ -1284,6 +1498,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
@@ -1313,6 +1528,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
@@ -1334,6 +1550,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
@@ -1364,6 +1581,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
@@ -1399,6 +1617,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
@@ -1426,6 +1645,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
@@ -1455,6 +1675,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
@@ -1482,6 +1703,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
@@ -1546,6 +1768,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
@@ -1573,6 +1796,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
             )
         except (SkillRuntimeError, BackendError, ValueError) as exc:
@@ -1637,6 +1861,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 backend_cache_path,
                 backend_config_overrides,
                 positional,
+            adjudication_mode,
             ) = _parse_review_options(args[1:])
         except ValueError as exc:
             return 2, str(exc)
@@ -1664,6 +1889,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     expanded_evidence_retry=expanded_evidence_retry,
                     cache_path=backend_cache_path,
                     config_overrides=backend_config_overrides,
+                    adjudication_mode=adjudication_mode,
                 ),
                 output_path=output_path,
             )
@@ -1772,7 +1998,15 @@ def _create_review_backend(
     expanded_evidence_retry: bool | None,
     cache_path: Path | None,
     config_overrides: tuple[str, ...],
+    adjudication_mode: str | None = None,
 ):
+    # When single_pass mode is requested and using heuristic backend,
+    # return the single-pass heuristic backend directly.
+    if adjudication_mode == "single_pass" and backend_name == "heuristic":
+        from .agent_backend import SinglePassHeuristicBackend
+
+        return SinglePassHeuristicBackend()
+
     if backend_manifest_path is not None:
         register_manifest_backed_adjudication_backend(backend_manifest_path, replace=True)
     return create_adjudication_backend(
@@ -2704,8 +2938,14 @@ def _usage() -> str:
             "  {cli} proposal-analytics [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
             "  {cli} proposal-analytics-json [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> [output]",
             "",
+            "  {cli} calibration-status <repository>",
+            "  {cli} run-incremental [--run-db PATH] --changed-files FILE1,FILE2 <repository>",
+            "  {cli} annotation-coverage <repository>",
+            "  {cli} annotation-suggest <file.lua>",
+            "",
             "Backend values: heuristic | codex | claude | gemini",
             "Focus values: all | string",
+            "Adjudication mode values: multi_agent | single_pass | ab_test",
         ]
     )
 
@@ -2923,6 +3163,7 @@ def _parse_review_options(
     bool | None,
     tuple[str, ...],
     list[str],
+    str | None,
 ]:
     backend_name = "heuristic"
     model: str | None = None
@@ -2936,10 +3177,20 @@ def _parse_review_options(
     backend_cache_path: Path | None = None
     backend_config_overrides: list[str] = []
     positional: list[str] = []
+    adjudication_mode: str | None = None
     index = 0
 
     while index < len(args):
         token = args[index]
+        if token == "--adjudication-mode":
+            if index + 1 >= len(args):
+                raise ValueError("--adjudication-mode requires a value")
+            adjudication_mode = args[index + 1]
+            _allowed_modes = {"single_pass", "multi_agent", "ab_test"}
+            if adjudication_mode not in _allowed_modes:
+                raise ValueError(f"--adjudication-mode must be one of: {', '.join(sorted(_allowed_modes))}")
+            index += 2
+            continue
         if token == "--backend":
             if index + 1 >= len(args):
                 raise ValueError("--backend requires a value")
@@ -3041,6 +3292,7 @@ def _parse_review_options(
         backend_cache_path,
         tuple(backend_config_overrides),
         positional,
+        adjudication_mode,
     )
 
 
