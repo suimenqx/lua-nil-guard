@@ -59,6 +59,7 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "validate-backend-manifest-json" in output
     assert "register-backend-manifest" in output
     assert "register-backend-manifest-json" in output
+    assert "backend-probe" in output
     assert "benchmark-cache-compare" in output
     assert "benchmark-json" in output
     assert "benchmark-cache-compare-json" in output
@@ -484,6 +485,231 @@ def test_cli_run_trace_and_case_replay_commands(
     assert len(replay_payload["replay"]["events"]) == 2
     assert replay_payload["replay"]["decision_trace"]["verdict"] == "safe"
     assert replay_payload["replay"]["decision_trace"]["evidence_refs"]
+
+
+def test_cli_backend_probe_renders_timeline_and_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ProbeBackend:
+        def __init__(self) -> None:
+            self._trace_recorder = None
+
+        def set_trace_recorder(self, recorder) -> None:  # noqa: ANN001
+            self._trace_recorder = recorder
+
+        def adjudicate(self, packet, sink_rule):  # noqa: ANN001
+            assert packet.case_id == "backend_probe.case"
+            assert sink_rule.qualified_name == "string.match"
+            if self._trace_recorder is not None:
+                self._trace_recorder.on_call_started(
+                    case_id=packet.case_id,
+                    attempt_no=1,
+                    stage="build_command",
+                    payload={
+                        "backend_name": "probe",
+                        "backend_model": "probe-model",
+                        "backend_executable": "/tmp/probe",
+                        "protocol": "schema_file_cli",
+                        "command": ("probe", "--json"),
+                        "prompt_text": "probe prompt",
+                    },
+                )
+                self._trace_recorder.on_call_finished(
+                    case_id=packet.case_id,
+                    attempt_no=1,
+                    stage="execute",
+                    payload={
+                        "backend_name": "probe",
+                        "backend_model": "probe-model",
+                        "response_text": '{"judge":{"status":"safe"}}',
+                        "elapsed_ms": 12,
+                    },
+                )
+                self._trace_recorder.on_call_finished(
+                    case_id=packet.case_id,
+                    attempt_no=1,
+                    stage="parse_response",
+                    payload={
+                        "backend_name": "probe",
+                        "backend_model": "probe-model",
+                        "parsed_payload_json": '{"judge":{"status":"safe"}}',
+                    },
+                )
+            return AdjudicationRecord(
+                prosecutor=RoleOpinion(
+                    role="prosecutor",
+                    status="safe",
+                    confidence="high",
+                    risk_path=(),
+                    safety_evidence=("guarded",),
+                    missing_evidence=(),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                defender=RoleOpinion(
+                    role="defender",
+                    status="safe",
+                    confidence="high",
+                    risk_path=(),
+                    safety_evidence=("guarded",),
+                    missing_evidence=(),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                judge=Verdict(
+                    case_id=packet.case_id,
+                    status="safe",
+                    confidence="high",
+                    risk_path=(),
+                    safety_evidence=("guarded",),
+                    counterarguments_considered=(),
+                    suggested_fix=None,
+                    needs_human=False,
+                ),
+            )
+
+    monkeypatch.setattr(
+        cli_module,
+        "create_adjudication_backend",
+        lambda *args, **kwargs: ProbeBackend(),
+    )
+
+    exit_code, output = run(["backend-probe", "--backend", "codex", str(tmp_path)])
+
+    assert exit_code == 0
+    assert "Lua Nil Guard Backend Probe" in output
+    assert f"Repository: {tmp_path}" in output
+    assert "Status: success" in output
+    assert "Trace events: 3" in output
+    assert "build_command:started" in output
+    assert "execute:completed" in output
+    assert "parse_response:completed" in output
+    assert "Judge verdict: safe" in output
+    assert 'command: ["probe", "--json"]' in output
+    assert "prompt preview: probe prompt" in output
+    assert 'response preview: {"judge":{"status":"safe"}}' in output
+
+
+def test_cli_backend_probe_reports_failed_stage_and_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingProbeBackend:
+        def __init__(self) -> None:
+            self._trace_recorder = None
+
+        def set_trace_recorder(self, recorder) -> None:  # noqa: ANN001
+            self._trace_recorder = recorder
+
+        def adjudicate(self, packet, sink_rule):  # noqa: ANN001
+            if self._trace_recorder is not None:
+                self._trace_recorder.on_call_started(
+                    case_id=packet.case_id,
+                    attempt_no=1,
+                    stage="execute",
+                    payload={"backend_name": "probe"},
+                )
+                self._trace_recorder.on_call_failed(
+                    case_id=packet.case_id,
+                    attempt_no=1,
+                    stage="execute",
+                    payload={
+                        "backend_name": "probe",
+                        "error_class": "BackendError",
+                        "error_message": "probe timeout",
+                    },
+                )
+            raise BackendError("probe timeout")
+
+    monkeypatch.setattr(
+        cli_module,
+        "create_adjudication_backend",
+        lambda *args, **kwargs: FailingProbeBackend(),
+    )
+
+    exit_code, output = run(["backend-probe", "--backend", "codex", str(tmp_path)])
+
+    assert exit_code == 2
+    assert "Lua Nil Guard Backend Probe" in output
+    assert "Status: failed" in output
+    assert "execute:failed" in output
+    assert "Last observed stage: execute:failed" in output
+    assert "Error: probe timeout" in output
+
+
+def test_cli_backend_probe_accepts_single_lua_file_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "config" / "confidence_policy.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    file_path = tmp_path / "src" / "demo.lua"
+    file_path.write_text(
+        "\n".join(
+            [
+                "local username = req.params.username",
+                "return string.match(username, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    observed: dict[str, object] = {}
+
+    class ProbeBackend:
+        def adjudicate(self, packet, sink_rule):  # noqa: ANN001
+            observed["target_file"] = packet.target.file
+            observed["local_context"] = packet.local_context
+            return AdjudicationRecord(
+                prosecutor=RoleOpinion(
+                    role="prosecutor",
+                    status="safe",
+                    confidence="high",
+                    risk_path=(),
+                    safety_evidence=("guarded",),
+                    missing_evidence=(),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                defender=RoleOpinion(
+                    role="defender",
+                    status="safe",
+                    confidence="high",
+                    risk_path=(),
+                    safety_evidence=("guarded",),
+                    missing_evidence=(),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                judge=Verdict(
+                    case_id=packet.case_id,
+                    status="safe",
+                    confidence="high",
+                    risk_path=(),
+                    safety_evidence=("guarded",),
+                    counterarguments_considered=(),
+                    suggested_fix=None,
+                    needs_human=False,
+                ),
+            )
+
+    monkeypatch.setattr(
+        cli_module,
+        "create_adjudication_backend",
+        lambda *args, **kwargs: ProbeBackend(),
+    )
+
+    exit_code, output = run(["backend-probe", "--backend", "codex", str(file_path)])
+
+    assert exit_code == 0
+    assert "Probe mode: single-file" in output
+    assert f"Target file: {file_path}" in output
+    assert str(observed.get("target_file", "")).endswith("src/demo.lua")
+    local_context = str(observed.get("local_context", ""))
+    assert "-- backend-probe source: src/demo.lua" in local_context
+    assert "return string.match(username, '^a')" in local_context
 
 
 def test_cli_clear_trace_artifacts_removes_trace_files(tmp_path: Path) -> None:

@@ -4,6 +4,7 @@ from collections import Counter
 from dataclasses import replace
 import json
 from pathlib import Path
+import time
 from typing import Sequence
 
 from .agent_backend import (
@@ -34,6 +35,7 @@ from .reporting import (
     render_markdown_report,
 )
 from .skill_runtime import SkillRuntimeError
+from .models import AdjudicationRecord, EvidencePacket, EvidenceTarget, SinkRule
 from .service import (
     analyze_review_improvements,
     apply_autofix_manifest,
@@ -564,6 +566,104 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 f"Output: {output_path}",
             ]
         )
+
+    if command == "backend-probe":
+        try:
+            (
+                backend_name,
+                model,
+                skill_path,
+                strict_skill,
+                executable,
+                backend_manifest_path,
+                backend_timeout,
+                backend_attempts,
+                expanded_evidence_retry,
+                backend_cache_path,
+                backend_config_overrides,
+                positional,
+                adjudication_mode,
+            ) = _parse_review_options(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) not in {0, 1}:
+            return 2, (
+                "backend-probe accepts optional <repository> or <file.lua> "
+                "and no extra positional arguments"
+            )
+        probe_file: Path | None = None
+        if positional:
+            target = Path(positional[0])
+            if not target.exists():
+                return 2, f"Probe target does not exist: {target}"
+            if target.is_dir():
+                root = target
+            elif target.is_file():
+                probe_file = target.resolve(strict=False)
+                try:
+                    root = find_repository_root_for_file(probe_file)
+                except ValueError:
+                    root = probe_file.parent
+            else:
+                return 2, f"Probe target must be a directory or a file: {target}"
+        else:
+            root = Path.cwd()
+        if not root.is_dir():
+            return 2, f"Repository path must be a directory: {root}"
+        try:
+            backend = _create_review_backend(
+                backend_name=backend_name,
+                root=root,
+                model=model,
+                skill_path=skill_path,
+                strict_skill=strict_skill,
+                executable=executable,
+                backend_manifest_path=backend_manifest_path,
+                timeout_seconds=backend_timeout,
+                max_attempts=backend_attempts,
+                expanded_evidence_retry=expanded_evidence_retry,
+                cache_path=backend_cache_path,
+                config_overrides=backend_config_overrides,
+                adjudication_mode=adjudication_mode,
+            )
+        except (ConfigError, ValueError, OSError) as exc:
+            return 2, str(exc)
+
+        packet, sink_rule = _build_backend_probe_inputs(
+            root=root,
+            probe_file=probe_file,
+        )
+        recorder = _BackendProbeTraceRecorder()
+        attached_trace_recorder = False
+        set_recorder = getattr(backend, "set_trace_recorder", None)
+        if callable(set_recorder):
+            set_recorder(recorder)
+            attached_trace_recorder = True
+
+        started = time.perf_counter()
+        record: AdjudicationRecord | None = None
+        error_text: str | None = None
+        try:
+            record = backend.adjudicate(packet, sink_rule)
+        except (BackendError, SkillRuntimeError, ValueError, OSError) as exc:
+            error_text = str(exc)
+        finally:
+            if attached_trace_recorder:
+                set_recorder(None)
+        elapsed_seconds = max(0.0, time.perf_counter() - started)
+        status = "success" if error_text is None else "failed"
+        rendered = _render_backend_probe(
+            root=root,
+            backend_name=backend_name,
+            status=status,
+            elapsed_seconds=elapsed_seconds,
+            events=tuple(recorder.events),
+            record=record,
+            error_text=error_text,
+            trace_recorder_attached=attached_trace_recorder,
+            probe_file=probe_file,
+        )
+        return (0 if error_text is None else 2), rendered
 
     if command == "run-start":
         try:
@@ -3153,6 +3253,7 @@ def _usage() -> str:
             "  {cli} register-backend-manifest [--replace] <manifest-path>",
             "  {cli} register-backend-manifest-json [--replace] <manifest-path> [output]",
             "  {cli} compare-benchmark-json <before> <after> [output]",
+            "  {cli} backend-probe [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] [repository|file.lua]",
             "  {cli} run-start [--run-db PATH] [--focus MODE] [--trace-level LEVEL] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  {cli} run-resume [--run-db PATH] [--focus MODE] [--trace-level LEVEL] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <run_id>",
             "  {cli} run-status [--run-db PATH] <repository> [run_id]",
@@ -3197,6 +3298,296 @@ def _usage() -> str:
             "Forensic trace requires explicit --trace-level forensic",
         ]
     )
+
+
+class _BackendProbeTraceRecorder:
+    """In-memory trace collector used by the backend-probe command."""
+
+    def __init__(self) -> None:
+        self.events: list[dict[str, object]] = []
+
+    def on_call_started(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+    ) -> None:
+        self._append(
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            status="started",
+            payload=payload,
+        )
+
+    def on_call_finished(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+    ) -> None:
+        self._append(
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            status="completed",
+            payload=payload,
+        )
+
+    def on_call_failed(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+    ) -> None:
+        self._append(
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            status="failed",
+            payload=payload,
+        )
+
+    def _append(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        status: str,
+        payload: dict[str, object],
+    ) -> None:
+        self.events.append(
+            {
+                "case_id": case_id,
+                "attempt_no": attempt_no,
+                "stage": stage,
+                "status": status,
+                "payload": payload,
+            }
+        )
+
+
+def _build_backend_probe_inputs(
+    *,
+    root: Path,
+    probe_file: Path | None,
+) -> tuple[EvidencePacket, SinkRule]:
+    sink_rule = SinkRule(
+        id="backend.probe.string.match.arg1",
+        kind="function_arg",
+        qualified_name="string.match",
+        arg_index=1,
+        nil_sensitive=True,
+        failure_mode="runtime_error",
+        default_severity="high",
+        safe_patterns=("username or ''",),
+    )
+
+    target_file = "__backend_probe__.lua"
+    context_lines = [
+        "local username = req.params.username",
+        "return string.match(username, '^probe')",
+    ]
+    knowledge_facts: tuple[str, ...] = ("backend_probe_synthetic_case",)
+    if probe_file is not None:
+        raw = probe_file.read_bytes()
+        source_text = raw.decode("utf-8", errors="replace")
+        trimmed_context, truncated = _trim_probe_context(source_text)
+        normalized_target = _probe_file_label(root=root, file_path=probe_file)
+        target_file = normalized_target
+        context_lines = [
+            f"-- backend-probe source: {normalized_target}",
+            trimmed_context or "-- (empty file)",
+        ]
+        if truncated:
+            context_lines.append("-- [lua-nil-guard] probe context truncated")
+        knowledge_facts = (
+            "backend_probe_single_file",
+            f"backend_probe_target={normalized_target}",
+        )
+
+    packet = EvidencePacket(
+        case_id="backend_probe.case_file" if probe_file is not None else "backend_probe.case",
+        target=EvidenceTarget(
+            file=target_file,
+            line=1,
+            column=1,
+            sink="string.match",
+            arg_index=1,
+            expression="username",
+        ),
+        local_context="\n".join(context_lines),
+        related_functions=(),
+        function_summaries=(),
+        knowledge_facts=knowledge_facts,
+        static_reasoning={
+            "state": "unknown",
+            "analysis_mode": "ast_lite",
+            "origin_candidates": ("username",),
+            "observed_guards": (),
+        },
+    )
+    return packet, sink_rule
+
+
+def _render_backend_probe(
+    *,
+    root: Path,
+    backend_name: str | None,
+    status: str,
+    elapsed_seconds: float,
+    events: tuple[dict[str, object], ...],
+    record: AdjudicationRecord | None,
+    error_text: str | None,
+    trace_recorder_attached: bool,
+    probe_file: Path | None,
+) -> str:
+    reported_backend = _probe_event_value(events, "backend_name")
+    reported_model = _probe_event_value(events, "backend_model")
+    reported_executable = _probe_event_value(events, "backend_executable")
+    reported_protocol = _probe_event_value(events, "protocol")
+    prompt_sha256 = _probe_event_value(events, "prompt_sha256")
+    command = _probe_event_value(events, "command")
+    prompt_text = _probe_event_value(events, "prompt_text")
+    response_text = _probe_event_value(events, "response_text")
+    parsed_payload_json = _probe_event_value(events, "parsed_payload_json")
+    stderr_text = _probe_event_value(events, "stderr_text")
+    event_error = _probe_event_value(events, "error_message")
+
+    lines = [
+        "# Lua Nil Guard Backend Probe",
+        "",
+        f"Repository: {root}",
+        f"Probe mode: {'single-file' if probe_file is not None else 'synthetic'}",
+        f"Target file: {probe_file if probe_file is not None else '(synthetic case)'}",
+        f"Backend: {reported_backend or backend_name or '(unknown)'}",
+        f"Model: {reported_model or '(default)'}",
+        f"Executable: {reported_executable or '(default)'}",
+        f"Protocol: {reported_protocol or '(unknown)'}",
+        f"Status: {status}",
+        f"Elapsed: {elapsed_seconds:.3f}s",
+        f"Trace recorder attached: {'yes' if trace_recorder_attached else 'no'}",
+        f"Trace events: {len(events)}",
+    ]
+
+    if record is not None:
+        lines.extend(
+            [
+                f"Judge verdict: {record.judge.status}",
+                f"Judge confidence: {record.judge.confidence}",
+                f"Needs human: {'yes' if record.judge.needs_human else 'no'}",
+            ]
+        )
+
+    if events:
+        last_event = events[-1]
+        lines.append(
+            f"Last observed stage: {last_event.get('stage')}:{last_event.get('status')}"
+        )
+
+    if error_text is not None:
+        lines.append(f"Error: {_probe_inline(error_text, limit=240)}")
+    elif event_error not in {None, ""}:
+        lines.append(f"Error: {_probe_inline(str(event_error), limit=240)}")
+
+    lines.extend(["", "Timeline:"])
+    if not events:
+        lines.append("  (none)")
+    else:
+        for index, event in enumerate(events, start=1):
+            payload = event.get("payload")
+            payload_dict = payload if isinstance(payload, dict) else {}
+            elapsed_ms = payload_dict.get("elapsed_ms")
+            elapsed_suffix = ""
+            if isinstance(elapsed_ms, (int, float)):
+                elapsed_suffix = f" elapsed_ms={int(elapsed_ms)}"
+            error_message = payload_dict.get("error_message")
+            error_suffix = ""
+            if isinstance(error_message, str) and error_message.strip():
+                error_suffix = f" error={_probe_inline(error_message, limit=160)}"
+            lines.append(
+                "  - "
+                f"#{index} "
+                f"attempt={event.get('attempt_no')} "
+                f"{event.get('stage')}:{event.get('status')}"
+                f"{elapsed_suffix}{error_suffix}"
+            )
+
+    lines.extend(["", "Payload snapshots:"])
+    if prompt_sha256 is not None:
+        lines.append(f"  - prompt sha256: {prompt_sha256}")
+    if command is not None:
+        lines.append(f"  - command: {_probe_command(command)}")
+    if prompt_text is not None:
+        lines.append(f"  - prompt preview: {_probe_inline(str(prompt_text), limit=280)}")
+    if response_text is not None:
+        lines.append(f"  - response preview: {_probe_inline(str(response_text), limit=280)}")
+    if parsed_payload_json is not None:
+        lines.append(f"  - parsed payload preview: {_probe_inline(str(parsed_payload_json), limit=280)}")
+    if stderr_text is not None:
+        lines.append(f"  - stderr preview: {_probe_inline(str(stderr_text), limit=280)}")
+
+    if lines[-1] == "Payload snapshots:":
+        lines.append("  (none captured)")
+
+    return "\n".join(lines)
+
+
+def _probe_event_value(events: tuple[dict[str, object], ...], key: str) -> object | None:
+    for event in reversed(events):
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        value = payload.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return value
+    return None
+
+
+def _probe_inline(value: str, *, limit: int) -> str:
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n")
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit]}...(truncated,{len(normalized)} chars)"
+
+
+def _probe_command(command: object) -> str:
+    if isinstance(command, (tuple, list)) and all(isinstance(item, str) for item in command):
+        return json.dumps(list(command), ensure_ascii=False)
+    return _probe_inline(str(command), limit=320)
+
+
+def _probe_file_label(*, root: Path, file_path: Path) -> str:
+    try:
+        relative = file_path.resolve(strict=False).relative_to(root.resolve(strict=False))
+    except ValueError:
+        return str(file_path)
+    return str(relative)
+
+
+def _trim_probe_context(
+    source_text: str,
+    *,
+    max_lines: int = 120,
+    max_chars: int = 12000,
+) -> tuple[str, bool]:
+    lines = source_text.splitlines()
+    truncated = len(lines) > max_lines
+    clipped = "\n".join(lines[:max_lines])
+    if len(clipped) > max_chars:
+        clipped = clipped[:max_chars]
+        truncated = True
+    return clipped, truncated
 
 
 def _parse_focus_options(args: list[str]) -> tuple[str, list[str]]:
