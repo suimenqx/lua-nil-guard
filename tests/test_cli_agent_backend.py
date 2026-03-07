@@ -50,6 +50,64 @@ class DemoCliBackend(CliAgentBackend):
         )
 
 
+class _TraceCollector:
+    def __init__(self) -> None:
+        self.started: list[dict[str, object]] = []
+        self.finished: list[dict[str, object]] = []
+        self.failed: list[dict[str, object]] = []
+
+    def on_call_started(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+    ) -> None:
+        self.started.append(
+            {
+                "case_id": case_id,
+                "attempt_no": attempt_no,
+                "stage": stage,
+                "payload": payload,
+            }
+        )
+
+    def on_call_finished(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+    ) -> None:
+        self.finished.append(
+            {
+                "case_id": case_id,
+                "attempt_no": attempt_no,
+                "stage": stage,
+                "payload": payload,
+            }
+        )
+
+    def on_call_failed(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+    ) -> None:
+        self.failed.append(
+            {
+                "case_id": case_id,
+                "attempt_no": attempt_no,
+                "stage": stage,
+                "payload": payload,
+            }
+        )
+
+
 def test_cli_agent_backend_uses_custom_skill_path(tmp_path: Path) -> None:
     skill_path = _write_minimal_skill(tmp_path / "custom-skill.md", name="custom-adjudicator")
     captured: dict[str, object] = {}
@@ -251,6 +309,68 @@ def test_cli_agent_backend_reuses_cached_result_without_runner(tmp_path: Path) -
     assert backend.backend_total_seconds >= 0.0
     payload = json.loads(cache_path.read_text(encoding="utf-8"))
     assert len(payload) == 1
+
+
+def test_cli_agent_backend_emits_cache_lookup_trace_events(tmp_path: Path) -> None:
+    cache_path = tmp_path / "backend-cache.json"
+    attempts = {"count": 0}
+    collector = _TraceCollector()
+
+    def fake_runner(
+        command: tuple[str, ...],
+        *,
+        stdin_text: str,
+        cwd: Path | None,
+    ) -> None:
+        attempts["count"] += 1
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(
+            json.dumps(
+                {
+                    "prosecutor": {
+                        "role": "prosecutor",
+                        "status": "uncertain",
+                        "confidence": "low",
+                        "risk_path": [],
+                        "safety_evidence": [],
+                        "missing_evidence": ["stub"],
+                        "recommended_next_action": "expand_context",
+                        "suggested_fix": None,
+                    },
+                    "defender": {
+                        "role": "defender",
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["cached"],
+                        "missing_evidence": [],
+                        "recommended_next_action": "suppress",
+                        "suggested_fix": None,
+                    },
+                    "judge": {
+                        "status": "safe",
+                        "confidence": "high",
+                        "risk_path": [],
+                        "safety_evidence": ["cached"],
+                        "counterarguments_considered": [],
+                        "suggested_fix": None,
+                        "needs_human": False,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    backend = DemoCliBackend(runner=fake_runner, cache_path=cache_path)
+    backend.set_trace_recorder(collector)
+    backend.adjudicate(_sample_packet(), _sample_sink_rule())
+    backend.adjudicate(_sample_packet(), _sample_sink_rule())
+
+    assert attempts["count"] == 1
+    cache_lookup_events = [event for event in collector.finished if event["stage"] == "cache_lookup"]
+    assert len(cache_lookup_events) == 2
+    assert cache_lookup_events[0]["payload"]["cache_hit"] is False
+    assert cache_lookup_events[1]["payload"]["cache_hit"] is True
 
 
 def test_codex_cli_backend_builds_expected_exec_command(tmp_path: Path) -> None:
@@ -500,6 +620,7 @@ def test_codex_cli_backend_retries_after_backend_error(tmp_path: Path) -> None:
 
 def test_codex_cli_backend_falls_back_to_uncertain_after_exhausted_retries(tmp_path: Path) -> None:
     attempts = {"count": 0}
+    collector = _TraceCollector()
 
     def failing_runner(
         command: tuple[str, ...],
@@ -511,12 +632,17 @@ def test_codex_cli_backend_falls_back_to_uncertain_after_exhausted_retries(tmp_p
         raise BackendError("temporary codex failure")
 
     backend = CodexCliBackend(runner=failing_runner, workdir=tmp_path, max_attempts=2)
+    backend.set_trace_recorder(collector)
     record = backend.adjudicate(_sample_packet(), _sample_sink_rule())
 
     assert attempts["count"] == 2
     assert record.judge.status == "uncertain"
     assert record.judge.needs_human is True
     assert record.judge.counterarguments_considered == ("temporary codex failure",)
+    fallback_events = [event for event in collector.finished if event["stage"] == "fallback"]
+    assert len(fallback_events) == 1
+    assert fallback_events[0]["attempt_no"] == 2
+    assert fallback_events[0]["payload"]["fallback_used"] is True
 
 
 def test_claude_cli_backend_uses_claude_executable_by_default(tmp_path: Path) -> None:

@@ -106,11 +106,13 @@ lua-nil-guard case-replay /path/to/target-repo <run_id> <case_id>
 lua-nil-guard clear-trace-artifacts /path/to/target-repo [run_id]
 ```
 
+`case-replay-json` 会输出标准化 `decision_trace` 对象（`verdict`、`risk_path`、`safety_evidence`、`counterarguments_considered`、`missing_evidence`、`evidence_refs`、`uncertainty_reason`），便于接入审计看板。
+
 Trace 级别说明：
 
 - `summary`（默认）：仅元数据与时间线
 - `debug`：额外保存 prompt 与结构化响应
-- `forensic`：额外保存 stderr/原始包络字段（建议显式按需开启）
+- `forensic`：额外保存 stderr/原始包络字段（必须通过 `--trace-level forensic` 显式开启）
 
 默认 trace 行为由 `config/trace_policy.json` 控制：
 
@@ -124,6 +126,8 @@ Trace 级别说明：
   ]
 }
 ```
+
+安全约束：`config/trace_policy.json` 的 `default_trace_level` 不能配置为 `forensic`。默认应使用 `summary` 或 `debug`，仅在专项审计时显式传 `--trace-level forensic`。
 
 当 payload 超过 `max_inline_payload_bytes` 时，会落盘到 `.lua_nil_guard/traces/<run_id>/...`，数据库仅保存描述信息（路径/hash/字节数）。
 

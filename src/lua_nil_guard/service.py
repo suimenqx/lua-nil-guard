@@ -278,6 +278,22 @@ def _normalize_trace_level(level: str) -> str:
     return normalized
 
 
+def _resolve_new_run_trace_level(
+    *,
+    requested_level: str | None,
+    trace_policy: TracePolicy,
+) -> str:
+    if requested_level is not None:
+        return requested_level
+    policy_level = _normalize_trace_level(trace_policy.default_trace_level)
+    if policy_level == "forensic":
+        raise ValueError(
+            "config/trace_policy.json default_trace_level cannot be 'forensic'; "
+            "pass trace_level='forensic' explicitly when needed"
+        )
+    return policy_level
+
+
 def _resolve_trace_policy(root: Path) -> TracePolicy:
     path = root / "config" / "trace_policy.json"
     return load_trace_policy(path)
@@ -1953,6 +1969,128 @@ def _json_or_raw(payload: str) -> object:
         return payload
 
 
+_EVIDENCE_REF_RE = re.compile(r"([A-Za-z0-9_./\\-]+\.lua):([0-9]+)")
+
+
+def _normalize_unique_strings(values: object) -> tuple[str, ...]:
+    if not isinstance(values, (list, tuple)):
+        return ()
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in values:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        ordered.append(text)
+    return tuple(ordered)
+
+
+def _iter_text_fragments(values: object) -> tuple[str, ...]:
+    fragments: list[str] = []
+    stack: list[object] = [values]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, str):
+            fragments.append(current)
+            continue
+        if isinstance(current, dict):
+            stack.extend(current.values())
+            continue
+        if isinstance(current, (list, tuple)):
+            stack.extend(current)
+    return tuple(fragments)
+
+
+def _extract_evidence_refs(
+    *,
+    target_file: str | None,
+    target_line: int | None,
+    values: tuple[object, ...],
+) -> tuple[dict[str, object], ...]:
+    refs: list[dict[str, object]] = []
+    seen: set[tuple[str, int]] = set()
+
+    if target_file and isinstance(target_line, int) and target_line > 0:
+        key = (target_file, target_line)
+        seen.add(key)
+        refs.append({"file": target_file, "line": target_line})
+
+    for text in _iter_text_fragments(values):
+        for match in _EVIDENCE_REF_RE.finditer(text):
+            file_path = match.group(1)
+            line_number = int(match.group(2))
+            key = (file_path, line_number)
+            if key in seen:
+                continue
+            seen.add(key)
+            refs.append({"file": file_path, "line": line_number})
+    return tuple(refs)
+
+
+def _build_decision_trace(
+    *,
+    evidence_packet: object,
+    adjudication_payload: object,
+    final_verdict: object,
+) -> dict[str, object]:
+    verdict_payload = final_verdict if isinstance(final_verdict, dict) else {}
+    verdict_status = str(verdict_payload.get("status") or "unknown")
+    confidence = str(verdict_payload.get("confidence") or "unknown")
+    risk_path = _normalize_unique_strings(verdict_payload.get("risk_path"))
+    safety_evidence = _normalize_unique_strings(verdict_payload.get("safety_evidence"))
+    counterarguments = _normalize_unique_strings(verdict_payload.get("counterarguments_considered"))
+
+    missing_items: list[str] = []
+    if isinstance(adjudication_payload, dict):
+        for role_name in ("prosecutor", "defender"):
+            role_payload = adjudication_payload.get(role_name)
+            if not isinstance(role_payload, dict):
+                continue
+            missing_items.extend(_normalize_unique_strings(role_payload.get("missing_evidence")))
+    missing_evidence = _normalize_unique_strings(missing_items)
+
+    target_file: str | None = None
+    target_line: int | None = None
+    uncertainty_reason: str | None = None
+    if isinstance(evidence_packet, dict):
+        target_payload = evidence_packet.get("target")
+        if isinstance(target_payload, dict):
+            file_value = target_payload.get("file")
+            line_value = target_payload.get("line")
+            if isinstance(file_value, str) and file_value.strip():
+                target_file = file_value.strip()
+            if isinstance(line_value, int):
+                target_line = line_value
+        static_reasoning = evidence_packet.get("static_reasoning")
+        if isinstance(static_reasoning, dict):
+            for key in ("unknown_reason", "origin_unknown_reason"):
+                reason = static_reasoning.get(key)
+                if isinstance(reason, str) and reason.strip():
+                    uncertainty_reason = reason.strip()
+                    break
+    if uncertainty_reason is None and verdict_status == "uncertain" and counterarguments:
+        uncertainty_reason = counterarguments[0]
+
+    evidence_refs = _extract_evidence_refs(
+        target_file=target_file,
+        target_line=target_line,
+        values=(risk_path, safety_evidence, counterarguments, missing_evidence),
+    )
+    return {
+        "verdict": verdict_status,
+        "confidence": confidence,
+        "risk_path": list(risk_path),
+        "safety_evidence": list(safety_evidence),
+        "counterarguments_considered": list(counterarguments),
+        "missing_evidence": list(missing_evidence),
+        "evidence_refs": list(evidence_refs),
+        "uncertainty_reason": uncertainty_reason,
+    }
+
+
 def review_source(
     file_path: str | Path,
     source: str,
@@ -2310,8 +2448,9 @@ def run_repository_review_job(
             else None
         )
         if effective_run_id is None:
-            resolved_trace_level = requested_trace_level or _normalize_trace_level(
-                trace_policy.default_trace_level
+            resolved_trace_level = _resolve_new_run_trace_level(
+                requested_level=requested_trace_level,
+                trace_policy=trace_policy,
             )
             effective_run_id = store.create_run(
                 repository_root=repository_key,
@@ -2498,6 +2637,11 @@ def repository_review_case_replay(
             else None
         )
         payload["prompt_text"] = prompt_text
+        payload["decision_trace"] = _build_decision_trace(
+            evidence_packet=payload["evidence_packet"],
+            adjudication_payload=payload["adjudication_payload"],
+            final_verdict=payload["final_verdict"],
+        )
         return status, payload
     finally:
         store.close()

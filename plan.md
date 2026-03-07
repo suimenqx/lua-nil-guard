@@ -225,6 +225,15 @@
 4. 失败案例可明确定位到 `build_command/execute/parse/fallback` 具体阶段。
 5. 文档与命令帮助更新完成，首次使用者可独立复盘一次 case。
 
+### 十、专项验收结果（2026-03-07）
+
+1. [x] `run-trace` / `run-trace-json` 已可按 `run_id + case_id` 查询 backend 全流程时间线。
+2. [x] `case-replay` / `case-replay-json` 已可回放 case，并输出标准化 `decision_trace` 证据摘要。
+3. [x] `summary/debug/forensic` 分级行为已生效，且 `forensic` 强制显式参数开启。
+4. [x] 失败阶段可定位到 `build_command/execute/parse_response/fallback`。
+5. [x] `trace_policy.json`、CLI usage、README 中英文、`docs/run-tuning.md` 已同步。
+6. [x] 测试覆盖已补齐：`tests/test_cli.py`、`tests/test_run_jobs.py`、`tests/test_cli_agent_backend.py`、`tests/test_config_loader.py`。
+
 ## 0. 项目基线
 
 LuaNilGuard 已完成 v3 主路径切换：当前运行系统为 `single_pass` 单次结构化判定，legacy 多模式路径已移除。

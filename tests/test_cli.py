@@ -472,6 +472,7 @@ def test_cli_run_trace_and_case_replay_commands(
     assert f"Run ID: {run_id}" in replay_output
     assert f"Case ID: {case_id}" in replay_output
     assert "Adjudication payload:" in replay_output
+    assert "Decision trace:" in replay_output
 
     exit_code, replay_json_output = run(
         ["case-replay-json", "--run-db", str(run_db), str(tmp_path), str(run_id), case_id]
@@ -481,6 +482,8 @@ def test_cli_run_trace_and_case_replay_commands(
     assert replay_payload["run"]["run_id"] == run_id
     assert replay_payload["replay"]["case_id"] == case_id
     assert len(replay_payload["replay"]["events"]) == 2
+    assert replay_payload["replay"]["decision_trace"]["verdict"] == "safe"
+    assert replay_payload["replay"]["decision_trace"]["evidence_refs"]
 
 
 def test_cli_clear_trace_artifacts_removes_trace_files(tmp_path: Path) -> None:
@@ -494,6 +497,74 @@ def test_cli_clear_trace_artifacts_removes_trace_files(tmp_path: Path) -> None:
     assert "Trace artifacts cleared." in output
     assert "Removed files: 1" in output
     assert not trace_file.exists()
+
+
+def test_cli_run_start_rejects_forensic_default_trace_policy_without_override(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "trace_policy.json").write_text(
+        json.dumps(
+            {
+                "default_trace_level": "forensic",
+                "max_inline_payload_bytes": 65536,
+                "redact_patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "local username = req.params.username\nreturn string.match(username, '^a')\n",
+        encoding="utf-8",
+    )
+    run_db = tmp_path / "run-store.sqlite3"
+
+    exit_code, output = run(
+        ["run-start", "--backend", "heuristic", "--run-db", str(run_db), str(tmp_path)]
+    )
+    assert exit_code == 2
+    assert "default_trace_level cannot be 'forensic'" in output
+
+    exit_code, output = run(
+        [
+            "run-start",
+            "--backend",
+            "heuristic",
+            "--trace-level",
+            "forensic",
+            "--run-db",
+            str(run_db),
+            str(tmp_path),
+        ]
+    )
+    assert exit_code == 0
+    assert "Trace level: forensic" in output
 
 
 def test_cli_doctor_reports_parser_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:

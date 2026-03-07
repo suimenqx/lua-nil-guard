@@ -598,10 +598,12 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, error
         snapshot = _apply_focus_mode(snapshot, focus_mode)
         try:
-            trace_level = _resolve_trace_level(
-                root=root,
-                override=trace_level_override,
-            )
+            trace_level = None
+            if trace_level_override is not None:
+                trace_level = _resolve_trace_level(
+                    root=root,
+                    override=trace_level_override,
+                )
         except (ConfigError, ValueError) as exc:
             return 2, str(exc)
         try:
@@ -677,10 +679,12 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, error
         snapshot = _apply_focus_mode(snapshot, focus_mode)
         try:
-            trace_level = _resolve_trace_level(
-                root=root,
-                override=trace_level_override,
-            )
+            trace_level = None
+            if trace_level_override is not None:
+                trace_level = _resolve_trace_level(
+                    root=root,
+                    override=trace_level_override,
+                )
         except (ConfigError, ValueError) as exc:
             return 2, str(exc)
         try:
@@ -3190,6 +3194,7 @@ def _usage() -> str:
             "Backend default: read from config/backend.json -> default_backend when --backend is omitted",
             "Focus values: all | string",
             "Trace level values: summary | debug | forensic",
+            "Forensic trace requires explicit --trace-level forensic",
         ]
     )
 
@@ -3287,6 +3292,11 @@ def _resolve_trace_level(*, root: Path, override: str | None) -> str:
         return normalized
     policy_path = root / "config" / "trace_policy.json"
     policy = load_trace_policy(policy_path)
+    if policy.default_trace_level == "forensic":
+        raise ValueError(
+            "config/trace_policy.json default_trace_level cannot be 'forensic'; "
+            "pass --trace-level forensic explicitly when needed"
+        )
     return policy.default_trace_level
 
 
@@ -3623,6 +3633,9 @@ def _render_case_replay(
         "",
         "Adjudication payload:",
         json.dumps(replay_payload.get("adjudication_payload"), indent=2, sort_keys=True),
+        "",
+        "Decision trace:",
+        json.dumps(replay_payload.get("decision_trace"), indent=2, sort_keys=True),
         "",
         "Final verdict:",
         json.dumps(replay_payload.get("final_verdict"), indent=2, sort_keys=True),

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from lua_nil_guard.agent_backend import HeuristicAdjudicationBackend
 from lua_nil_guard.models import AdjudicationRecord, RoleOpinion, Verdict
 from lua_nil_guard.service import (
@@ -83,6 +85,19 @@ def _write_review_config(root: Path) -> None:
                 "levels": ["low", "medium", "high"],
                 "default_report_min_confidence": "high",
                 "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_trace_policy(root: Path, *, default_trace_level: str) -> None:
+    (root / "config" / "trace_policy.json").write_text(
+        json.dumps(
+            {
+                "default_trace_level": default_trace_level,
+                "max_inline_payload_bytes": 65536,
+                "redact_patterns": [],
             }
         ),
         encoding="utf-8",
@@ -213,6 +228,32 @@ def test_repository_review_trace_and_case_replay_api(tmp_path: Path) -> None:
     assert replay_payload["events"] == []
     assert replay_payload["final_verdict"]["case_id"] == verdicts[0].case_id
     assert replay_payload["evidence_packet"]["case_id"] == verdicts[0].case_id
+    assert replay_payload["decision_trace"]["verdict"] == replay_payload["final_verdict"]["status"]
+    assert replay_payload["decision_trace"]["confidence"] == replay_payload["final_verdict"]["confidence"]
+    assert isinstance(replay_payload["decision_trace"]["evidence_refs"], list)
+    assert replay_payload["decision_trace"]["evidence_refs"]
 
     removed = clear_trace_artifacts(tmp_path, run_id=status.run_id)
     assert removed == 0
+
+
+def test_run_repository_review_job_rejects_forensic_trace_policy_default(tmp_path: Path) -> None:
+    _write_review_config(tmp_path)
+    _write_trace_policy(tmp_path, default_trace_level="forensic")
+    (tmp_path / "src" / "demo.lua").write_text(
+        "local raw = req.params.raw\nlocal maybe = string.match(raw, '^b')\n",
+        encoding="utf-8",
+    )
+    snapshot = bootstrap_repository(tmp_path)
+    run_db = tmp_path / "runs.sqlite3"
+
+    with pytest.raises(ValueError, match="default_trace_level cannot be 'forensic'"):
+        run_repository_review_job(snapshot, backend=CountingBackend(), run_db_path=run_db)
+
+    status, _ = run_repository_review_job(
+        snapshot,
+        backend=CountingBackend(),
+        run_db_path=run_db,
+        trace_level="forensic",
+    )
+    assert status.trace_level == "forensic"

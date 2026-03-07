@@ -104,11 +104,13 @@ lua-nil-guard case-replay /path/to/target-repo <run_id> <case_id>
 lua-nil-guard clear-trace-artifacts /path/to/target-repo [run_id]
 ```
 
+`case-replay-json` includes a normalized `decision_trace` object (`verdict`, `risk_path`, `safety_evidence`, `counterarguments_considered`, `missing_evidence`, `evidence_refs`, `uncertainty_reason`) for downstream audit dashboards.
+
 Trace levels:
 
 - `summary` (default): metadata/timeline only
 - `debug`: includes prompt and structured response payloads
-- `forensic`: includes stderr/raw envelope fields (explicit opt-in recommended)
+- `forensic`: includes stderr/raw envelope fields (must be explicitly enabled via `--trace-level forensic`)
 
 The default trace behavior is controlled by `config/trace_policy.json`:
 
@@ -122,6 +124,8 @@ The default trace behavior is controlled by `config/trace_policy.json`:
   ]
 }
 ```
+
+Safety guardrail: `config/trace_policy.json` `default_trace_level` cannot be set to `forensic`. Use `summary`/`debug` as default, and pass `--trace-level forensic` only for explicit audit runs.
 
 When payload size exceeds `max_inline_payload_bytes`, trace payloads are spilled under `.lua_nil_guard/traces/<run_id>/...`, and DB rows keep a descriptor (path/hash/bytes).
 

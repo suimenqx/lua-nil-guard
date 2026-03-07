@@ -74,6 +74,7 @@ lua-nil-guard case-replay /path/to/target-repo <run_id> <case_id>
 - stage status (`started`, `completed`, `failed`)
 - retries (`attempt_no`)
 - trace-level behavior (`summary`, `debug`, `forensic`)
+- replay summary contract (`decision_trace`) for dashboard-friendly evidence chains
 
 ## Backend Trace and Replay Queries
 
@@ -249,3 +250,4 @@ Use this as a baseline:
 - `default_trace_level`: `summary|debug|forensic`
 - `max_inline_payload_bytes`: max DB inline payload size before spill-to-file
 - `redact_patterns`: regex-based redaction before persistence
+- `forensic` must be explicitly enabled per run (`--trace-level forensic`); do not set it as default policy
