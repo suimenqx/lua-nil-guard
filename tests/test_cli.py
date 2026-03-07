@@ -72,6 +72,13 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "run-status" in output
     assert "run-report" in output
     assert "run-export-json" in output
+    assert "run-trace" in output
+    assert "run-trace-json" in output
+    assert "case-replay" in output
+    assert "case-replay-json" in output
+    assert "clear-trace-artifacts" in output
+    assert "--trace-level LEVEL" in output
+    assert "Trace level values: summary | debug | forensic" in output
     assert "Backend default: read from config/backend.json" in output
 
 
@@ -308,6 +315,187 @@ def test_cli_run_start_status_and_resume(tmp_path: Path) -> None:
     assert "unknown_reason_distribution" in run_payload
 
 
+def test_cli_run_trace_and_case_replay_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "\n".join(
+            [
+                "local username = req.params.username",
+                "return string.match(username, '^a')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    run_db = tmp_path / "run-store.sqlite3"
+
+    class TraceableBackend:
+        def __init__(self) -> None:
+            self._trace_recorder = None
+
+        def set_trace_recorder(self, recorder) -> None:  # noqa: ANN001
+            self._trace_recorder = recorder
+
+        def adjudicate(self, packet, sink_rule):  # noqa: ANN001
+            if self._trace_recorder is not None:
+                self._trace_recorder.on_call_started(
+                    case_id=packet.case_id,
+                    attempt_no=1,
+                    stage="build_command",
+                    payload={
+                        "backend_name": "traceable",
+                        "backend_model": "unit-test",
+                        "prompt_text": "prompt-body",
+                    },
+                )
+                self._trace_recorder.on_call_finished(
+                    case_id=packet.case_id,
+                    attempt_no=1,
+                    stage="parse_response",
+                    payload={
+                        "backend_name": "traceable",
+                        "backend_model": "unit-test",
+                        "parsed_payload_json": json.dumps({"judge": {"status": "safe"}}),
+                        "response_text": '{"judge":{"status":"safe"}}',
+                    },
+                )
+            return AdjudicationRecord(
+                prosecutor=RoleOpinion(
+                    role="prosecutor",
+                    status="safe",
+                    confidence="high",
+                    risk_path=(),
+                    safety_evidence=("guarded",),
+                    missing_evidence=(),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                defender=RoleOpinion(
+                    role="defender",
+                    status="safe",
+                    confidence="high",
+                    risk_path=(),
+                    safety_evidence=("guarded",),
+                    missing_evidence=(),
+                    recommended_next_action="suppress",
+                    suggested_fix=None,
+                ),
+                judge=Verdict(
+                    case_id=packet.case_id,
+                    status="safe",
+                    confidence="high",
+                    risk_path=(),
+                    safety_evidence=("guarded",),
+                    counterarguments_considered=(),
+                    suggested_fix=None,
+                    needs_human=False,
+                ),
+            )
+
+    monkeypatch.setattr(
+        cli_module,
+        "create_adjudication_backend",
+        lambda *args, **kwargs: TraceableBackend(),
+    )
+
+    exit_code, output = run(
+        [
+            "run-start",
+            "--backend",
+            "codex",
+            "--trace-level",
+            "debug",
+            "--run-db",
+            str(run_db),
+            str(tmp_path),
+        ]
+    )
+    assert exit_code == 0
+    assert "Run Status: completed" in output
+    assert "Trace level: debug" in output
+
+    run_id_line = next(line for line in output.splitlines() if line.startswith("Run ID: "))
+    run_id = int(run_id_line.split(":", 1)[1].strip())
+
+    exit_code, trace_output = run(
+        ["run-trace", "--run-db", str(run_db), str(tmp_path), str(run_id)]
+    )
+    assert exit_code == 0
+    assert f"Run ID: {run_id}" in trace_output
+    assert "Total events: 2" in trace_output
+    assert "build_command:started" in trace_output
+    assert "parse_response:completed" in trace_output
+
+    exit_code, trace_json_output = run(
+        ["run-trace-json", "--run-db", str(run_db), str(tmp_path), str(run_id)]
+    )
+    assert exit_code == 0
+    trace_payload = json.loads(trace_json_output)
+    assert trace_payload["run"]["run_id"] == run_id
+    assert len(trace_payload["trace"]["events"]) == 2
+    case_id = trace_payload["trace"]["events"][0]["case_id"]
+
+    exit_code, replay_output = run(
+        ["case-replay", "--run-db", str(run_db), str(tmp_path), str(run_id), case_id]
+    )
+    assert exit_code == 0
+    assert f"Run ID: {run_id}" in replay_output
+    assert f"Case ID: {case_id}" in replay_output
+    assert "Adjudication payload:" in replay_output
+
+    exit_code, replay_json_output = run(
+        ["case-replay-json", "--run-db", str(run_db), str(tmp_path), str(run_id), case_id]
+    )
+    assert exit_code == 0
+    replay_payload = json.loads(replay_json_output)
+    assert replay_payload["run"]["run_id"] == run_id
+    assert replay_payload["replay"]["case_id"] == case_id
+    assert len(replay_payload["replay"]["events"]) == 2
+
+
+def test_cli_clear_trace_artifacts_removes_trace_files(tmp_path: Path) -> None:
+    trace_file = tmp_path / ".lua_nil_guard" / "traces" / "42" / "case-1" / "payload.txt"
+    trace_file.parent.mkdir(parents=True, exist_ok=True)
+    trace_file.write_text("trace", encoding="utf-8")
+
+    exit_code, output = run(["clear-trace-artifacts", str(tmp_path), "42"])
+
+    assert exit_code == 0
+    assert "Trace artifacts cleared." in output
+    assert "Removed files: 1" in output
+    assert not trace_file.exists()
+
+
 def test_cli_doctor_reports_parser_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         cli_module,
@@ -479,12 +667,14 @@ def test_cli_init_config_writes_default_templates(tmp_path: Path) -> None:
     preprocessor_path = tmp_path / "config" / "preprocessor_files.json"
     domain_path = tmp_path / "config" / "domain_knowledge.json"
     backend_path = tmp_path / "config" / "backend.json"
+    trace_policy_path = tmp_path / "config" / "trace_policy.json"
     sink_payload = json.loads(sink_path.read_text(encoding="utf-8"))
     policy_payload = json.loads(policy_path.read_text(encoding="utf-8"))
     contracts_payload = json.loads(contracts_path.read_text(encoding="utf-8"))
     preprocessor_payload = json.loads(preprocessor_path.read_text(encoding="utf-8"))
     domain_payload = json.loads(domain_path.read_text(encoding="utf-8"))
     backend_payload = json.loads(backend_path.read_text(encoding="utf-8"))
+    trace_policy_payload = json.loads(trace_policy_path.read_text(encoding="utf-8"))
 
     assert exit_code == 0
     assert "Repository config initialized." in output
@@ -494,6 +684,7 @@ def test_cli_init_config_writes_default_templates(tmp_path: Path) -> None:
     assert f"Preprocessor config: {preprocessor_path}" in output
     assert f"Domain knowledge: {domain_path}" in output
     assert f"Backend config: {backend_path}" in output
+    assert f"Trace policy: {trace_policy_path}" in output
     assert any(rule["id"] == "string.match.arg1" for rule in sink_payload)
     assert all(rule["id"] != "member_access.receiver" for rule in sink_payload)
     assert policy_payload["default_report_min_confidence"] == "high"
@@ -508,6 +699,8 @@ def test_cli_init_config_writes_default_templates(tmp_path: Path) -> None:
     assert any(rule["id"] == "system_cmd_table_prefix" for rule in domain_payload["rules"])
     assert any(rule["id"] == "uppercase_macro_non_nil" for rule in domain_payload["rules"])
     assert backend_payload == {"default_backend": "codex"}
+    assert trace_policy_payload["default_trace_level"] == "summary"
+    assert trace_policy_payload["max_inline_payload_bytes"] == 65536
 
 
 def test_cli_init_config_preserves_existing_files_and_backfills_missing_templates(tmp_path: Path) -> None:
@@ -519,6 +712,7 @@ def test_cli_init_config_preserves_existing_files_and_backfills_missing_template
     preprocessor_path = config_dir / "preprocessor_files.json"
     domain_path = config_dir / "domain_knowledge.json"
     backend_path = config_dir / "backend.json"
+    trace_policy_path = config_dir / "trace_policy.json"
     sink_path.write_text("[]", encoding="utf-8")
     policy_path.write_text("{}", encoding="utf-8")
     contracts_path.write_text("[]", encoding="utf-8")
@@ -541,6 +735,7 @@ def test_cli_init_config_preserves_existing_files_and_backfills_missing_template
         for rule in json.loads(domain_path.read_text(encoding="utf-8"))["rules"]
     )
     assert json.loads(backend_path.read_text(encoding="utf-8")) == {"default_backend": "codex"}
+    assert json.loads(trace_policy_path.read_text(encoding="utf-8"))["default_trace_level"] == "summary"
 
 
 def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None:
@@ -552,11 +747,13 @@ def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None
     preprocessor_path = config_dir / "preprocessor_files.json"
     domain_path = config_dir / "domain_knowledge.json"
     backend_path = config_dir / "backend.json"
+    trace_policy_path = config_dir / "trace_policy.json"
     sink_path.write_text("[]", encoding="utf-8")
     policy_path.write_text("{}", encoding="utf-8")
     contracts_path.write_text("{}", encoding="utf-8")
     preprocessor_path.write_text("{}", encoding="utf-8")
     backend_path.write_text('{"default_backend":"gemini"}', encoding="utf-8")
+    trace_policy_path.write_text('{"default_trace_level":"debug"}', encoding="utf-8")
 
     exit_code, output = run(["init-config", "--force", str(tmp_path)])
 
@@ -566,6 +763,7 @@ def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None
     preprocessor_payload = json.loads(preprocessor_path.read_text(encoding="utf-8"))
     domain_payload = json.loads(domain_path.read_text(encoding="utf-8"))
     backend_payload = json.loads(backend_path.read_text(encoding="utf-8"))
+    trace_policy_payload = json.loads(trace_policy_path.read_text(encoding="utf-8"))
 
     assert exit_code == 0
     assert "Force overwrite: yes" in output
@@ -581,6 +779,7 @@ def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None
     }
     assert any(rule["id"] == "uppercase_macro_non_nil" for rule in domain_payload["rules"])
     assert backend_payload == {"default_backend": "codex"}
+    assert trace_policy_payload["default_trace_level"] == "summary"
 
 
 def test_cli_encoding_audit_reports_convertible_and_unsupported_files(tmp_path: Path) -> None:

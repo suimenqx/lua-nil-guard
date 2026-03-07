@@ -14,6 +14,7 @@ from lua_nil_guard.config_loader import (
     load_function_contracts,
     load_preprocessor_config,
     load_sink_rules,
+    load_trace_policy,
 )
 
 
@@ -109,6 +110,31 @@ def test_load_backend_config_rejects_unknown_fields(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="Unsupported backend config fields"):
         load_backend_config(config_path)
+
+
+def test_load_trace_policy_reads_defaults() -> None:
+    policy = load_trace_policy(ROOT / "config" / "trace_policy.json")
+
+    assert policy.default_trace_level == "summary"
+    assert policy.max_inline_payload_bytes == 65536
+    assert len(policy.redact_patterns) >= 1
+
+
+def test_load_trace_policy_rejects_invalid_default_level(tmp_path: Path) -> None:
+    config_path = tmp_path / "trace_policy.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "default_trace_level": "verbose",
+                "max_inline_payload_bytes": 65536,
+                "redact_patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="default_trace_level"):
+        load_trace_policy(config_path)
 
 
 def test_default_preprocessor_config_matches_template_defaults() -> None:

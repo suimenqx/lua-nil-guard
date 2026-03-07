@@ -128,6 +128,20 @@ class PreprocessorConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class TracePolicy:
+    """Controls backend trace capture level, payload size, and redaction patterns."""
+
+    default_trace_level: str = "summary"
+    max_inline_payload_bytes: int = 65536
+    redact_patterns: tuple[str, ...] = (
+        r"(?i)(authorization\s*[:=]\s*)([^\s,;]+)",
+        r"(?i)(api[_-]?key\s*[:=]\s*)([^\s,;]+)",
+        r"(?i)(token\s*[:=]\s*)([^\s,;]+)",
+        r"(?i)(cookie\s*[:=]\s*)([^\s,;]+)",
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class DomainKnowledgeRule:
     """One operator-defined rule used for deterministic candidate pruning."""
 

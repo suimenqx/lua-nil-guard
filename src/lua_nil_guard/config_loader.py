@@ -13,9 +13,11 @@ from .models import (
     FunctionContract,
     PreprocessorConfig,
     SinkRule,
+    TracePolicy,
 )
 
 _SUPPORTED_ADJUDICATION_MODES = frozenset({"single_pass"})
+_SUPPORTED_TRACE_LEVELS = frozenset({"summary", "debug", "forensic"})
 
 
 class ConfigError(ValueError):
@@ -39,7 +41,7 @@ def initialize_repository_config(
     root: str | Path,
     *,
     force: bool = False,
-) -> tuple[Path, Path, Path, Path, Path, Path]:
+) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
     """Write the default review config into a target repository root."""
 
     root_path = Path(root)
@@ -50,6 +52,7 @@ def initialize_repository_config(
     preprocessor_source = template_root / "preprocessor_files.json"
     domain_source = template_root / "domain_knowledge.json"
     backend_source = template_root / "backend.json"
+    trace_policy_source = template_root / "trace_policy.json"
 
     for source_path in (
         sink_source,
@@ -58,6 +61,7 @@ def initialize_repository_config(
         preprocessor_source,
         domain_source,
         backend_source,
+        trace_policy_source,
     ):
         if not source_path.is_file():
             raise ConfigError(f"Default config template not found: {source_path}")
@@ -69,6 +73,7 @@ def initialize_repository_config(
     preprocessor_target = config_dir / "preprocessor_files.json"
     domain_target = config_dir / "domain_knowledge.json"
     backend_target = config_dir / "backend.json"
+    trace_policy_target = config_dir / "trace_policy.json"
 
     config_dir.mkdir(parents=True, exist_ok=True)
     for source_path, target_path in (
@@ -78,6 +83,7 @@ def initialize_repository_config(
         (preprocessor_source, preprocessor_target),
         (domain_source, domain_target),
         (backend_source, backend_target),
+        (trace_policy_source, trace_policy_target),
     ):
         if target_path.exists() and not force:
             continue
@@ -89,6 +95,7 @@ def initialize_repository_config(
         preprocessor_target,
         domain_target,
         backend_target,
+        trace_policy_target,
     )
 
 
@@ -247,6 +254,57 @@ def load_backend_config(path: str | Path) -> str:
     if unknown_keys:
         raise ConfigError("Unsupported backend config fields: " + ", ".join(unknown_keys))
     return default_backend.strip()
+
+
+def load_trace_policy(path: str | Path) -> TracePolicy:
+    """Load optional backend trace policy config."""
+
+    if not Path(path).is_file():
+        return TracePolicy()
+
+    data = _read_json(path)
+    if not isinstance(data, dict):
+        raise ConfigError("Trace policy config must be a JSON object")
+
+    allowed_keys = {"default_trace_level", "max_inline_payload_bytes", "redact_patterns"}
+    unknown_keys = sorted(set(data.keys()) - allowed_keys)
+    if unknown_keys:
+        raise ConfigError("Unsupported trace policy fields: " + ", ".join(unknown_keys))
+
+    default_trace_level = data.get("default_trace_level", "summary")
+    if not isinstance(default_trace_level, str) or not default_trace_level.strip():
+        raise ConfigError("Trace policy field 'default_trace_level' must be a non-empty string")
+    normalized_trace_level = default_trace_level.strip().lower()
+    if normalized_trace_level not in _SUPPORTED_TRACE_LEVELS:
+        supported = ", ".join(sorted(_SUPPORTED_TRACE_LEVELS))
+        raise ConfigError(
+            "Trace policy field 'default_trace_level' must be one of: " + supported
+        )
+
+    max_inline_payload_bytes = data.get("max_inline_payload_bytes", 65536)
+    if (
+        isinstance(max_inline_payload_bytes, bool)
+        or not isinstance(max_inline_payload_bytes, int)
+        or max_inline_payload_bytes <= 0
+    ):
+        raise ConfigError(
+            "Trace policy field 'max_inline_payload_bytes' must be a positive integer"
+        )
+
+    redact_patterns = data.get("redact_patterns", list(TracePolicy().redact_patterns))
+    if not isinstance(redact_patterns, list) or any(not isinstance(item, str) for item in redact_patterns):
+        raise ConfigError("Trace policy field 'redact_patterns' must be a string array")
+    for pattern in redact_patterns:
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ConfigError(f"Invalid trace redaction regex: {exc}") from exc
+
+    return TracePolicy(
+        default_trace_level=normalized_trace_level,
+        max_inline_payload_bytes=max_inline_payload_bytes,
+        redact_patterns=tuple(redact_patterns),
+    )
 
 
 def default_preprocessor_config() -> PreprocessorConfig:

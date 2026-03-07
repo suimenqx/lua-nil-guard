@@ -70,11 +70,15 @@ lua-nil-guard report /path/to/target-repo
 如果你希望使用“可恢复”的全仓作业链路（start/status/report/export/resume），请使用：
 
 ```sh
-lua-nil-guard run-start /path/to/target-repo
+lua-nil-guard run-start [--trace-level summary|debug|forensic] /path/to/target-repo
 lua-nil-guard run-status /path/to/target-repo [run_id]
 lua-nil-guard run-report /path/to/target-repo [run_id]
 lua-nil-guard run-export-json /path/to/target-repo [run_id] [output]
-lua-nil-guard run-resume /path/to/target-repo <run_id>
+lua-nil-guard run-resume [--trace-level summary|debug|forensic] /path/to/target-repo <run_id>
+lua-nil-guard run-trace [--case-id CASE_ID] /path/to/target-repo [run_id]
+lua-nil-guard run-trace-json [--case-id CASE_ID] /path/to/target-repo [run_id] [output]
+lua-nil-guard case-replay /path/to/target-repo <run_id> <case_id>
+lua-nil-guard case-replay-json /path/to/target-repo <run_id> <case_id> [output]
 ```
 
 `run-status` 与 `run-report` 现在会输出阶段指标和 `unknown_reason` 分布，包含：
@@ -90,6 +94,38 @@ lua-nil-guard run-resume /path/to/target-repo <run_id>
 - `unknown_static` case 的 `unknown_reason` 分布
 
 如果你需要“可调优”的候选级可观测性查询（包含 SQL 模板和策略建议），请查看 [`docs/run-tuning.md`](docs/run-tuning.md)。
+
+### Backend 交互可视化与 Case 可重放
+
+当你希望查看 backend 真实交互时间线，并按 case 复盘裁决链路时，可使用：
+
+```sh
+lua-nil-guard run-start --trace-level debug /path/to/target-repo
+lua-nil-guard run-trace /path/to/target-repo [run_id]
+lua-nil-guard case-replay /path/to/target-repo <run_id> <case_id>
+lua-nil-guard clear-trace-artifacts /path/to/target-repo [run_id]
+```
+
+Trace 级别说明：
+
+- `summary`（默认）：仅元数据与时间线
+- `debug`：额外保存 prompt 与结构化响应
+- `forensic`：额外保存 stderr/原始包络字段（建议显式按需开启）
+
+默认 trace 行为由 `config/trace_policy.json` 控制：
+
+```json
+{
+  "default_trace_level": "summary",
+  "max_inline_payload_bytes": 65536,
+  "redact_patterns": [
+    "(?i)(authorization\\s*[:=]\\s*)([^\\s,;]+)",
+    "(?i)(api[_-]?key\\s*[:=]\\s*)([^\\s,;]+)"
+  ]
+}
+```
+
+当 payload 超过 `max_inline_payload_bytes` 时，会落盘到 `.lua_nil_guard/traces/<run_id>/...`，数据库仅保存描述信息（路径/hash/字节数）。
 
 `run-export-json` 现在导出对象结构（不再是纯 findings 数组）：
 
@@ -414,8 +450,10 @@ Benchmark 约束：标签文件名必须是 `provable_risky_*`、`provable_safe_
 - `config/function_contracts.json`
 - `config/preprocessor_files.json`
 - `config/domain_knowledge.json`
+- `config/backend.json`
+- `config/trace_policy.json`
 
-`init-config` 会自动写入这五份默认文件。
+`init-config` 会自动写入这七份默认文件。
 
 其中 `function_contracts.json` 用于声明高置信度 helper 的语义，例如：
 

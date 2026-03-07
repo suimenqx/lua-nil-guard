@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -32,6 +33,40 @@ class AdjudicationBackend(Protocol):
 
     def adjudicate(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
         """Return prosecutor/defender/judge output for one evidence packet."""
+
+
+class BackendTraceRecorder(Protocol):
+    """Protocol for backend call tracing hooks."""
+
+    def on_call_started(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+    ) -> None:
+        """Record one started backend stage event."""
+
+    def on_call_finished(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+    ) -> None:
+        """Record one completed backend stage event."""
+
+    def on_call_failed(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+    ) -> None:
+        """Record one failed backend stage event."""
 
 
 class BackendError(RuntimeError):
@@ -123,6 +158,7 @@ class CliAgentBackend:
         expanded_evidence_retry: bool | None = None,
         fallback_to_uncertain_on_error: bool = False,
         cache_path: str | Path | None = None,
+        trace_recorder: BackendTraceRecorder | None = None,
     ) -> None:
         self.runner = runner or _default_runner
         self._uses_default_runner = runner is None
@@ -140,17 +176,50 @@ class CliAgentBackend:
         self.backend_total_seconds = 0.0
         self.backend_warmup_call_count = 0
         self.backend_warmup_total_seconds = 0.0
+        self.trace_recorder = trace_recorder
+
+    def set_trace_recorder(self, recorder: BackendTraceRecorder | None) -> None:
+        self.trace_recorder = recorder
 
     def adjudicate(self, packet: EvidencePacket, sink_rule: SinkRule) -> AdjudicationRecord:
         prompt = self.build_prompt(packet=packet, sink_rule=sink_rule)
+        prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         cached = self._load_cached_record(prompt=prompt, case_id=packet.case_id)
         if cached is not None:
             self.cache_hits += 1
+            self._trace_stage_finished(
+                case_id=packet.case_id,
+                attempt_no=0,
+                stage="cache_lookup",
+                payload={
+                    "cache_hit": True,
+                    "prompt_sha256": prompt_sha256,
+                    "prompt_text": prompt,
+                    **self._backend_trace_identity(),
+                },
+            )
             return cached
         if self.cache_path is not None:
             self.cache_misses += 1
+        self._trace_stage_finished(
+            case_id=packet.case_id,
+            attempt_no=0,
+            stage="cache_lookup",
+            payload={
+                "cache_hit": False,
+                "prompt_sha256": prompt_sha256,
+                "prompt_text": prompt,
+                **self._backend_trace_identity(),
+            },
+        )
         return self._adjudicate_with_retries(
-            lambda: self._adjudicate_once(packet, sink_rule, prompt),
+            lambda attempt_no: self._adjudicate_once(
+                packet,
+                sink_rule,
+                prompt,
+                attempt_no=attempt_no,
+                prompt_sha256=prompt_sha256,
+            ),
             packet=packet,
         )
 
@@ -159,6 +228,9 @@ class CliAgentBackend:
         packet: EvidencePacket,
         sink_rule: SinkRule,
         prompt: str,
+        *,
+        attempt_no: int,
+        prompt_sha256: str,
     ) -> AdjudicationRecord:
         temp_dir_root = str(self.workdir) if self.workdir is not None else None
         with tempfile.TemporaryDirectory(
@@ -172,16 +244,160 @@ class CliAgentBackend:
                 json.dumps(self.output_schema(), indent=2, sort_keys=True),
                 encoding="utf-8",
             )
-            command = self.build_command(
-                schema_path=schema_path,
-                output_path=output_path,
-                cwd=self.workdir,
+            build_started_at, build_started = self._trace_stage_started(
+                case_id=packet.case_id,
+                attempt_no=attempt_no,
+                stage="build_command",
+                payload={
+                    "prompt_sha256": prompt_sha256,
+                    "prompt_text": prompt,
+                    **self._backend_trace_identity(),
+                },
             )
-            self._run_command(command, stdin_text=prompt)
+            try:
+                command = self.build_command(
+                    schema_path=schema_path,
+                    output_path=output_path,
+                    cwd=self.workdir,
+                )
+            except Exception as exc:
+                self._trace_stage_failed(
+                    case_id=packet.case_id,
+                    attempt_no=attempt_no,
+                    stage="build_command",
+                    started_at=build_started_at,
+                    started=build_started,
+                    payload={
+                        "prompt_sha256": prompt_sha256,
+                        "prompt_text": prompt,
+                        "error_class": exc.__class__.__name__,
+                        "error_message": str(exc),
+                        **self._backend_trace_identity(),
+                    },
+                )
+                if isinstance(exc, BackendError):
+                    raise
+                raise BackendError(str(exc)) from exc
+            self._trace_stage_finished(
+                case_id=packet.case_id,
+                attempt_no=attempt_no,
+                stage="build_command",
+                started_at=build_started_at,
+                started=build_started,
+                payload={
+                    "command": command,
+                    "prompt_sha256": prompt_sha256,
+                    "prompt_text": prompt,
+                    **self._backend_trace_identity(),
+                },
+            )
+            execute_started_at, execute_started = self._trace_stage_started(
+                case_id=packet.case_id,
+                attempt_no=attempt_no,
+                stage="execute",
+                payload={
+                    "command": command,
+                    "prompt_sha256": prompt_sha256,
+                    "prompt_text": prompt,
+                    **self._backend_trace_identity(),
+                },
+            )
+            try:
+                self._run_command(command, stdin_text=prompt)
+            except BackendError as exc:
+                self._trace_stage_failed(
+                    case_id=packet.case_id,
+                    attempt_no=attempt_no,
+                    stage="execute",
+                    started_at=execute_started_at,
+                    started=execute_started,
+                    payload={
+                        "command": command,
+                        "prompt_sha256": prompt_sha256,
+                        "prompt_text": prompt,
+                        "error_class": exc.__class__.__name__,
+                        "error_message": str(exc),
+                        **self._backend_trace_identity(),
+                    },
+                )
+                raise
             if not output_path.exists():
-                raise BackendError("CLI backend did not write an output file")
+                error = BackendError("CLI backend did not write an output file")
+                self._trace_stage_failed(
+                    case_id=packet.case_id,
+                    attempt_no=attempt_no,
+                    stage="execute",
+                    started_at=execute_started_at,
+                    started=execute_started,
+                    payload={
+                        "command": command,
+                        "prompt_sha256": prompt_sha256,
+                        "prompt_text": prompt,
+                        "error_class": error.__class__.__name__,
+                        "error_message": str(error),
+                        **self._backend_trace_identity(),
+                    },
+                )
+                raise error
             raw = output_path.read_text(encoding="utf-8")
-        record = self.parse_response(raw, case_id=packet.case_id)
+            self._trace_stage_finished(
+                case_id=packet.case_id,
+                attempt_no=attempt_no,
+                stage="execute",
+                started_at=execute_started_at,
+                started=execute_started,
+                payload={
+                    "command": command,
+                    "prompt_sha256": prompt_sha256,
+                    "prompt_text": prompt,
+                    "response_text": raw,
+                    **self._backend_trace_identity(),
+                },
+            )
+        parse_started_at, parse_started = self._trace_stage_started(
+            case_id=packet.case_id,
+            attempt_no=attempt_no,
+            stage="parse_response",
+            payload={
+                "prompt_sha256": prompt_sha256,
+                "prompt_text": prompt,
+                "response_text": raw,
+                **self._backend_trace_identity(),
+            },
+        )
+        try:
+            record = self.parse_response(raw, case_id=packet.case_id)
+        except BackendError as exc:
+            self._trace_stage_failed(
+                case_id=packet.case_id,
+                attempt_no=attempt_no,
+                stage="parse_response",
+                started_at=parse_started_at,
+                started=parse_started,
+                payload={
+                    "prompt_sha256": prompt_sha256,
+                    "prompt_text": prompt,
+                    "response_text": raw,
+                    "error_class": exc.__class__.__name__,
+                    "error_message": str(exc),
+                    **self._backend_trace_identity(),
+                },
+            )
+            raise
+        self._trace_stage_finished(
+            case_id=packet.case_id,
+            attempt_no=attempt_no,
+            stage="parse_response",
+            started_at=parse_started_at,
+            started=parse_started,
+            payload={
+                "prompt_sha256": prompt_sha256,
+                "prompt_text": prompt,
+                "response_text": raw,
+                "parsed_payload_json": json.dumps(_serialize_record(record), sort_keys=True),
+                **self._backend_trace_identity(),
+            },
+        )
         self._store_cached_record(prompt=prompt, record=record)
         return record
 
@@ -192,13 +408,24 @@ class CliAgentBackend:
         packet: EvidencePacket,
     ) -> AdjudicationRecord:
         last_error: BackendError | None = None
-        for _ in range(self.max_attempts):
+        for attempt_no in range(1, self.max_attempts + 1):
             try:
-                return operation()
+                return operation(attempt_no)
             except BackendError as exc:
                 last_error = exc
 
         if self.fallback_to_uncertain_on_error:
+            self._trace_stage_finished(
+                case_id=packet.case_id,
+                attempt_no=self.max_attempts,
+                stage="fallback",
+                payload={
+                    "fallback_used": True,
+                    "error_class": (last_error.__class__.__name__ if last_error else "BackendError"),
+                    "error_message": str(last_error or "CLI backend failed"),
+                    **self._backend_trace_identity(),
+                },
+            )
             return _backend_failure_fallback(packet, str(last_error or "CLI backend failed"))
         if last_error is not None:
             raise last_error
@@ -223,6 +450,112 @@ class CliAgentBackend:
             return self.runner(command, stdin_text=stdin_text, cwd=self.workdir)
         finally:
             self.backend_total_seconds += max(0.0, time.perf_counter() - started)
+
+    def _backend_trace_identity(self) -> dict[str, object]:
+        return {
+            "backend_name": _backend_trace_value(self, "provider_spec", "name") or self.__class__.__name__,
+            "backend_model": _optional_trace_string(getattr(self, "model", None)),
+            "backend_executable": _optional_trace_string(getattr(self, "executable", None)),
+            "protocol": _backend_trace_value(self, "provider_spec", "protocol"),
+        }
+
+    def _trace_stage_started(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+    ) -> tuple[str, float]:
+        started_at = _now_iso()
+        started = time.perf_counter()
+        self._emit_trace(
+            method_name="on_call_started",
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            payload={
+                **payload,
+                "started_at": started_at,
+            },
+        )
+        return started_at, started
+
+    def _trace_stage_finished(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+        started_at: str | None = None,
+        started: float | None = None,
+    ) -> None:
+        ended_at = _now_iso()
+        elapsed_ms = _elapsed_ms(started)
+        self._emit_trace(
+            method_name="on_call_finished",
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            payload={
+                **payload,
+                "started_at": started_at,
+                "ended_at": ended_at,
+                "elapsed_ms": elapsed_ms,
+            },
+        )
+
+    def _trace_stage_failed(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+        started_at: str | None = None,
+        started: float | None = None,
+    ) -> None:
+        ended_at = _now_iso()
+        elapsed_ms = _elapsed_ms(started)
+        self._emit_trace(
+            method_name="on_call_failed",
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            payload={
+                **payload,
+                "started_at": started_at,
+                "ended_at": ended_at,
+                "elapsed_ms": elapsed_ms,
+            },
+        )
+
+    def _emit_trace(
+        self,
+        *,
+        method_name: str,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+    ) -> None:
+        recorder = self.trace_recorder
+        if recorder is None:
+            return
+        method = getattr(recorder, method_name, None)
+        if not callable(method):
+            return
+        try:
+            method(
+                case_id=case_id,
+                attempt_no=attempt_no,
+                stage=stage,
+                payload=payload,
+            )
+        except Exception:
+            # Tracing must never block adjudication.
+            return
 
     def build_prompt(self, *, packet: EvidencePacket, sink_rule: SinkRule) -> str:
         """Render the adjudication prompt consumed by the CLI provider."""
@@ -625,13 +958,160 @@ class ClaudeCliBackend(CliAgentBackend):
         packet: EvidencePacket,
         sink_rule: SinkRule,
         prompt: str,
+        *,
+        attempt_no: int,
+        prompt_sha256: str,
     ) -> AdjudicationRecord:
         self._ensure_warmup()
-        command = self.build_prompt_command(prompt=prompt)
-        raw = self._run_command(command, stdin_text="")
+        build_started_at, build_started = self._trace_stage_started(
+            case_id=packet.case_id,
+            attempt_no=attempt_no,
+            stage="build_command",
+            payload={
+                "prompt_sha256": prompt_sha256,
+                "prompt_text": prompt,
+                **self._backend_trace_identity(),
+            },
+        )
+        try:
+            command = self.build_prompt_command(prompt=prompt)
+        except Exception as exc:
+            self._trace_stage_failed(
+                case_id=packet.case_id,
+                attempt_no=attempt_no,
+                stage="build_command",
+                started_at=build_started_at,
+                started=build_started,
+                payload={
+                    "prompt_sha256": prompt_sha256,
+                    "prompt_text": prompt,
+                    "error_class": exc.__class__.__name__,
+                    "error_message": str(exc),
+                    **self._backend_trace_identity(),
+                },
+            )
+            if isinstance(exc, BackendError):
+                raise
+            raise BackendError(str(exc)) from exc
+        self._trace_stage_finished(
+            case_id=packet.case_id,
+            attempt_no=attempt_no,
+            stage="build_command",
+            started_at=build_started_at,
+            started=build_started,
+            payload={
+                "command": command,
+                "prompt_sha256": prompt_sha256,
+                "prompt_text": prompt,
+                **self._backend_trace_identity(),
+            },
+        )
+        execute_started_at, execute_started = self._trace_stage_started(
+            case_id=packet.case_id,
+            attempt_no=attempt_no,
+            stage="execute",
+            payload={
+                "command": command,
+                "prompt_sha256": prompt_sha256,
+                "prompt_text": prompt,
+                **self._backend_trace_identity(),
+            },
+        )
+        try:
+            raw = self._run_command(command, stdin_text="")
+        except BackendError as exc:
+            self._trace_stage_failed(
+                case_id=packet.case_id,
+                attempt_no=attempt_no,
+                stage="execute",
+                started_at=execute_started_at,
+                started=execute_started,
+                payload={
+                    "command": command,
+                    "prompt_sha256": prompt_sha256,
+                    "prompt_text": prompt,
+                    "error_class": exc.__class__.__name__,
+                    "error_message": str(exc),
+                    **self._backend_trace_identity(),
+                },
+            )
+            raise
         if not isinstance(raw, str) or not raw.strip():
-            raise BackendError("Claude backend did not return structured JSON on stdout")
-        record = self.parse_wrapped_response(raw, case_id=packet.case_id)
+            error = BackendError("Claude backend did not return structured JSON on stdout")
+            self._trace_stage_failed(
+                case_id=packet.case_id,
+                attempt_no=attempt_no,
+                stage="execute",
+                started_at=execute_started_at,
+                started=execute_started,
+                payload={
+                    "command": command,
+                    "prompt_sha256": prompt_sha256,
+                    "prompt_text": prompt,
+                    "error_class": error.__class__.__name__,
+                    "error_message": str(error),
+                    **self._backend_trace_identity(),
+                },
+            )
+            raise error
+        self._trace_stage_finished(
+            case_id=packet.case_id,
+            attempt_no=attempt_no,
+            stage="execute",
+            started_at=execute_started_at,
+            started=execute_started,
+            payload={
+                "command": command,
+                "prompt_sha256": prompt_sha256,
+                "prompt_text": prompt,
+                "response_text": raw,
+                **self._backend_trace_identity(),
+            },
+        )
+        parse_started_at, parse_started = self._trace_stage_started(
+            case_id=packet.case_id,
+            attempt_no=attempt_no,
+            stage="parse_response",
+            payload={
+                "prompt_sha256": prompt_sha256,
+                "prompt_text": prompt,
+                "response_text": raw,
+                **self._backend_trace_identity(),
+            },
+        )
+        try:
+            record = self.parse_wrapped_response(raw, case_id=packet.case_id)
+        except BackendError as exc:
+            self._trace_stage_failed(
+                case_id=packet.case_id,
+                attempt_no=attempt_no,
+                stage="parse_response",
+                started_at=parse_started_at,
+                started=parse_started,
+                payload={
+                    "prompt_sha256": prompt_sha256,
+                    "prompt_text": prompt,
+                    "response_text": raw,
+                    "error_class": exc.__class__.__name__,
+                    "error_message": str(exc),
+                    **self._backend_trace_identity(),
+                },
+            )
+            raise
+        self._trace_stage_finished(
+            case_id=packet.case_id,
+            attempt_no=attempt_no,
+            stage="parse_response",
+            started_at=parse_started_at,
+            started=parse_started,
+            payload={
+                "prompt_sha256": prompt_sha256,
+                "prompt_text": prompt,
+                "response_text": raw,
+                "parsed_payload_json": json.dumps(_serialize_record(record), sort_keys=True),
+                **self._backend_trace_identity(),
+            },
+        )
         self._store_cached_record(prompt=prompt, record=record)
         return record
 
@@ -826,14 +1306,161 @@ class CodeAgentCliBackend(CliAgentBackend):
         packet: EvidencePacket,
         sink_rule: SinkRule,
         prompt: str,
+        *,
+        attempt_no: int,
+        prompt_sha256: str,
     ) -> AdjudicationRecord:
-        command = self.build_prompt_command(prompt=prompt, cwd=self.workdir)
-        raw = self._run_command(command, stdin_text="")
+        build_started_at, build_started = self._trace_stage_started(
+            case_id=packet.case_id,
+            attempt_no=attempt_no,
+            stage="build_command",
+            payload={
+                "prompt_sha256": prompt_sha256,
+                "prompt_text": prompt,
+                **self._backend_trace_identity(),
+            },
+        )
+        try:
+            command = self.build_prompt_command(prompt=prompt, cwd=self.workdir)
+        except Exception as exc:
+            self._trace_stage_failed(
+                case_id=packet.case_id,
+                attempt_no=attempt_no,
+                stage="build_command",
+                started_at=build_started_at,
+                started=build_started,
+                payload={
+                    "prompt_sha256": prompt_sha256,
+                    "prompt_text": prompt,
+                    "error_class": exc.__class__.__name__,
+                    "error_message": str(exc),
+                    **self._backend_trace_identity(),
+                },
+            )
+            if isinstance(exc, BackendError):
+                raise
+            raise BackendError(str(exc)) from exc
+        self._trace_stage_finished(
+            case_id=packet.case_id,
+            attempt_no=attempt_no,
+            stage="build_command",
+            started_at=build_started_at,
+            started=build_started,
+            payload={
+                "command": command,
+                "prompt_sha256": prompt_sha256,
+                "prompt_text": prompt,
+                **self._backend_trace_identity(),
+            },
+        )
+        execute_started_at, execute_started = self._trace_stage_started(
+            case_id=packet.case_id,
+            attempt_no=attempt_no,
+            stage="execute",
+            payload={
+                "command": command,
+                "prompt_sha256": prompt_sha256,
+                "prompt_text": prompt,
+                **self._backend_trace_identity(),
+            },
+        )
+        try:
+            raw = self._run_command(command, stdin_text="")
+        except BackendError as exc:
+            self._trace_stage_failed(
+                case_id=packet.case_id,
+                attempt_no=attempt_no,
+                stage="execute",
+                started_at=execute_started_at,
+                started=execute_started,
+                payload={
+                    "command": command,
+                    "prompt_sha256": prompt_sha256,
+                    "prompt_text": prompt,
+                    "error_class": exc.__class__.__name__,
+                    "error_message": str(exc),
+                    **self._backend_trace_identity(),
+                },
+            )
+            raise
         if not isinstance(raw, str) or not raw.strip():
-            raise BackendError(
+            error = BackendError(
                 f"{self.provider_spec.name} backend did not return headless JSON on stdout"
             )
-        record = self.parse_wrapped_response(raw, case_id=packet.case_id)
+            self._trace_stage_failed(
+                case_id=packet.case_id,
+                attempt_no=attempt_no,
+                stage="execute",
+                started_at=execute_started_at,
+                started=execute_started,
+                payload={
+                    "command": command,
+                    "prompt_sha256": prompt_sha256,
+                    "prompt_text": prompt,
+                    "error_class": error.__class__.__name__,
+                    "error_message": str(error),
+                    **self._backend_trace_identity(),
+                },
+            )
+            raise error
+        self._trace_stage_finished(
+            case_id=packet.case_id,
+            attempt_no=attempt_no,
+            stage="execute",
+            started_at=execute_started_at,
+            started=execute_started,
+            payload={
+                "command": command,
+                "prompt_sha256": prompt_sha256,
+                "prompt_text": prompt,
+                "response_text": raw,
+                **self._backend_trace_identity(),
+            },
+        )
+        parse_started_at, parse_started = self._trace_stage_started(
+            case_id=packet.case_id,
+            attempt_no=attempt_no,
+            stage="parse_response",
+            payload={
+                "prompt_sha256": prompt_sha256,
+                "prompt_text": prompt,
+                "response_text": raw,
+                **self._backend_trace_identity(),
+            },
+        )
+        try:
+            record = self.parse_wrapped_response(raw, case_id=packet.case_id)
+        except BackendError as exc:
+            self._trace_stage_failed(
+                case_id=packet.case_id,
+                attempt_no=attempt_no,
+                stage="parse_response",
+                started_at=parse_started_at,
+                started=parse_started,
+                payload={
+                    "prompt_sha256": prompt_sha256,
+                    "prompt_text": prompt,
+                    "response_text": raw,
+                    "error_class": exc.__class__.__name__,
+                    "error_message": str(exc),
+                    **self._backend_trace_identity(),
+                },
+            )
+            raise
+        self._trace_stage_finished(
+            case_id=packet.case_id,
+            attempt_no=attempt_no,
+            stage="parse_response",
+            started_at=parse_started_at,
+            started=parse_started,
+            payload={
+                "prompt_sha256": prompt_sha256,
+                "prompt_text": prompt,
+                "response_text": raw,
+                "parsed_payload_json": json.dumps(_serialize_record(record), sort_keys=True),
+                **self._backend_trace_identity(),
+            },
+        )
         self._store_cached_record(prompt=prompt, record=record)
         return record
 
@@ -1277,6 +1904,32 @@ def _strip_markdown_fences(text: str) -> str:
     if not lines[-1].startswith("```"):
         return stripped
     return "\n".join(lines[1:-1]).strip()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def _elapsed_ms(started: float | None) -> int:
+    if started is None:
+        return 0
+    elapsed = max(0.0, time.perf_counter() - started)
+    return int(elapsed * 1000)
+
+
+def _optional_trace_string(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text if text else None
+
+
+def _backend_trace_value(obj: object, attr_name: str, nested_attr_name: str) -> str | None:
+    nested = getattr(obj, attr_name, None)
+    if nested is None:
+        return None
+    value = getattr(nested, nested_attr_name, None)
+    return _optional_trace_string(value)
 
 
 _CLI_PROTOCOL_BACKEND_TYPES: dict[str, type[CliAgentBackend]] = {}

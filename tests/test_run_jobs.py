@@ -7,7 +7,10 @@ from lua_nil_guard.agent_backend import HeuristicAdjudicationBackend
 from lua_nil_guard.models import AdjudicationRecord, RoleOpinion, Verdict
 from lua_nil_guard.service import (
     bootstrap_repository,
+    clear_trace_artifacts,
+    repository_review_case_replay,
     repository_review_run_verdicts,
+    repository_review_run_trace,
     repository_review_run_status,
     run_repository_review_job,
 )
@@ -177,3 +180,39 @@ def test_repository_review_run_status_defaults_to_latest_run(tmp_path: Path) -> 
     latest = repository_review_run_status(tmp_path, run_db_path=run_db)
     assert latest.run_id == second_status.run_id
     assert latest.run_id > first_status.run_id
+
+
+def test_repository_review_trace_and_case_replay_api(tmp_path: Path) -> None:
+    _write_review_config(tmp_path)
+    (tmp_path / "src" / "demo.lua").write_text(
+        "local raw = req.params.raw\nlocal maybe = string.match(raw, '^b')\n",
+        encoding="utf-8",
+    )
+    snapshot = bootstrap_repository(tmp_path)
+    run_db = tmp_path / "runs.sqlite3"
+
+    status, verdicts = run_repository_review_job(snapshot, backend=CountingBackend(), run_db_path=run_db)
+    assert len(verdicts) == 1
+
+    loaded_status, events = repository_review_run_trace(
+        tmp_path,
+        run_db_path=run_db,
+        run_id=status.run_id,
+    )
+    assert loaded_status.run_id == status.run_id
+    assert events == ()
+
+    replay_status, replay_payload = repository_review_case_replay(
+        tmp_path,
+        run_db_path=run_db,
+        run_id=status.run_id,
+        case_id=verdicts[0].case_id,
+    )
+    assert replay_status.run_id == status.run_id
+    assert replay_payload["case_id"] == verdicts[0].case_id
+    assert replay_payload["events"] == []
+    assert replay_payload["final_verdict"]["case_id"] == verdicts[0].case_id
+    assert replay_payload["evidence_packet"]["case_id"] == verdicts[0].case_id
+
+    removed = clear_trace_artifacts(tmp_path, run_id=status.run_id)
+    assert removed == 0

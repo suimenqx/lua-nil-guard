@@ -4,8 +4,10 @@ from collections import Counter
 import difflib
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import hashlib
 import json
 import re
+import shutil
 import sqlite3
 from pathlib import Path
 from typing import Callable
@@ -21,6 +23,7 @@ from .config_loader import (
     load_function_contracts,
     load_preprocessor_config,
     load_sink_rules,
+    load_trace_policy,
 )
 from .knowledge import (
     KnowledgeBase,
@@ -43,6 +46,7 @@ from .models import (
     RepositorySnapshot,
     SinkRule,
     StaticAnalysisResult,
+    TracePolicy,
     Verdict,
     with_candidate_state,
 )
@@ -80,6 +84,7 @@ _FUNCTION_NAME_RE = re.compile(
 _ANONYMOUS_FUNCTION_RE = re.compile(r"(?:=\s*|return\s+)function\b")
 _DEFAULT_RUN_DB_NAME = "review_runs.sqlite3"
 _RUN_STORE_DIRNAME = ".lua_nil_guard"
+_TRACE_LEVELS = ("summary", "debug", "forensic")
 
 
 def _strip_lua_comment(line: str) -> str:
@@ -106,6 +111,7 @@ class ReviewRunStatus:
     stage: str
     backend_name: str
     backend_model: str | None
+    trace_level: str
     total_cases: int
     completed_cases: int
     failed_cases: int
@@ -264,6 +270,23 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _normalize_trace_level(level: str) -> str:
+    normalized = level.strip().lower()
+    if normalized not in _TRACE_LEVELS:
+        allowed = ", ".join(_TRACE_LEVELS)
+        raise ValueError(f"trace level must be one of: {allowed}")
+    return normalized
+
+
+def _resolve_trace_policy(root: Path) -> TracePolicy:
+    path = root / "config" / "trace_policy.json"
+    return load_trace_policy(path)
+
+
+def _hash_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def _serialize_run_verdict(verdict: Verdict) -> str:
     payload: dict[str, object] = {
         "case_id": verdict.case_id,
@@ -367,6 +390,55 @@ def _deserialize_run_verdict(payload: str) -> Verdict:
     )
 
 
+def _serialize_evidence_packet(packet: EvidencePacket) -> str:
+    payload: dict[str, object] = {
+        "case_id": packet.case_id,
+        "target": {
+            "file": packet.target.file,
+            "line": packet.target.line,
+            "column": packet.target.column,
+            "sink": packet.target.sink,
+            "arg_index": packet.target.arg_index,
+            "expression": packet.target.expression,
+        },
+        "local_context": packet.local_context,
+        "related_functions": list(packet.related_functions),
+        "function_summaries": list(packet.function_summaries),
+        "knowledge_facts": list(packet.knowledge_facts),
+        "static_reasoning": {
+            key: (list(value) if isinstance(value, tuple) else value)
+            for key, value in packet.static_reasoning.items()
+        },
+        "related_function_contexts": list(packet.related_function_contexts),
+        "static_proofs": [
+            {
+                "kind": proof.kind,
+                "summary": proof.summary,
+                "subject": proof.subject,
+                "source_symbol": proof.source_symbol,
+                "source_call": proof.source_call,
+                "source_function": proof.source_function,
+                "supporting_summaries": list(proof.supporting_summaries),
+                "provenance": list(proof.provenance),
+                "depth": proof.depth,
+            }
+            for proof in packet.static_proofs
+        ],
+        "static_risk_signals": [
+            {
+                "kind": signal.kind,
+                "summary": signal.summary,
+                "subject": signal.subject,
+                "source_expression": signal.source_expression,
+                "provenance": list(signal.provenance),
+                "depth": signal.depth,
+            }
+            for signal in packet.static_risk_signals
+        ],
+    }
+    return json.dumps(payload, sort_keys=True)
+
+
 class _ReviewRunStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path).resolve(strict=False)
@@ -389,6 +461,7 @@ class _ReviewRunStore:
                     stage TEXT NOT NULL,
                     backend_name TEXT NOT NULL,
                     backend_model TEXT,
+                    trace_level TEXT NOT NULL DEFAULT 'summary',
                     total_cases INTEGER NOT NULL DEFAULT 0,
                     completed_cases INTEGER NOT NULL DEFAULT 0,
                     failed_cases INTEGER NOT NULL DEFAULT 0,
@@ -477,6 +550,52 @@ class _ReviewRunStore:
                 """
             )
             self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS backend_call_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    case_id TEXT NOT NULL,
+                    attempt_no INTEGER NOT NULL DEFAULT 0,
+                    stage TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    trace_level TEXT NOT NULL DEFAULT 'summary',
+                    backend_name TEXT,
+                    backend_model TEXT,
+                    backend_executable TEXT,
+                    protocol TEXT,
+                    command_json TEXT,
+                    prompt_sha256 TEXT,
+                    prompt_text TEXT,
+                    response_text TEXT,
+                    stderr_text TEXT,
+                    parsed_payload_json TEXT,
+                    error_class TEXT,
+                    error_message TEXT,
+                    fallback_used INTEGER NOT NULL DEFAULT 0,
+                    cache_hit INTEGER NOT NULL DEFAULT 0,
+                    started_at TEXT,
+                    ended_at TEXT,
+                    elapsed_ms INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS case_replay_capsules (
+                    run_id INTEGER NOT NULL,
+                    case_id TEXT NOT NULL,
+                    trace_level TEXT NOT NULL,
+                    evidence_packet_json TEXT NOT NULL,
+                    prompt_text TEXT,
+                    adjudication_payload_json TEXT,
+                    final_verdict_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, case_id)
+                )
+                """
+            )
+            self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_file_tasks_run_status ON file_tasks(run_id, status)"
             )
             self._conn.execute(
@@ -485,11 +604,24 @@ class _ReviewRunStore:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_adjudication_records_run_case ON adjudication_records(run_id, case_id)"
             )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_backend_call_events_run_case
+                ON backend_call_events(run_id, case_id, attempt_no, stage, event_id)
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_backend_call_events_run_status
+                ON backend_call_events(run_id, status, stage, event_id)
+                """
+            )
         self._ensure_schema_migrations()
 
     def _ensure_schema_migrations(self) -> None:
         run_columns = {name for name, _type in self._table_columns("runs")}
         run_column_defaults: dict[str, tuple[str, str]] = {
+            "trace_level": ("TEXT", "'summary'"),
             "ast_exact_cases": ("INTEGER", "0"),
             "lexical_fallback_cases": ("INTEGER", "0"),
             "static_safe_cases": ("INTEGER", "0"),
@@ -544,6 +676,7 @@ class _ReviewRunStore:
         repository_root: str,
         backend_name: str,
         backend_model: str | None,
+        trace_level: str,
     ) -> int:
         now = _utc_now_iso()
         with self._conn:
@@ -555,9 +688,10 @@ class _ReviewRunStore:
                     stage,
                     backend_name,
                     backend_model,
+                    trace_level,
                     created_at,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     repository_root,
@@ -565,6 +699,7 @@ class _ReviewRunStore:
                     "INIT",
                     backend_name,
                     backend_model,
+                    trace_level,
                     now,
                     now,
                 ),
@@ -586,6 +721,14 @@ class _ReviewRunStore:
             self._conn.execute(
                 "UPDATE runs SET stage = ?, updated_at = ?, status = ? WHERE run_id = ?",
                 (stage, now, "running", run_id),
+            )
+
+    def update_trace_level(self, *, run_id: int, trace_level: str) -> None:
+        now = _utc_now_iso()
+        with self._conn:
+            self._conn.execute(
+                "UPDATE runs SET trace_level = ?, updated_at = ? WHERE run_id = ?",
+                (trace_level, now, run_id),
             )
 
     def ensure_case_tasks(self, *, run_id: int, assessments: tuple[CandidateAssessment, ...]) -> None:
@@ -919,6 +1062,299 @@ class _ReviewRunStore:
                 ),
             )
 
+    def record_backend_call_event(
+        self,
+        *,
+        run_id: int,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        status: str,
+        trace_level: str,
+        backend_name: str | None = None,
+        backend_model: str | None = None,
+        backend_executable: str | None = None,
+        protocol: str | None = None,
+        command_json: str | None = None,
+        prompt_sha256: str | None = None,
+        prompt_text: str | None = None,
+        response_text: str | None = None,
+        stderr_text: str | None = None,
+        parsed_payload_json: str | None = None,
+        error_class: str | None = None,
+        error_message: str | None = None,
+        fallback_used: bool = False,
+        cache_hit: bool = False,
+        started_at: str | None = None,
+        ended_at: str | None = None,
+        elapsed_ms: int = 0,
+    ) -> None:
+        now = _utc_now_iso()
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO backend_call_events (
+                    run_id,
+                    case_id,
+                    attempt_no,
+                    stage,
+                    status,
+                    trace_level,
+                    backend_name,
+                    backend_model,
+                    backend_executable,
+                    protocol,
+                    command_json,
+                    prompt_sha256,
+                    prompt_text,
+                    response_text,
+                    stderr_text,
+                    parsed_payload_json,
+                    error_class,
+                    error_message,
+                    fallback_used,
+                    cache_hit,
+                    started_at,
+                    ended_at,
+                    elapsed_ms,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    case_id,
+                    max(0, attempt_no),
+                    stage,
+                    status,
+                    trace_level,
+                    backend_name,
+                    backend_model,
+                    backend_executable,
+                    protocol,
+                    command_json,
+                    prompt_sha256,
+                    prompt_text,
+                    response_text,
+                    stderr_text,
+                    parsed_payload_json,
+                    error_class,
+                    error_message,
+                    1 if fallback_used else 0,
+                    1 if cache_hit else 0,
+                    started_at,
+                    ended_at,
+                    max(0, int(elapsed_ms)),
+                    now,
+                ),
+            )
+
+    def load_backend_call_events(
+        self,
+        *,
+        run_id: int,
+        case_id: str | None = None,
+    ) -> tuple[dict[str, object], ...]:
+        if case_id is None:
+            rows = self._conn.execute(
+                """
+                SELECT event_id,
+                       run_id,
+                       case_id,
+                       attempt_no,
+                       stage,
+                       status,
+                       trace_level,
+                       backend_name,
+                       backend_model,
+                       backend_executable,
+                       protocol,
+                       command_json,
+                       prompt_sha256,
+                       prompt_text,
+                       response_text,
+                       stderr_text,
+                       parsed_payload_json,
+                       error_class,
+                       error_message,
+                       fallback_used,
+                       cache_hit,
+                       started_at,
+                       ended_at,
+                       elapsed_ms,
+                       created_at
+                FROM backend_call_events
+                WHERE run_id = ?
+                ORDER BY event_id ASC
+                """,
+                (run_id,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """
+                SELECT event_id,
+                       run_id,
+                       case_id,
+                       attempt_no,
+                       stage,
+                       status,
+                       trace_level,
+                       backend_name,
+                       backend_model,
+                       backend_executable,
+                       protocol,
+                       command_json,
+                       prompt_sha256,
+                       prompt_text,
+                       response_text,
+                       stderr_text,
+                       parsed_payload_json,
+                       error_class,
+                       error_message,
+                       fallback_used,
+                       cache_hit,
+                       started_at,
+                       ended_at,
+                       elapsed_ms,
+                       created_at
+                FROM backend_call_events
+                WHERE run_id = ? AND case_id = ?
+                ORDER BY event_id ASC
+                """,
+                (run_id, case_id),
+            ).fetchall()
+
+        payload: list[dict[str, object]] = []
+        for row in rows:
+            payload.append(
+                {
+                    "event_id": int(row["event_id"]),
+                    "run_id": int(row["run_id"]),
+                    "case_id": str(row["case_id"]),
+                    "attempt_no": int(row["attempt_no"]),
+                    "stage": str(row["stage"]),
+                    "status": str(row["status"]),
+                    "trace_level": str(row["trace_level"]),
+                    "backend_name": str(row["backend_name"]) if row["backend_name"] is not None else None,
+                    "backend_model": (
+                        str(row["backend_model"]) if row["backend_model"] is not None else None
+                    ),
+                    "backend_executable": (
+                        str(row["backend_executable"])
+                        if row["backend_executable"] is not None
+                        else None
+                    ),
+                    "protocol": str(row["protocol"]) if row["protocol"] is not None else None,
+                    "command_json": str(row["command_json"]) if row["command_json"] is not None else None,
+                    "prompt_sha256": (
+                        str(row["prompt_sha256"]) if row["prompt_sha256"] is not None else None
+                    ),
+                    "prompt_text": str(row["prompt_text"]) if row["prompt_text"] is not None else None,
+                    "response_text": (
+                        str(row["response_text"]) if row["response_text"] is not None else None
+                    ),
+                    "stderr_text": str(row["stderr_text"]) if row["stderr_text"] is not None else None,
+                    "parsed_payload_json": (
+                        str(row["parsed_payload_json"])
+                        if row["parsed_payload_json"] is not None
+                        else None
+                    ),
+                    "error_class": str(row["error_class"]) if row["error_class"] is not None else None,
+                    "error_message": (
+                        str(row["error_message"]) if row["error_message"] is not None else None
+                    ),
+                    "fallback_used": bool(int(row["fallback_used"])),
+                    "cache_hit": bool(int(row["cache_hit"])),
+                    "started_at": str(row["started_at"]) if row["started_at"] is not None else None,
+                    "ended_at": str(row["ended_at"]) if row["ended_at"] is not None else None,
+                    "elapsed_ms": int(row["elapsed_ms"]),
+                    "created_at": str(row["created_at"]),
+                }
+            )
+        return tuple(payload)
+
+    def record_case_replay_capsule(
+        self,
+        *,
+        run_id: int,
+        case_id: str,
+        trace_level: str,
+        evidence_packet_json: str,
+        prompt_text: str | None,
+        adjudication_payload_json: str | None,
+        final_verdict_json: str,
+    ) -> None:
+        now = _utc_now_iso()
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO case_replay_capsules (
+                    run_id,
+                    case_id,
+                    trace_level,
+                    evidence_packet_json,
+                    prompt_text,
+                    adjudication_payload_json,
+                    final_verdict_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, case_id) DO UPDATE SET
+                    trace_level = excluded.trace_level,
+                    evidence_packet_json = excluded.evidence_packet_json,
+                    prompt_text = excluded.prompt_text,
+                    adjudication_payload_json = excluded.adjudication_payload_json,
+                    final_verdict_json = excluded.final_verdict_json,
+                    created_at = excluded.created_at
+                """,
+                (
+                    run_id,
+                    case_id,
+                    trace_level,
+                    evidence_packet_json,
+                    prompt_text,
+                    adjudication_payload_json,
+                    final_verdict_json,
+                    now,
+                ),
+            )
+
+    def load_case_replay_capsule(
+        self,
+        *,
+        run_id: int,
+        case_id: str,
+    ) -> dict[str, object] | None:
+        row = self._conn.execute(
+            """
+            SELECT run_id,
+                   case_id,
+                   trace_level,
+                   evidence_packet_json,
+                   prompt_text,
+                   adjudication_payload_json,
+                   final_verdict_json,
+                   created_at
+            FROM case_replay_capsules
+            WHERE run_id = ? AND case_id = ?
+            """,
+            (run_id, case_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "run_id": int(row["run_id"]),
+            "case_id": str(row["case_id"]),
+            "trace_level": str(row["trace_level"]),
+            "evidence_packet_json": str(row["evidence_packet_json"]),
+            "prompt_text": str(row["prompt_text"]) if row["prompt_text"] is not None else None,
+            "adjudication_payload_json": (
+                str(row["adjudication_payload_json"])
+                if row["adjudication_payload_json"] is not None
+                else None
+            ),
+            "final_verdict_json": str(row["final_verdict_json"]),
+            "created_at": str(row["created_at"]),
+        }
+
     def load_run_verdicts_ordered(self, *, run_id: int) -> tuple[Verdict, ...]:
         rows = self._conn.execute(
             """
@@ -1130,6 +1566,7 @@ class _ReviewRunStore:
                    stage,
                    backend_name,
                    backend_model,
+                   trace_level,
                    total_cases,
                    completed_cases,
                    failed_cases,
@@ -1201,6 +1638,7 @@ class _ReviewRunStore:
             stage=str(row["stage"]),
             backend_name=str(row["backend_name"]),
             backend_model=(str(row["backend_model"]) if row["backend_model"] is not None else None),
+            trace_level=str(row["trace_level"] or "summary"),
             total_cases=total_cases,
             completed_cases=int(row["completed_cases"]),
             failed_cases=int(row["failed_cases"]),
@@ -1227,6 +1665,292 @@ class _ReviewRunStore:
             llm_resolution_rate=llm_resolution_rate,
             end_to_end_latency_seconds=end_to_end_latency_seconds,
         )
+
+
+class _RunTraceRecorder:
+    """Persist backend interaction events with optional redaction and spill-to-file."""
+
+    def __init__(
+        self,
+        *,
+        store: _ReviewRunStore,
+        run_id: int,
+        repository_root: Path,
+        trace_level: str,
+        policy: TracePolicy,
+    ) -> None:
+        self.store = store
+        self.run_id = run_id
+        self.repository_root = repository_root
+        self.trace_level = _normalize_trace_level(trace_level)
+        self.max_inline_payload_bytes = policy.max_inline_payload_bytes
+        self._compiled_redactors = tuple(re.compile(pattern) for pattern in policy.redact_patterns)
+        self._artifacts_dir = repository_root / _RUN_STORE_DIRNAME / "traces" / str(run_id)
+        self._artifact_counter = 0
+        self._case_capture: dict[str, dict[str, str | None]] = {}
+
+    def on_call_started(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+    ) -> None:
+        self._record(
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            status="started",
+            payload=payload,
+        )
+
+    def on_call_finished(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+    ) -> None:
+        self._record(
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            status="completed",
+            payload=payload,
+        )
+
+    def on_call_failed(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        payload: dict[str, object],
+    ) -> None:
+        self._record(
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            status="failed",
+            payload=payload,
+        )
+
+    def consume_case_capture(self, *, case_id: str) -> dict[str, str | None]:
+        return self._case_capture.pop(case_id, {})
+
+    def _record(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        status: str,
+        payload: dict[str, object],
+    ) -> None:
+        backend_name = _as_optional_string(payload.get("backend_name"))
+        backend_model = _as_optional_string(payload.get("backend_model"))
+        backend_executable = _as_optional_string(payload.get("backend_executable"))
+        protocol = _as_optional_string(payload.get("protocol"))
+        command_json = self._command_json(
+            payload.get("command"),
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+        )
+        prompt_text = self._prepare_text_payload(
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            field_name="prompt_text",
+            raw_value=payload.get("prompt_text"),
+            include=self.trace_level in {"debug", "forensic"},
+        )
+        response_text = self._prepare_text_payload(
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            field_name="response_text",
+            raw_value=payload.get("response_text"),
+            include=self.trace_level in {"debug", "forensic"},
+        )
+        stderr_text = self._prepare_text_payload(
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            field_name="stderr_text",
+            raw_value=payload.get("stderr_text"),
+            include=self.trace_level == "forensic",
+        )
+        parsed_payload_json = self._prepare_text_payload(
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            field_name="parsed_payload_json",
+            raw_value=payload.get("parsed_payload_json"),
+            include=True,
+        )
+        prompt_sha256 = _as_optional_string(payload.get("prompt_sha256"))
+        if prompt_sha256 is None and isinstance(payload.get("prompt_text"), str):
+            prompt_sha256 = _hash_text(str(payload["prompt_text"]))
+        error_class = _as_optional_string(payload.get("error_class"))
+        error_message = self._prepare_text_payload(
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            field_name="error_message",
+            raw_value=payload.get("error_message"),
+            include=True,
+        )
+        fallback_used = bool(payload.get("fallback_used", False))
+        cache_hit = bool(payload.get("cache_hit", False))
+        started_at = _as_optional_string(payload.get("started_at"))
+        ended_at = _as_optional_string(payload.get("ended_at"))
+        elapsed_ms = _coerce_non_negative_int(payload.get("elapsed_ms"), default=0)
+
+        self.store.record_backend_call_event(
+            run_id=self.run_id,
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            status=status,
+            trace_level=self.trace_level,
+            backend_name=backend_name,
+            backend_model=backend_model,
+            backend_executable=backend_executable,
+            protocol=protocol,
+            command_json=command_json,
+            prompt_sha256=prompt_sha256,
+            prompt_text=prompt_text,
+            response_text=response_text,
+            stderr_text=stderr_text,
+            parsed_payload_json=parsed_payload_json,
+            error_class=error_class,
+            error_message=error_message,
+            fallback_used=fallback_used,
+            cache_hit=cache_hit,
+            started_at=started_at,
+            ended_at=ended_at,
+            elapsed_ms=elapsed_ms,
+        )
+
+        capture = self._case_capture.setdefault(
+            case_id,
+            {"prompt_text": None, "adjudication_payload_json": None},
+        )
+        if prompt_text is not None:
+            capture["prompt_text"] = prompt_text
+        if parsed_payload_json is not None:
+            capture["adjudication_payload_json"] = parsed_payload_json
+
+    def _command_json(
+        self,
+        command_value: object,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+    ) -> str | None:
+        if isinstance(command_value, (list, tuple)) and all(
+            isinstance(item, str) for item in command_value
+        ):
+            serialized = json.dumps(list(command_value), sort_keys=False)
+            return self._inline_or_artifact(
+                case_id=case_id,
+                attempt_no=attempt_no,
+                stage=stage,
+                field_name="command_json",
+                text=serialized,
+            )
+        return None
+
+    def _prepare_text_payload(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        field_name: str,
+        raw_value: object,
+        include: bool,
+    ) -> str | None:
+        if raw_value is None:
+            return None
+        if not include:
+            return None
+        if isinstance(raw_value, (dict, list)):
+            text = json.dumps(raw_value, sort_keys=True)
+        else:
+            text = str(raw_value)
+        redacted = self._redact_text(text)
+        return self._inline_or_artifact(
+            case_id=case_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            field_name=field_name,
+            text=redacted,
+        )
+
+    def _redact_text(self, text: str) -> str:
+        redacted = text
+        for pattern in self._compiled_redactors:
+            redacted = pattern.sub(r"\1<redacted>", redacted)
+        return redacted
+
+    def _inline_or_artifact(
+        self,
+        *,
+        case_id: str,
+        attempt_no: int,
+        stage: str,
+        field_name: str,
+        text: str,
+    ) -> str:
+        text_bytes = text.encode("utf-8", errors="replace")
+        if len(text_bytes) <= self.max_inline_payload_bytes:
+            return text
+
+        self._artifact_counter += 1
+        file_name = (
+            f"{self._artifact_counter:06d}_attempt{attempt_no:02d}_{stage}_{field_name}.txt"
+        )
+        safe_case = re.sub(r"[^A-Za-z0-9_.-]", "_", case_id) or "case"
+        artifact_path = self._artifacts_dir / safe_case / file_name
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text(text, encoding="utf-8")
+
+        relative_path = artifact_path.relative_to(self.repository_root)
+        descriptor = {
+            "artifact_path": str(relative_path),
+            "sha256": _hash_text(text),
+            "bytes": len(text_bytes),
+        }
+        return json.dumps(descriptor, sort_keys=True)
+
+
+def _as_optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text if text else None
+
+
+def _coerce_non_negative_int(value: object, *, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, float):
+        return max(0, int(value))
+    return default
+
+
+def _json_or_raw(payload: str) -> object:
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError:
+        return payload
 
 
 def review_source(
@@ -1559,6 +2283,7 @@ def run_repository_review_job(
     knowledge_path: str | Path | None = None,
     run_db_path: str | Path | None = None,
     run_id: int | None = None,
+    trace_level: str | None = None,
 ) -> tuple[ReviewRunStatus, tuple[Verdict, ...]]:
     """Run one persistent review job and return run status with ordered verdicts."""
 
@@ -1574,18 +2299,33 @@ def run_repository_review_job(
     store = _ReviewRunStore(db_path)
     effective_run_id: int | None = run_id
     repository_key = str(Path(snapshot.root).resolve(strict=False))
+    trace_policy = _resolve_trace_policy(snapshot.root)
+    resolved_trace_level: str | None = None
     try:
         backend_name = _backend_name(adjudication_backend)
         backend_model = _backend_optional_string(adjudication_backend, "model")
+        requested_trace_level = (
+            _normalize_trace_level(trace_level)
+            if trace_level is not None
+            else None
+        )
         if effective_run_id is None:
+            resolved_trace_level = requested_trace_level or _normalize_trace_level(
+                trace_policy.default_trace_level
+            )
             effective_run_id = store.create_run(
                 repository_root=repository_key,
                 backend_name=backend_name,
                 backend_model=backend_model,
+                trace_level=resolved_trace_level,
             )
         status = store.load_run_status(run_id=effective_run_id)
         if status is None:
             raise ValueError(f"Run id not found: {effective_run_id}")
+        if resolved_trace_level is None:
+            resolved_trace_level = requested_trace_level or _normalize_trace_level(status.trace_level)
+        if status.trace_level != resolved_trace_level:
+            store.update_trace_level(run_id=effective_run_id, trace_level=resolved_trace_level)
 
         store.update_stage(run_id=effective_run_id, stage="STATIC")
         assessments = review_repository(snapshot)
@@ -1604,6 +2344,8 @@ def run_repository_review_job(
             run_id=effective_run_id,
             only_unknown_for_agent=True,
             existing_verdicts=existing_verdicts,
+            trace_level=resolved_trace_level,
+            trace_policy=trace_policy,
         )
         store.update_stage(run_id=effective_run_id, stage="VERIFY")
         store.mark_run_completed(run_id=effective_run_id)
@@ -1676,6 +2418,113 @@ def repository_review_run_verdicts(
         return status, verdicts
     finally:
         store.close()
+
+
+def repository_review_run_trace(
+    root: str | Path,
+    *,
+    run_db_path: str | Path | None = None,
+    run_id: int | None = None,
+    case_id: str | None = None,
+) -> tuple[ReviewRunStatus, tuple[dict[str, object], ...]]:
+    """Load persisted backend trace events for the latest or specified run."""
+
+    root_path = Path(root).resolve(strict=False)
+    db_path = (
+        Path(run_db_path).resolve(strict=False)
+        if run_db_path is not None
+        else review_run_db_path(root_path)
+    )
+    store = _ReviewRunStore(db_path)
+    try:
+        effective_run_id = run_id
+        if effective_run_id is None:
+            effective_run_id = store.latest_run_id(repository_root=str(root_path))
+            if effective_run_id is None:
+                raise ValueError(f"No review runs found for repository: {root_path}")
+        status = store.load_run_status(run_id=effective_run_id)
+        if status is None:
+            raise ValueError(f"Run id not found: {effective_run_id}")
+        events = store.load_backend_call_events(run_id=effective_run_id, case_id=case_id)
+        return status, events
+    finally:
+        store.close()
+
+
+def repository_review_case_replay(
+    root: str | Path,
+    *,
+    run_id: int,
+    case_id: str,
+    run_db_path: str | Path | None = None,
+) -> tuple[ReviewRunStatus, dict[str, object]]:
+    """Load replay payload (capsule + timeline events) for one run case."""
+
+    root_path = Path(root).resolve(strict=False)
+    db_path = (
+        Path(run_db_path).resolve(strict=False)
+        if run_db_path is not None
+        else review_run_db_path(root_path)
+    )
+    store = _ReviewRunStore(db_path)
+    try:
+        status = store.load_run_status(run_id=run_id)
+        if status is None:
+            raise ValueError(f"Run id not found: {run_id}")
+        capsule = store.load_case_replay_capsule(run_id=run_id, case_id=case_id)
+        if capsule is None:
+            raise ValueError(
+                f"Replay capsule not found for run_id={run_id}, case_id={case_id}. "
+                "Re-run with trace enabled to capture full replay."
+            )
+        events = store.load_backend_call_events(run_id=run_id, case_id=case_id)
+        payload: dict[str, object] = {
+            "run_id": run_id,
+            "case_id": case_id,
+            "trace_level": str(capsule["trace_level"]),
+            "created_at": str(capsule["created_at"]),
+            "events": list(events),
+        }
+
+        evidence_packet_json = str(capsule["evidence_packet_json"])
+        final_verdict_json = str(capsule["final_verdict_json"])
+        adjudication_payload_json = capsule["adjudication_payload_json"]
+        prompt_text = capsule["prompt_text"]
+        payload["evidence_packet"] = _json_or_raw(evidence_packet_json)
+        payload["final_verdict"] = _json_or_raw(final_verdict_json)
+        payload["adjudication_payload"] = (
+            _json_or_raw(str(adjudication_payload_json))
+            if adjudication_payload_json is not None
+            else None
+        )
+        payload["prompt_text"] = prompt_text
+        return status, payload
+    finally:
+        store.close()
+
+
+def clear_trace_artifacts(
+    root: str | Path,
+    *,
+    run_id: int | None = None,
+) -> int:
+    """Delete spilled trace artifact files and return removed file count."""
+
+    root_path = Path(root).resolve(strict=False)
+    traces_root = root_path / _RUN_STORE_DIRNAME / "traces"
+    if run_id is not None:
+        target = traces_root / str(run_id)
+    else:
+        target = traces_root
+    if not target.exists():
+        return 0
+    if target.is_file():
+        target.unlink()
+        return 1
+
+    removed_files = sum(1 for path in target.rglob("*") if path.is_file())
+    shutil.rmtree(target)
+    return removed_files
 
 
 def run_file_review(
@@ -1867,6 +2716,8 @@ def _run_review_from_assessments(
     run_id: int | None = None,
     only_unknown_for_agent: bool = False,
     existing_verdicts: dict[str, Verdict] | None = None,
+    trace_level: str | None = None,
+    trace_policy: TracePolicy | None = None,
 ) -> tuple[Verdict, ...]:
     if run_store is not None and run_id is None:
         raise ValueError("run_id is required when run_store is provided")
@@ -1882,67 +2733,96 @@ def _run_review_from_assessments(
         if run_store is not None
         else None
     )
+    effective_trace_level = _normalize_trace_level(trace_level or "summary")
+    recorder: _RunTraceRecorder | None = None
+    if run_store is not None and run_id is not None:
+        recorder = _RunTraceRecorder(
+            store=run_store,
+            run_id=run_id,
+            repository_root=Path(snapshot.root).resolve(strict=False),
+            trace_level=effective_trace_level,
+            policy=trace_policy or TracePolicy(default_trace_level=effective_trace_level),
+        )
+        set_recorder = getattr(adjudication_backend, "set_trace_recorder", None)
+        if callable(set_recorder):
+            set_recorder(recorder)
     verdicts: list[Verdict] = []
-    for file_path in snapshot.lua_files:
-        source = read_lua_source_text(file_path)
-        for assessment in assessments_by_file.get(str(file_path), ()):
-            case_id = assessment.candidate.case_id
-            cached_verdict = verdict_cache.get(case_id)
-            if cached_verdict is not None:
-                verdicts.append(cached_verdict)
-                continue
-            if run_store is not None and run_id is not None:
-                run_store.mark_case_running(
-                    run_id=run_id,
-                    case_id=case_id,
-                )
-            llm_attempts = 0
-            packet = prepare_evidence_packet(
-                assessment,
-                source,
-            )
-            try:
-                if only_unknown_for_agent and assessment.static_analysis.state != "unknown_static":
-                    seeded_verdict = _static_only_seed_verdict(assessment)
-                    final_verdict = verify_verdict(seeded_verdict, packet)
-                else:
-                    adjudication = adjudication_backend.adjudicate(
-                        packet,
-                        sink_rule_by_id[assessment.candidate.sink_rule_id],
-                    )
-                    llm_attempts += 1
-                    verdict = attach_autofix_patch(
-                        adjudication.judge,
-                        packet,
-                        sink_rule_by_id[assessment.candidate.sink_rule_id],
-                    )
-                    if run_store is not None and run_id is not None:
-                        run_store.record_adjudication(
-                            run_id=run_id,
-                            case_id=case_id,
-                            verdict=verdict,
-                            backend_name=backend_name,
-                            backend_model=backend_model,
-                        )
-                    final_verdict = verify_verdict(verdict, packet)
-            except Exception as exc:
+    try:
+        for file_path in snapshot.lua_files:
+            source = read_lua_source_text(file_path)
+            for assessment in assessments_by_file.get(str(file_path), ()):
+                case_id = assessment.candidate.case_id
+                cached_verdict = verdict_cache.get(case_id)
+                if cached_verdict is not None:
+                    verdicts.append(cached_verdict)
+                    continue
                 if run_store is not None and run_id is not None:
-                    run_store.mark_case_failed(
+                    run_store.mark_case_running(
                         run_id=run_id,
                         case_id=case_id,
-                        message=str(exc),
                     )
-                raise
-
-            if run_store is not None and run_id is not None:
-                run_store.mark_case_completed(
-                    run_id=run_id,
-                    verdict=final_verdict,
-                    llm_attempts=llm_attempts,
-                    second_hop_used=False,
+                llm_attempts = 0
+                packet = prepare_evidence_packet(
+                    assessment,
+                    source,
                 )
-            verdict_cache[case_id] = final_verdict
-            verdicts.append(final_verdict)
+                try:
+                    if only_unknown_for_agent and assessment.static_analysis.state != "unknown_static":
+                        seeded_verdict = _static_only_seed_verdict(assessment)
+                        final_verdict = verify_verdict(seeded_verdict, packet)
+                    else:
+                        adjudication = adjudication_backend.adjudicate(
+                            packet,
+                            sink_rule_by_id[assessment.candidate.sink_rule_id],
+                        )
+                        llm_attempts += 1
+                        verdict = attach_autofix_patch(
+                            adjudication.judge,
+                            packet,
+                            sink_rule_by_id[assessment.candidate.sink_rule_id],
+                        )
+                        if run_store is not None and run_id is not None:
+                            run_store.record_adjudication(
+                                run_id=run_id,
+                                case_id=case_id,
+                                verdict=verdict,
+                                backend_name=backend_name,
+                                backend_model=backend_model,
+                            )
+                        final_verdict = verify_verdict(verdict, packet)
+                except Exception as exc:
+                    if run_store is not None and run_id is not None:
+                        run_store.mark_case_failed(
+                            run_id=run_id,
+                            case_id=case_id,
+                            message=str(exc),
+                        )
+                    raise
+
+                if run_store is not None and run_id is not None:
+                    run_store.mark_case_completed(
+                        run_id=run_id,
+                        verdict=final_verdict,
+                        llm_attempts=llm_attempts,
+                        second_hop_used=False,
+                    )
+                    capture = recorder.consume_case_capture(case_id=case_id) if recorder else {}
+                    run_store.record_case_replay_capsule(
+                        run_id=run_id,
+                        case_id=case_id,
+                        trace_level=effective_trace_level,
+                        evidence_packet_json=_serialize_evidence_packet(packet),
+                        prompt_text=capture.get("prompt_text"),
+                        adjudication_payload_json=capture.get("adjudication_payload_json"),
+                        final_verdict_json=_serialize_run_verdict(final_verdict),
+                    )
+                verdict_cache[case_id] = final_verdict
+                verdicts.append(final_verdict)
+    finally:
+        if run_store is not None:
+            set_recorder = getattr(adjudication_backend, "set_trace_recorder", None)
+            if callable(set_recorder):
+                set_recorder(None)
     return tuple(verdicts)
 
 

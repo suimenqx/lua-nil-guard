@@ -17,7 +17,12 @@ from .agent_driver_manifest import (
     load_agent_provider_spec_manifest_file,
 )
 from .baseline import BaselineStore, build_baseline, filter_new_findings
-from .config_loader import ConfigError, initialize_repository_config, load_backend_config
+from .config_loader import (
+    ConfigError,
+    initialize_repository_config,
+    load_backend_config,
+    load_trace_policy,
+)
 from .parser_backend import get_parser_backend_info
 from .repository import audit_lua_source_encodings, normalize_lua_source_encodings
 from .reporting import (
@@ -37,6 +42,7 @@ from .service import (
     build_repository_macro_cache,
     bootstrap_repository,
     clear_backend_cache,
+    clear_trace_artifacts,
     draft_review_improvements,
     export_adjudication_tasks,
     export_autofix_patches,
@@ -47,7 +53,9 @@ from .service import (
     refresh_knowledge_base,
     refresh_summary_cache,
     repository_review_run_status,
+    repository_review_run_trace,
     repository_review_run_verdicts,
+    repository_review_case_replay,
     review_repository_file,
     review_repository,
     run_file_review,
@@ -136,6 +144,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 preprocessor_path,
                 domain_knowledge_path,
                 backend_config_path,
+                trace_policy_path,
             ) = initialize_repository_config(
                 root,
                 force=force,
@@ -165,6 +174,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 f"Preprocessor config: {preprocessor_path}",
                 f"Domain knowledge: {domain_knowledge_path}",
                 f"Backend config: {backend_config_path}",
+                f"Trace policy: {trace_policy_path}",
                 f"Adjudication policy: {adj_policy_path}",
             ]
         )
@@ -387,6 +397,29 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             ]
         )
 
+    if command == "clear-trace-artifacts":
+        if len(args) not in {2, 3}:
+            return 2, "clear-trace-artifacts requires <repository> and optional <run_id>"
+        root = Path(args[1])
+        run_id = None
+        if len(args) == 3:
+            try:
+                run_id = int(args[2])
+            except ValueError:
+                return 2, "clear-trace-artifacts run_id must be an integer"
+        try:
+            removed_files = clear_trace_artifacts(root, run_id=run_id)
+        except OSError as exc:
+            return 2, str(exc)
+        lines = [
+            "Trace artifacts cleared.",
+            f"Repository: {root}",
+            f"Removed files: {removed_files}",
+        ]
+        if run_id is not None:
+            lines.append(f"Run ID: {run_id}")
+        return 0, "\n".join(lines)
+
     if command == "generate-backend-manifest":
         if len(args) not in {3, 4}:
             return 2, "generate-backend-manifest requires a name, protocol, and optional output path"
@@ -536,6 +569,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         try:
             run_db_path, remaining = _parse_run_db_option(args[1:])
             focus_mode, review_args = _parse_focus_options(remaining)
+            trace_level_override, review_args = _parse_trace_level_option(review_args)
             (
                 backend_name,
                 model,
@@ -564,6 +598,13 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, error
         snapshot = _apply_focus_mode(snapshot, focus_mode)
         try:
+            trace_level = _resolve_trace_level(
+                root=root,
+                override=trace_level_override,
+            )
+        except (ConfigError, ValueError) as exc:
+            return 2, str(exc)
+        try:
             status, verdicts = run_repository_review_job(
                 snapshot,
                 backend=_create_review_backend(
@@ -582,6 +623,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                     adjudication_mode=adjudication_mode,
                 ),
                 run_db_path=run_db_path,
+                trace_level=trace_level,
             )
         except (SkillRuntimeError, BackendError, ValueError, OSError) as exc:
             return 2, str(exc)
@@ -592,6 +634,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 f"Run DB: {run_db_path or (snapshot.root / '.lua_nil_guard' / 'review_runs.sqlite3')}",
                 f"Run Stage: {status.stage}",
                 f"Run Status: {status.status}",
+                f"Trace level: {status.trace_level}",
                 "",
                 report,
             ]
@@ -601,6 +644,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
         try:
             run_db_path, remaining = _parse_run_db_option(args[1:])
             focus_mode, review_args = _parse_focus_options(remaining)
+            trace_level_override, review_args = _parse_trace_level_option(review_args)
             (
                 backend_name,
                 model,
@@ -633,6 +677,13 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, error
         snapshot = _apply_focus_mode(snapshot, focus_mode)
         try:
+            trace_level = _resolve_trace_level(
+                root=root,
+                override=trace_level_override,
+            )
+        except (ConfigError, ValueError) as exc:
+            return 2, str(exc)
+        try:
             status, verdicts = run_repository_review_job(
                 snapshot,
                 backend=_create_review_backend(
@@ -652,6 +703,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 ),
                 run_db_path=run_db_path,
                 run_id=run_id,
+                trace_level=trace_level,
             )
         except (SkillRuntimeError, BackendError, ValueError, OSError) as exc:
             return 2, str(exc)
@@ -662,6 +714,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 f"Run DB: {run_db_path or (snapshot.root / '.lua_nil_guard' / 'review_runs.sqlite3')}",
                 f"Run Stage: {status.stage}",
                 f"Run Status: {status.status}",
+                f"Trace level: {status.trace_level}",
                 "",
                 report,
             ]
@@ -777,6 +830,163 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             [
                 "Run JSON export complete.",
                 f"Run ID: {status.run_id}",
+                f"Output: {output_path}",
+            ]
+        )
+
+    if command == "run-trace":
+        try:
+            run_db_path, remaining = _parse_run_db_option(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        case_id_filter, positional = _parse_case_id_filter_option(remaining)
+        if len(positional) not in {1, 2}:
+            return 2, "run-trace requires <repository> and optional <run_id>"
+        root = Path(positional[0])
+        run_id = None
+        if len(positional) == 2:
+            try:
+                run_id = int(positional[1])
+            except ValueError:
+                return 2, "run-trace run_id must be an integer"
+        try:
+            status, events = repository_review_run_trace(
+                root,
+                run_db_path=run_db_path,
+                run_id=run_id,
+                case_id=case_id_filter,
+            )
+        except (ValueError, OSError) as exc:
+            return 2, str(exc)
+        return 0, _render_run_trace(
+            status,
+            events,
+            run_db_path=run_db_path,
+            case_id_filter=case_id_filter,
+        )
+
+    if command == "run-trace-json":
+        try:
+            run_db_path, remaining = _parse_run_db_option(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        case_id_filter, positional = _parse_case_id_filter_option(remaining)
+        if len(positional) not in {1, 2, 3}:
+            return 2, "run-trace-json requires <repository> [run_id] [output]"
+        root = Path(positional[0])
+        run_id = None
+        output_path: Path | None = None
+        if len(positional) == 2:
+            try:
+                run_id = int(positional[1])
+            except ValueError:
+                output_path = Path(positional[1])
+        elif len(positional) == 3:
+            try:
+                run_id = int(positional[1])
+            except ValueError:
+                return 2, "run-trace-json run_id must be an integer when output is provided"
+            output_path = Path(positional[2])
+        try:
+            status, events = repository_review_run_trace(
+                root,
+                run_db_path=run_db_path,
+                run_id=run_id,
+                case_id=case_id_filter,
+            )
+        except (ValueError, OSError) as exc:
+            return 2, str(exc)
+        rendered = json.dumps(
+            _build_run_trace_payload(
+                status,
+                events,
+                run_db_path=run_db_path,
+                case_id_filter=case_id_filter,
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Run trace JSON export complete.",
+                f"Run ID: {status.run_id}",
+                f"Output: {output_path}",
+            ]
+        )
+
+    if command == "case-replay":
+        try:
+            run_db_path, positional = _parse_run_db_option(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) != 3:
+            return 2, "case-replay requires <repository> <run_id> <case_id>"
+        root = Path(positional[0])
+        try:
+            run_id = int(positional[1])
+        except ValueError:
+            return 2, "case-replay run_id must be an integer"
+        case_id = positional[2]
+        try:
+            status, replay_payload = repository_review_case_replay(
+                root,
+                run_id=run_id,
+                case_id=case_id,
+                run_db_path=run_db_path,
+            )
+        except (ValueError, OSError) as exc:
+            return 2, str(exc)
+        return 0, _render_case_replay(
+            status,
+            replay_payload,
+            run_db_path=run_db_path,
+        )
+
+    if command == "case-replay-json":
+        try:
+            run_db_path, positional = _parse_run_db_option(args[1:])
+        except ValueError as exc:
+            return 2, str(exc)
+        if len(positional) not in {3, 4}:
+            return 2, "case-replay-json requires <repository> <run_id> <case_id> [output]"
+        root = Path(positional[0])
+        try:
+            run_id = int(positional[1])
+        except ValueError:
+            return 2, "case-replay-json run_id must be an integer"
+        case_id = positional[2]
+        output_path = Path(positional[3]) if len(positional) == 4 else None
+        try:
+            status, replay_payload = repository_review_case_replay(
+                root,
+                run_id=run_id,
+                case_id=case_id,
+                run_db_path=run_db_path,
+            )
+        except (ValueError, OSError) as exc:
+            return 2, str(exc)
+        rendered = json.dumps(
+            _build_case_replay_payload(
+                status,
+                replay_payload,
+                run_db_path=run_db_path,
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+        if output_path is None:
+            return 0, rendered
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered, encoding="utf-8")
+        return 0, "\n".join(
+            [
+                "Case replay JSON export complete.",
+                f"Run ID: {status.run_id}",
+                f"Case ID: {case_id}",
                 f"Output: {output_path}",
             ]
         )
@@ -2932,17 +3142,22 @@ def _usage() -> str:
             "  {cli} encoding-audit <repository> [output]",
             "  {cli} normalize-encoding [--write] <repository> [output]",
             "  {cli} clear-backend-cache <cache-file>",
+            "  {cli} clear-trace-artifacts <repository> [run_id]",
             "  {cli} generate-backend-manifest <name> <protocol> [output]",
             "  {cli} validate-backend-manifest <manifest-path>",
             "  {cli} validate-backend-manifest-json <manifest-path> [output]",
             "  {cli} register-backend-manifest [--replace] <manifest-path>",
             "  {cli} register-backend-manifest-json [--replace] <manifest-path> [output]",
             "  {cli} compare-benchmark-json <before> <after> [output]",
-            "  {cli} run-start [--run-db PATH] [--focus MODE] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
-            "  {cli} run-resume [--run-db PATH] [--focus MODE] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <run_id>",
+            "  {cli} run-start [--run-db PATH] [--focus MODE] [--trace-level LEVEL] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
+            "  {cli} run-resume [--run-db PATH] [--focus MODE] [--trace-level LEVEL] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository> <run_id>",
             "  {cli} run-status [--run-db PATH] <repository> [run_id]",
             "  {cli} run-report [--run-db PATH] <repository> [run_id]",
             "  {cli} run-export-json [--run-db PATH] <repository> [run_id] [output]",
+            "  {cli} run-trace [--run-db PATH] [--case-id CASE_ID] <repository> [run_id]",
+            "  {cli} run-trace-json [--run-db PATH] [--case-id CASE_ID] <repository> [run_id] [output]",
+            "  {cli} case-replay [--run-db PATH] <repository> <run_id> <case_id>",
+            "  {cli} case-replay-json [--run-db PATH] <repository> <run_id> <case_id> [output]",
             "  {cli} report [--focus MODE] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  {cli} report-json [--focus MODE] [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
             "  {cli} benchmark [--backend BACKEND] [--model MODEL] [--skill SKILL] [--allow-skill-fallback] [--backend-executable PATH] [--backend-manifest PATH] [--backend-timeout SECONDS] [--backend-attempts N] [--expanded-evidence-retry MODE] [--backend-cache PATH] [--backend-config KEY=VALUE] <repository>",
@@ -2974,6 +3189,7 @@ def _usage() -> str:
             "Backend values: heuristic | codex | claude | gemini",
             "Backend default: read from config/backend.json -> default_backend when --backend is omitted",
             "Focus values: all | string",
+            "Trace level values: summary | debug | forensic",
         ]
     )
 
@@ -3029,6 +3245,51 @@ def _parse_run_db_option(args: list[str]) -> tuple[Path | None, list[str]]:
     return run_db_path, positional
 
 
+def _parse_case_id_filter_option(args: list[str]) -> tuple[str | None, list[str]]:
+    case_id: str | None = None
+    positional: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--case-id":
+            if index + 1 >= len(args):
+                raise ValueError("--case-id requires a value")
+            case_id = args[index + 1].strip() or None
+            index += 2
+            continue
+        positional.append(token)
+        index += 1
+    return case_id, positional
+
+
+def _parse_trace_level_option(args: list[str]) -> tuple[str | None, list[str]]:
+    trace_level: str | None = None
+    positional: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--trace-level":
+            if index + 1 >= len(args):
+                raise ValueError("--trace-level requires a value")
+            trace_level = args[index + 1].strip().lower()
+            index += 2
+            continue
+        positional.append(token)
+        index += 1
+    return trace_level, positional
+
+
+def _resolve_trace_level(*, root: Path, override: str | None) -> str:
+    if override is not None:
+        normalized = override.strip().lower()
+        if normalized not in {"summary", "debug", "forensic"}:
+            raise ValueError("--trace-level must be one of: summary, debug, forensic")
+        return normalized
+    policy_path = root / "config" / "trace_policy.json"
+    policy = load_trace_policy(policy_path)
+    return policy.default_trace_level
+
+
 def _render_run_status(status: object, *, run_db_path: Path | None = None) -> str:
     stage_metrics = _run_stage_metrics_payload(status)
     unknown_reason_distribution = _unknown_reason_distribution_payload(status)
@@ -3050,6 +3311,7 @@ def _render_run_status(status: object, *, run_db_path: Path | None = None) -> st
         f"Stage: {status.stage}",
         f"Backend: {status.backend_name}",
         f"Model: {status.backend_model or '(default)'}",
+        f"Trace level: {status.trace_level}",
         f"Total cases: {status.total_cases}",
         f"Completed cases: {status.completed_cases}",
         f"Failed cases: {status.failed_cases}",
@@ -3214,6 +3476,7 @@ def _run_status_payload(status: object, *, run_db_path: Path | None = None) -> d
         "stage": str(status.stage),
         "backend_name": str(status.backend_name),
         "backend_model": str(status.backend_model) if status.backend_model is not None else None,
+        "trace_level": str(getattr(status, "trace_level", "summary")),
         "created_at": str(status.created_at),
         "updated_at": str(status.updated_at),
         "completed_at": str(status.completed_at) if status.completed_at is not None else None,
@@ -3262,6 +3525,123 @@ def _build_run_export_payload(
     return {
         "run": _run_status_payload(status, run_db_path=run_db_path),
         "findings": findings,
+    }
+
+
+def _render_run_trace(
+    status: object,
+    events: tuple[dict[str, object], ...],
+    *,
+    run_db_path: Path | None = None,
+    case_id_filter: str | None = None,
+) -> str:
+    stage_counts: Counter[str] = Counter()
+    status_counts: Counter[str] = Counter()
+    for event in events:
+        stage = str(event.get("stage", "unknown"))
+        event_status = str(event.get("status", "unknown"))
+        stage_counts[stage] += 1
+        status_counts[event_status] += 1
+
+    lines = [
+        "# Lua Nil Guard Run Trace",
+        "",
+        f"Run ID: {status.run_id}",
+        f"Repository: {status.repository_root}",
+        f"Run DB: {_run_db_label(run_db_path)}",
+        f"Trace level: {status.trace_level}",
+        f"Total events: {len(events)}",
+        f"Case filter: {case_id_filter or '(none)'}",
+        "",
+        "Event status counts:",
+    ]
+    if not status_counts:
+        lines.append("  (none)")
+    else:
+        for key, count in sorted(status_counts.items()):
+            lines.append(f"  - {key}: {count}")
+    lines.extend(["", "Event stage counts:"])
+    if not stage_counts:
+        lines.append("  (none)")
+    else:
+        for key, count in sorted(stage_counts.items()):
+            lines.append(f"  - {key}: {count}")
+    lines.extend(["", "Timeline:"])
+    if not events:
+        lines.append("  (none)")
+    else:
+        for event in events:
+            lines.append(
+                "  - "
+                f"#{event.get('event_id')} "
+                f"case={event.get('case_id')} "
+                f"attempt={event.get('attempt_no')} "
+                f"{event.get('stage')}:{event.get('status')} "
+                f"elapsed_ms={event.get('elapsed_ms')} "
+                f"error={event.get('error_message') or '(none)'}"
+            )
+    return "\n".join(lines)
+
+
+def _build_run_trace_payload(
+    status: object,
+    events: tuple[dict[str, object], ...],
+    *,
+    run_db_path: Path | None = None,
+    case_id_filter: str | None = None,
+) -> dict[str, object]:
+    return {
+        "run": _run_status_payload(status, run_db_path=run_db_path),
+        "trace": {
+            "case_id_filter": case_id_filter,
+            "events": list(events),
+        },
+    }
+
+
+def _render_case_replay(
+    status: object,
+    replay_payload: dict[str, object],
+    *,
+    run_db_path: Path | None = None,
+) -> str:
+    events = replay_payload.get("events", [])
+    event_count = len(events) if isinstance(events, list) else 0
+    lines = [
+        "# Lua Nil Guard Case Replay",
+        "",
+        f"Run ID: {status.run_id}",
+        f"Repository: {status.repository_root}",
+        f"Run DB: {_run_db_label(run_db_path)}",
+        f"Case ID: {replay_payload.get('case_id')}",
+        f"Trace level: {replay_payload.get('trace_level')}",
+        f"Captured at: {replay_payload.get('created_at')}",
+        f"Events: {event_count}",
+        "",
+        "Prompt:",
+        str(replay_payload.get("prompt_text") or "(not captured at current trace level)"),
+        "",
+        "Adjudication payload:",
+        json.dumps(replay_payload.get("adjudication_payload"), indent=2, sort_keys=True),
+        "",
+        "Final verdict:",
+        json.dumps(replay_payload.get("final_verdict"), indent=2, sort_keys=True),
+        "",
+        "Evidence packet:",
+        json.dumps(replay_payload.get("evidence_packet"), indent=2, sort_keys=True),
+    ]
+    return "\n".join(lines)
+
+
+def _build_case_replay_payload(
+    status: object,
+    replay_payload: dict[str, object],
+    *,
+    run_db_path: Path | None = None,
+) -> dict[str, object]:
+    return {
+        "run": _run_status_payload(status, run_db_path=run_db_path),
+        "replay": replay_payload,
     }
 
 

@@ -68,11 +68,15 @@ lua-nil-guard report /path/to/target-repo
 For long-running repository review jobs with resume/status/report/export support, use:
 
 ```sh
-lua-nil-guard run-start /path/to/target-repo
+lua-nil-guard run-start [--trace-level summary|debug|forensic] /path/to/target-repo
 lua-nil-guard run-status /path/to/target-repo [run_id]
 lua-nil-guard run-report /path/to/target-repo [run_id]
 lua-nil-guard run-export-json /path/to/target-repo [run_id] [output]
-lua-nil-guard run-resume /path/to/target-repo <run_id>
+lua-nil-guard run-resume [--trace-level summary|debug|forensic] /path/to/target-repo <run_id>
+lua-nil-guard run-trace [--case-id CASE_ID] /path/to/target-repo [run_id]
+lua-nil-guard run-trace-json [--case-id CASE_ID] /path/to/target-repo [run_id] [output]
+lua-nil-guard case-replay /path/to/target-repo <run_id> <case_id>
+lua-nil-guard case-replay-json /path/to/target-repo <run_id> <case_id> [output]
 ```
 
 `run-status` and `run-report` now include stage metrics and unknown-reason distribution, including:
@@ -88,6 +92,38 @@ lua-nil-guard run-resume /path/to/target-repo <run_id>
 - `unknown_reason` distribution for `unknown_static` cases
 
 For full tuning and candidate-level observability queries, see [`docs/run-tuning.md`](docs/run-tuning.md).
+
+### Backend Interaction Trace and Case Replay
+
+Use this when you want auditable backend interaction timeline and one-case replay:
+
+```sh
+lua-nil-guard run-start --trace-level debug /path/to/target-repo
+lua-nil-guard run-trace /path/to/target-repo [run_id]
+lua-nil-guard case-replay /path/to/target-repo <run_id> <case_id>
+lua-nil-guard clear-trace-artifacts /path/to/target-repo [run_id]
+```
+
+Trace levels:
+
+- `summary` (default): metadata/timeline only
+- `debug`: includes prompt and structured response payloads
+- `forensic`: includes stderr/raw envelope fields (explicit opt-in recommended)
+
+The default trace behavior is controlled by `config/trace_policy.json`:
+
+```json
+{
+  "default_trace_level": "summary",
+  "max_inline_payload_bytes": 65536,
+  "redact_patterns": [
+    "(?i)(authorization\\s*[:=]\\s*)([^\\s,;]+)",
+    "(?i)(api[_-]?key\\s*[:=]\\s*)([^\\s,;]+)"
+  ]
+}
+```
+
+When payload size exceeds `max_inline_payload_bytes`, trace payloads are spilled under `.lua_nil_guard/traces/<run_id>/...`, and DB rows keep a descriptor (path/hash/bytes).
 
 `run-export-json` now exports a structured object:
 
@@ -410,8 +446,10 @@ Target repositories are expected to contain:
 - `config/function_contracts.json`
 - `config/preprocessor_files.json`
 - `config/domain_knowledge.json`
+- `config/backend.json`
+- `config/trace_policy.json`
 
-`init-config` writes the default versions of all five files into the target repository. `function_contracts.json` lets you declare high-confidence wrapper functions such as `normalize_name` that always return a non-nil value, helper guards such as `assert_profile(profile)` via `ensures_non_nil_args`, and normalizers that return a defaulted non-nil value from specific arguments via `returns_non_nil_from_args`. For multi-return helpers you can further split those argument requirements by consumed return slot with `returns_non_nil_from_args_by_return_slot`, so slot `1` and slot `2` do not have to share the same safety preconditions. You can also require that certain input arguments have already been guarded before trusting a specific return slot by using `requires_guarded_args_by_return_slot`, which lets a guard helper contract and a later normalizer contract work together in one proof chain. You can also restrict a contract to specific caller modules with `applies_in_modules`, to specific caller function scopes with `applies_in_function_scopes`, to scope kinds with `applies_to_scope_kinds` (`top_level`, `function_body`), to top-level phases with `applies_to_top_level_phases` (`init`, `post_definitions`), to specific sink rules or sink names with `applies_to_sinks`, to specific call positions with `applies_to_call_roles` (`assignment_origin`, `sink_expression`, `guard_call`), to specific return-value usage modes with `applies_to_usage_modes` (`single_assignment`, `multi_assignment`, `direct_sink`), to specific selected return slots with `applies_to_return_slots` (for example only return slot `1` in a multi-return helper), to a specific call arity with `applies_with_arg_count`, to exact literal arguments with `required_literal_args`, to argument-source shapes with `required_arg_shapes` (`identifier`, `member_access`, `indexed_access`, `literal`, `call`, `expression`), to argument root symbols with `required_arg_roots` (for example `req`, `ngx`, or `fallbacks`), to dotted access-path prefixes with `required_arg_prefixes` (for example `req.params` or `ngx.var`), and to exact normalized access chains with `required_arg_access_paths` (for example `req.params.user` or `req.params[1]`) when a helper is only trustworthy for one exact lookup path. Quoted literal table keys such as `req.params["user"]` normalize to the same `req.params.user` path, while dynamic indexes such as `req.params[token]` do not count as an exact match. This helps suppress false positives without relying on prompt-only inference.
+`init-config` writes the default versions of all seven files into the target repository. `function_contracts.json` lets you declare high-confidence wrapper functions such as `normalize_name` that always return a non-nil value, helper guards such as `assert_profile(profile)` via `ensures_non_nil_args`, and normalizers that return a defaulted non-nil value from specific arguments via `returns_non_nil_from_args`. For multi-return helpers you can further split those argument requirements by consumed return slot with `returns_non_nil_from_args_by_return_slot`, so slot `1` and slot `2` do not have to share the same safety preconditions. You can also require that certain input arguments have already been guarded before trusting a specific return slot by using `requires_guarded_args_by_return_slot`, which lets a guard helper contract and a later normalizer contract work together in one proof chain. You can also restrict a contract to specific caller modules with `applies_in_modules`, to specific caller function scopes with `applies_in_function_scopes`, to scope kinds with `applies_to_scope_kinds` (`top_level`, `function_body`), to top-level phases with `applies_to_top_level_phases` (`init`, `post_definitions`), to specific sink rules or sink names with `applies_to_sinks`, to specific call positions with `applies_to_call_roles` (`assignment_origin`, `sink_expression`, `guard_call`), to specific return-value usage modes with `applies_to_usage_modes` (`single_assignment`, `multi_assignment`, `direct_sink`), to specific selected return slots with `applies_to_return_slots` (for example only return slot `1` in a multi-return helper), to a specific call arity with `applies_with_arg_count`, to exact literal arguments with `required_literal_args`, to argument-source shapes with `required_arg_shapes` (`identifier`, `member_access`, `indexed_access`, `literal`, `call`, `expression`), to argument root symbols with `required_arg_roots` (for example `req`, `ngx`, or `fallbacks`), to dotted access-path prefixes with `required_arg_prefixes` (for example `req.params` or `ngx.var`), and to exact normalized access chains with `required_arg_access_paths` (for example `req.params.user` or `req.params[1]`) when a helper is only trustworthy for one exact lookup path. Quoted literal table keys such as `req.params["user"]` normalize to the same `req.params.user` path, while dynamic indexes such as `req.params[token]` do not count as an exact match. This helps suppress false positives without relying on prompt-only inference.
 
 `sink_rules.json` intentionally does not include `member_access.receiver` by default. Add it explicitly when your team wants broad receiver checks:
 

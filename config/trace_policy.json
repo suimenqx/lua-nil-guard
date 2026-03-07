@@ -1,0 +1,10 @@
+{
+  "default_trace_level": "summary",
+  "max_inline_payload_bytes": 65536,
+  "redact_patterns": [
+    "(?i)(authorization\\s*[:=]\\s*)([^\\s,;]+)",
+    "(?i)(api[_-]?key\\s*[:=]\\s*)([^\\s,;]+)",
+    "(?i)(token\\s*[:=]\\s*)([^\\s,;]+)",
+    "(?i)(cookie\\s*[:=]\\s*)([^\\s,;]+)"
+  ]
+}

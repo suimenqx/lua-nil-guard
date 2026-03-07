@@ -43,6 +43,8 @@ Use these first for a summary:
 ```sh
 lua-nil-guard run-status /path/to/target-repo [run_id]
 lua-nil-guard run-export-json /path/to/target-repo [run_id] [output.json]
+lua-nil-guard run-trace [--case-id CASE_ID] /path/to/target-repo [run_id]
+lua-nil-guard case-replay /path/to/target-repo <run_id> <case_id>
 ```
 
 `run-status` now includes:
@@ -65,6 +67,72 @@ lua-nil-guard run-export-json /path/to/target-repo [run_id] [output.json]
 - `run.analysis_mode_distribution`
 - `run.origin_analysis_mode_distribution`
 - `run.unknown_reason_distribution`
+
+`run-trace` and `case-replay` expose backend interaction observability:
+
+- timeline stages (`build_command`, `execute`, `parse_response`, `fallback`)
+- stage status (`started`, `completed`, `failed`)
+- retries (`attempt_no`)
+- trace-level behavior (`summary`, `debug`, `forensic`)
+
+## Backend Trace and Replay Queries
+
+The backend observability data is stored in two tables:
+
+- `backend_call_events`: stage-level backend interaction timeline
+- `case_replay_capsules`: per-case replay closure
+
+### 1) Backend event timeline by case
+
+```sh
+sqlite3 /path/to/target-repo/.lua_nil_guard/review_runs.sqlite3 "
+SELECT
+  event_id,
+  run_id,
+  case_id,
+  attempt_no,
+  stage,
+  status,
+  trace_level,
+  elapsed_ms,
+  error_class,
+  error_message
+FROM backend_call_events
+WHERE run_id = <RUN_ID>
+ORDER BY event_id;
+"
+```
+
+### 2) Backend failure hotspots
+
+```sh
+sqlite3 /path/to/target-repo/.lua_nil_guard/review_runs.sqlite3 "
+SELECT
+  stage,
+  error_class,
+  COUNT(*) AS cnt
+FROM backend_call_events
+WHERE run_id = <RUN_ID>
+  AND status = 'failed'
+GROUP BY stage, error_class
+ORDER BY cnt DESC, stage, error_class;
+"
+```
+
+### 3) Replay capsule coverage
+
+```sh
+sqlite3 /path/to/target-repo/.lua_nil_guard/review_runs.sqlite3 "
+SELECT
+  run_id,
+  COUNT(*) AS replay_cases,
+  SUM(CASE WHEN prompt_text IS NOT NULL THEN 1 ELSE 0 END) AS prompt_captured,
+  SUM(CASE WHEN adjudication_payload_json IS NOT NULL THEN 1 ELSE 0 END) AS payload_captured
+FROM case_replay_capsules
+WHERE run_id = <RUN_ID>
+GROUP BY run_id;
+"
+```
 
 ## Case-Level Queries (All Collected Candidates)
 
@@ -176,3 +244,8 @@ Use this as a baseline:
 3. Files matched by `config/preprocessor_files.json` `skip_review_files` / `skip_review_globs` are fully omitted.
 - They are not scanned, not inserted into `case_tasks`, and not parsed into macro cache.
 - Use `macro-cache-status` to confirm current configured preprocessor file count.
+
+4. Trace payload retention can be tuned by `config/trace_policy.json`.
+- `default_trace_level`: `summary|debug|forensic`
+- `max_inline_payload_bytes`: max DB inline payload size before spill-to-file
+- `redact_patterns`: regex-based redaction before persistence

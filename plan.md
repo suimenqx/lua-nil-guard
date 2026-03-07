@@ -112,6 +112,119 @@
 5. 已完成全量测试验证：
    - `PYTHONPATH=src pytest -q` 结果：`522 passed`。
 
+## 执行专项（2026-03-07）：Backend 交互可视化与可重放审计
+
+### 一、目标与边界
+
+1. 用户可查看 backend 的真实交互过程：请求构建、命令执行、重试、解析、失败点与耗时。
+2. 用户可查看可审计的判定依据，而不是不可控的原始 chain-of-thought。
+3. 用户可按 `run_id + case_id` 回放一次裁决全链路，支持复盘与争议仲裁。
+4. 非目标：不要求每个第三方 backend 提供内部思维文本；不在默认输出中暴露敏感信息。
+
+### 二、推荐方案（执行基线）
+
+1. Decision Trace Contract（结构化判定轨迹）
+   - 为每次 case 裁决固化统一结构：`verdict`、`risk_path`、`safety_evidence`、`counterarguments_considered`、`missing_evidence`、`evidence_refs(file:line)`、`uncertainty_reason`。
+   - 以结构化字段承载“思考摘要”，避免依赖 provider 私有 CoT 格式。
+2. Replay Capsule（可重放胶囊）
+   - 对每个 case 保存复盘最小闭包：`evidence_packet`、最终 prompt、backend 调用轨迹、解析后的裁决、最终 verdict。
+   - 支持离线重放与调试，不依赖现场环境重现。
+3. Span Telemetry（运行追踪）
+   - 记录 backend 调用 span：开始/结束时间、attempt、超时、失败、fallback、缓存命中、耗时。
+4. 分级可见性
+   - `summary`：仅元数据与结构化摘要（默认）。
+   - `debug`：额外保存 prompt 与结构化响应文本。
+   - `forensic`：保存完整 stdout/stderr 与原始包络（需显式开启）。
+
+### 三、数据模型改造（Run DB）
+
+1. 新增表 `backend_call_events`
+   - 主键：`event_id`
+   - 关键字段：`run_id`、`case_id`、`attempt_no`、`stage`、`status`、`backend_name`、`backend_model`、`backend_executable`、`protocol`
+   - 交互字段：`command_json`、`prompt_sha256`、`prompt_text`、`response_text`、`stderr_text`、`parsed_payload_json`
+   - 诊断字段：`error_class`、`error_message`、`fallback_used`、`cache_hit`
+   - 时间字段：`started_at`、`ended_at`、`elapsed_ms`、`created_at`
+2. 新增表 `case_replay_capsules`
+   - 主键：`(run_id, case_id)`
+   - 字段：`trace_level`、`evidence_packet_json`、`prompt_text`、`adjudication_payload_json`、`final_verdict_json`、`created_at`
+3. 大文本存储策略
+   - 默认写入 DB；当文本超过阈值（建议 64KB）时落盘到 `.lua_nil_guard/traces/<run_id>/<case_id>/...`，DB 仅存路径 + hash。
+4. 索引
+   - `idx_backend_events_run_case(run_id, case_id, attempt_no, stage)`
+   - `idx_backend_events_run_status(run_id, status)`
+
+### 四、运行时埋点改造
+
+1. 新增 `TraceRecorder` 抽象（建议放在 `service.py` 或新建 `trace.py`）
+   - `on_call_started(...)`
+   - `on_call_finished(...)`
+   - `on_call_failed(...)`
+   - `on_case_captured(...)`
+2. 在 `CliAgentBackend`（`agent_backend.py`）内接入埋点
+   - 命令构建前记录 `stage=build_command`
+   - 子进程执行前后记录 `stage=execute`
+   - 响应解析前后记录 `stage=parse_response`
+   - fallback 路径记录 `stage=fallback`
+3. 在 `_run_review_from_assessments`（`service.py`）完成 case 后写入 replay capsule
+   - 绑定 `run_id/case_id`
+   - 关联 `adjudication_records` 与 `case_tasks` 形成完整链路
+
+### 五、CLI 与用户呈现
+
+1. 新增运行参数
+   - `--trace-level summary|debug|forensic`（默认 `summary`）
+2. 新增查询命令
+   - `run-trace [--run-db PATH] <repository> [run_id]`
+   - `run-trace-json [--run-db PATH] <repository> [run_id] [output]`
+   - `case-replay [--run-db PATH] <repository> <run_id> <case_id>`
+   - `case-replay-json [--run-db PATH] <repository> <run_id> <case_id> [output]`
+3. 呈现规范
+   - 文本视图按时间线展示：候选 -> LLM 调用 attempt -> 解析 -> 校验 -> 最终 verdict。
+   - JSON 视图用于二次分析和可视化平台接入。
+
+### 六、安全与合规约束
+
+1. 新增 `config/trace_policy.json`
+   - `default_trace_level`
+   - `max_inline_payload_bytes`
+   - `redact_patterns`（token、cookie、authorization、api key）
+2. 默认开启脱敏
+   - 即使 `debug/forensic`，也先做字符串脱敏再持久化。
+3. 风险操作门槛
+   - `forensic` 模式要求显式参数开启，避免误采集敏感信息。
+
+### 七、分阶段执行计划
+
+1. P0（可观测最小闭环）
+   - 交付：`backend_call_events` 表、`run-trace`/`run-trace-json`、summary 级埋点
+   - 验收：每个 case 至少可见 1 条 backend 调用记录，失败有 stage 和错误信息
+2. P1（可重放闭环）
+   - 交付：`case_replay_capsules`、`case-replay`/`case-replay-json`、debug 级 prompt/response 保存
+   - 验收：可对任意 case 复盘“输入证据 -> backend 输出 -> 最终 verdict”
+3. P2（审计与运维增强）
+   - 交付：forensic 级原始包络、落盘分流、保留策略与清理命令
+   - 验收：超大输出场景下 DB 不膨胀、查询性能稳定、敏感字段可控
+
+### 八、测试计划
+
+1. `tests/test_service.py`
+   - 覆盖 run 期间事件写入、case 胶囊写入、失败路径写入
+2. `tests/test_cli.py`
+   - 覆盖 `run-trace*` / `case-replay*` 命令输出与错误分支
+3. `tests/test_agent_backend.py` / `tests/test_cli_agent_backend.py`
+   - 覆盖 attempt 重试、timeout、fallback、cache 命中事件
+4. 回归
+   - 全量 `pytest` 必须通过
+   - 不得破坏既有 `run-status` / `run-export-json` 兼容输出
+
+### 九、完成验收标准（专项）
+
+1. 用户可按 `run_id + case_id` 查询完整 backend 交互时间线。
+2. 用户可看到结构化“判定依据摘要”（证据链），并能定位到 `file:line`。
+3. `summary/debug/forensic` 三个等级行为符合配置预期，默认安全。
+4. 失败案例可明确定位到 `build_command/execute/parse/fallback` 具体阶段。
+5. 文档与命令帮助更新完成，首次使用者可独立复盘一次 case。
+
 ## 0. 项目基线
 
 LuaNilGuard 已完成 v3 主路径切换：当前运行系统为 `single_pass` 单次结构化判定，legacy 多模式路径已移除。
