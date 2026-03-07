@@ -185,6 +185,9 @@ class ReviewRunStatus:
     failed_cases: int
     ast_exact_cases: int
     lexical_fallback_cases: int
+    ast_primary_cases: int
+    ast_fallback_to_legacy_cases: int
+    legacy_only_cases: int
     static_safe_cases: int
     static_unknown_cases: int
     llm_enqueued_cases: int
@@ -193,6 +196,8 @@ class ReviewRunStatus:
     safe_verified_cases: int
     risky_verified_cases: int
     unknown_reason_distribution: tuple[tuple[str, int], ...]
+    analysis_mode_distribution: tuple[tuple[str, int], ...]
+    origin_analysis_mode_distribution: tuple[tuple[str, int], ...]
     created_at: str
     updated_at: str
     completed_at: str | None
@@ -478,6 +483,8 @@ class _ReviewRunStore:
                     sink_rule_id TEXT NOT NULL,
                     static_state TEXT NOT NULL,
                     candidate_source TEXT NOT NULL DEFAULT 'ast_exact',
+                    analysis_mode TEXT NOT NULL DEFAULT 'legacy_only',
+                    origin_analysis_mode TEXT NOT NULL DEFAULT 'legacy_origin_only',
                     unknown_reason TEXT NOT NULL DEFAULT '',
                     origin_unknown_reason TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL,
@@ -570,6 +577,14 @@ class _ReviewRunStore:
                 self._conn.execute(
                     "ALTER TABLE case_tasks ADD COLUMN candidate_source TEXT NOT NULL DEFAULT 'ast_exact'"
                 )
+            if "analysis_mode" not in case_task_columns:
+                self._conn.execute(
+                    "ALTER TABLE case_tasks ADD COLUMN analysis_mode TEXT NOT NULL DEFAULT 'legacy_only'"
+                )
+            if "origin_analysis_mode" not in case_task_columns:
+                self._conn.execute(
+                    "ALTER TABLE case_tasks ADD COLUMN origin_analysis_mode TEXT NOT NULL DEFAULT 'legacy_origin_only'"
+                )
             if "unknown_reason" not in case_task_columns:
                 self._conn.execute(
                     "ALTER TABLE case_tasks ADD COLUMN unknown_reason TEXT NOT NULL DEFAULT ''"
@@ -661,13 +676,15 @@ class _ReviewRunStore:
                         sink_rule_id,
                         static_state,
                         candidate_source,
+                        analysis_mode,
+                        origin_analysis_mode,
                         unknown_reason,
                         origin_unknown_reason,
                         llm_attempts,
                         second_hop_used,
                         status,
                         updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(run_id, case_id) DO NOTHING
                     """,
                     (
@@ -679,6 +696,8 @@ class _ReviewRunStore:
                         assessment.candidate.sink_rule_id,
                         assessment.candidate.static_state,
                         assessment.candidate.candidate_source,
+                        assessment.static_analysis.analysis_mode,
+                        assessment.static_analysis.origin_analysis_mode,
                         (
                             assessment.static_analysis.unknown_reason
                             or assessment.static_analysis.origin_unknown_reason
@@ -1130,6 +1149,26 @@ class _ReviewRunStore:
         ).fetchall()
         return tuple((str(row["unknown_reason"]), int(row["reason_count"])) for row in rows)
 
+    def _load_mode_distribution(
+        self,
+        *,
+        run_id: int,
+        column_name: str,
+    ) -> tuple[tuple[str, int], ...]:
+        if column_name not in {"analysis_mode", "origin_analysis_mode"}:
+            raise ValueError(f"Unsupported mode column: {column_name}")
+        rows = self._conn.execute(
+            f"""
+            SELECT {column_name} AS mode, COUNT(*) AS mode_count
+            FROM case_tasks
+            WHERE run_id = ?
+            GROUP BY {column_name}
+            ORDER BY mode_count DESC, mode ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        return tuple((str(row["mode"]), int(row["mode_count"])) for row in rows)
+
     def _load_case_stage_metrics(self, *, run_id: int) -> tuple[int, int, int]:
         row = self._conn.execute(
             """
@@ -1182,6 +1221,15 @@ class _ReviewRunStore:
             self._load_case_stage_metrics(run_id=run_id)
         )
         unknown_reason_distribution = self._load_unknown_reason_distribution(run_id=run_id)
+        analysis_mode_distribution = self._load_mode_distribution(
+            run_id=run_id,
+            column_name="analysis_mode",
+        )
+        origin_analysis_mode_distribution = self._load_mode_distribution(
+            run_id=run_id,
+            column_name="origin_analysis_mode",
+        )
+        analysis_mode_counts = dict(analysis_mode_distribution)
         return ReviewRunStatus(
             run_id=int(row["run_id"]),
             repository_root=str(row["repository_root"]),
@@ -1194,6 +1242,11 @@ class _ReviewRunStore:
             failed_cases=int(row["failed_cases"]),
             ast_exact_cases=int(row["ast_exact_cases"]),
             lexical_fallback_cases=int(row["lexical_fallback_cases"]),
+            ast_primary_cases=int(analysis_mode_counts.get("ast_primary", 0)),
+            ast_fallback_to_legacy_cases=int(
+                analysis_mode_counts.get("ast_fallback_to_legacy", 0)
+            ),
+            legacy_only_cases=int(analysis_mode_counts.get("legacy_only", 0)),
             static_safe_cases=int(row["static_safe_cases"]),
             static_unknown_cases=int(row["static_unknown_cases"]),
             llm_enqueued_cases=int(row["llm_enqueued_cases"]),
@@ -1202,6 +1255,8 @@ class _ReviewRunStore:
             safe_verified_cases=safe_verified_cases,
             risky_verified_cases=risky_verified_cases,
             unknown_reason_distribution=unknown_reason_distribution,
+            analysis_mode_distribution=analysis_mode_distribution,
+            origin_analysis_mode_distribution=origin_analysis_mode_distribution,
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
             completed_at=(str(row["completed_at"]) if row["completed_at"] is not None else None),

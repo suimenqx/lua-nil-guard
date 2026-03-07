@@ -115,6 +115,7 @@ def test_run_repository_review_job_routes_only_unknown_cases_to_backend(tmp_path
     assert status.completed_cases == 2
     assert status.ast_exact_cases == 0
     assert status.lexical_fallback_cases == 2
+    assert status.ast_primary_cases + status.ast_fallback_to_legacy_cases + status.legacy_only_cases == 2
     assert status.static_unknown_cases == 1
     assert status.llm_enqueued_cases == 1
     assert status.llm_processed_cases == 1
@@ -133,6 +134,8 @@ def test_run_repository_review_job_routes_only_unknown_cases_to_backend(tmp_path
     assert loaded.run_id == status.run_id
     assert loaded.completed_cases == 2
     assert loaded.unknown_reason_distribution == (("no_bounded_ast_proof", 1),)
+    assert loaded.analysis_mode_distribution
+    assert loaded.origin_analysis_mode_distribution
 
     backend_resume = CountingBackend()
     resumed_status, resumed_verdicts = run_repository_review_job(

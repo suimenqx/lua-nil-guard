@@ -129,7 +129,13 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
             return 2, "init-config requires exactly one repository path"
         root = Path(positional[0])
         try:
-            sink_path, policy_path, contracts_path, preprocessor_path = initialize_repository_config(
+            (
+                sink_path,
+                policy_path,
+                contracts_path,
+                preprocessor_path,
+                domain_knowledge_path,
+            ) = initialize_repository_config(
                 root,
                 force=force,
             )
@@ -156,6 +162,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 f"Confidence policy: {policy_path}",
                 f"Function contracts: {contracts_path}",
                 f"Preprocessor config: {preprocessor_path}",
+                f"Domain knowledge: {domain_knowledge_path}",
                 f"Adjudication policy: {adj_policy_path}",
             ]
         )
@@ -2998,6 +3005,14 @@ def _parse_run_db_option(args: list[str]) -> tuple[Path | None, list[str]]:
 def _render_run_status(status: object, *, run_db_path: Path | None = None) -> str:
     stage_metrics = _run_stage_metrics_payload(status)
     unknown_reason_distribution = _unknown_reason_distribution_payload(status)
+    analysis_mode_distribution = _mode_distribution_payload(
+        status,
+        attribute_name="analysis_mode_distribution",
+    )
+    origin_analysis_mode_distribution = _mode_distribution_payload(
+        status,
+        attribute_name="origin_analysis_mode_distribution",
+    )
     lines = [
         "# Lua Nil Guard Run Status",
         "",
@@ -3013,6 +3028,9 @@ def _render_run_status(status: object, *, run_db_path: Path | None = None) -> st
         f"Failed cases: {status.failed_cases}",
         f"AST exact candidates: {status.ast_exact_cases}",
         f"Lexical fallback candidates: {status.lexical_fallback_cases}",
+        f"AST primary cases: {status.ast_primary_cases}",
+        f"AST fallback-to-legacy cases: {status.ast_fallback_to_legacy_cases}",
+        f"AST legacy-only cases: {status.legacy_only_cases}",
         f"Static safe cases: {status.static_safe_cases}",
         f"Static unknown cases: {status.static_unknown_cases}",
         f"LLM enqueued cases: {status.llm_enqueued_cases}",
@@ -3048,8 +3066,32 @@ def _render_run_status(status: object, *, run_db_path: Path | None = None) -> st
             f"failed={stage_metrics['finalize']['failed_cases']}"
         ),
         "",
-        "Unknown reasons:",
+        "Analysis modes:",
     ]
+    if not analysis_mode_distribution:
+        lines.append("  (none)")
+    else:
+        for entry in analysis_mode_distribution:
+            lines.append(f"  - {entry['mode']}: {entry['count']}")
+
+    lines.extend(
+        [
+            "",
+            "Origin analysis modes:",
+        ]
+    )
+    if not origin_analysis_mode_distribution:
+        lines.append("  (none)")
+    else:
+        for entry in origin_analysis_mode_distribution:
+            lines.append(f"  - {entry['mode']}: {entry['count']}")
+
+    lines.extend(
+        [
+            "",
+        "Unknown reasons:",
+        ]
+    )
     if not unknown_reason_distribution:
         lines.append("  (none)")
     else:
@@ -3099,6 +3141,22 @@ def _unknown_reason_distribution_payload(status: object) -> list[dict[str, objec
     return payload
 
 
+def _mode_distribution_payload(
+    status: object,
+    *,
+    attribute_name: str,
+) -> list[dict[str, object]]:
+    distribution = getattr(status, attribute_name, ())
+    payload: list[dict[str, object]] = []
+    if isinstance(distribution, tuple):
+        for entry in distribution:
+            if not isinstance(entry, tuple) or len(entry) != 2:
+                continue
+            mode, count = entry
+            payload.append({"mode": str(mode), "count": int(count)})
+    return payload
+
+
 def _run_status_payload(status: object, *, run_db_path: Path | None = None) -> dict[str, object]:
     return {
         "run_id": int(status.run_id),
@@ -3115,6 +3173,9 @@ def _run_status_payload(status: object, *, run_db_path: Path | None = None) -> d
             "total_cases": int(status.total_cases),
             "ast_exact_cases": int(status.ast_exact_cases),
             "lexical_fallback_cases": int(status.lexical_fallback_cases),
+            "ast_primary_cases": int(status.ast_primary_cases),
+            "ast_fallback_to_legacy_cases": int(status.ast_fallback_to_legacy_cases),
+            "legacy_only_cases": int(status.legacy_only_cases),
             "static_safe_cases": int(status.static_safe_cases),
             "static_unknown_cases": int(status.static_unknown_cases),
             "llm_enqueued_cases": int(status.llm_enqueued_cases),
@@ -3126,6 +3187,14 @@ def _run_status_payload(status: object, *, run_db_path: Path | None = None) -> d
             "failed_cases": int(status.failed_cases),
         },
         "stage_metrics": _run_stage_metrics_payload(status),
+        "analysis_mode_distribution": _mode_distribution_payload(
+            status,
+            attribute_name="analysis_mode_distribution",
+        ),
+        "origin_analysis_mode_distribution": _mode_distribution_payload(
+            status,
+            attribute_name="origin_analysis_mode_distribution",
+        ),
         "unknown_reason_distribution": _unknown_reason_distribution_payload(status),
     }
 

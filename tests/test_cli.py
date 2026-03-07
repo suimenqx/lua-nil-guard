@@ -248,6 +248,8 @@ def test_cli_run_start_status_and_resume(tmp_path: Path) -> None:
     assert f"Run ID: {run_id}" in status_output
     assert "Status: completed" in status_output
     assert "AST exact candidates:" in status_output
+    assert "AST primary cases:" in status_output
+    assert "Analysis modes:" in status_output
     assert "LLM processed cases:" in status_output
     assert "Stage metrics:" in status_output
     assert "Unknown reasons:" in status_output
@@ -289,6 +291,8 @@ def test_cli_run_start_status_and_resume(tmp_path: Path) -> None:
     run_payload = exported_payload["run"]
     assert run_payload["run_id"] == run_id
     assert "stage_metrics" in run_payload
+    assert "analysis_mode_distribution" in run_payload
+    assert "origin_analysis_mode_distribution" in run_payload
     assert "unknown_reason_distribution" in run_payload
 
 
@@ -460,10 +464,12 @@ def test_cli_init_config_writes_default_templates(tmp_path: Path) -> None:
     policy_path = tmp_path / "config" / "confidence_policy.json"
     contracts_path = tmp_path / "config" / "function_contracts.json"
     preprocessor_path = tmp_path / "config" / "preprocessor_files.json"
+    domain_path = tmp_path / "config" / "domain_knowledge.json"
     sink_payload = json.loads(sink_path.read_text(encoding="utf-8"))
     policy_payload = json.loads(policy_path.read_text(encoding="utf-8"))
     contracts_payload = json.loads(contracts_path.read_text(encoding="utf-8"))
     preprocessor_payload = json.loads(preprocessor_path.read_text(encoding="utf-8"))
+    domain_payload = json.loads(domain_path.read_text(encoding="utf-8"))
 
     assert exit_code == 0
     assert "Repository config initialized." in output
@@ -471,13 +477,18 @@ def test_cli_init_config_writes_default_templates(tmp_path: Path) -> None:
     assert f"Confidence policy: {policy_path}" in output
     assert f"Function contracts: {contracts_path}" in output
     assert f"Preprocessor config: {preprocessor_path}" in output
+    assert f"Domain knowledge: {domain_path}" in output
     assert any(rule["id"] == "string.match.arg1" for rule in sink_payload)
+    assert all(rule["id"] != "member_access.receiver" for rule in sink_payload)
     assert policy_payload["default_report_min_confidence"] == "high"
     assert contracts_payload == []
     assert preprocessor_payload == {
         "preprocessor_files": [],
         "preprocessor_globs": ["id.lua", "*_id.lua"],
     }
+    assert any(rule["id"] == "system_name_table_prefix" for rule in domain_payload["rules"])
+    assert any(rule["id"] == "system_cmd_table_prefix" for rule in domain_payload["rules"])
+    assert any(rule["id"] == "uppercase_macro_non_nil" for rule in domain_payload["rules"])
 
 
 def test_cli_init_config_preserves_existing_files_and_backfills_missing_templates(tmp_path: Path) -> None:
@@ -487,6 +498,7 @@ def test_cli_init_config_preserves_existing_files_and_backfills_missing_template
     policy_path = config_dir / "confidence_policy.json"
     contracts_path = config_dir / "function_contracts.json"
     preprocessor_path = config_dir / "preprocessor_files.json"
+    domain_path = config_dir / "domain_knowledge.json"
     sink_path.write_text("[]", encoding="utf-8")
     policy_path.write_text("{}", encoding="utf-8")
     contracts_path.write_text("[]", encoding="utf-8")
@@ -502,6 +514,10 @@ def test_cli_init_config_preserves_existing_files_and_backfills_missing_template
         "preprocessor_files": [],
         "preprocessor_globs": ["id.lua", "*_id.lua"],
     }
+    assert any(
+        rule["id"] == "system_name_table_prefix"
+        for rule in json.loads(domain_path.read_text(encoding="utf-8"))["rules"]
+    )
 
 
 def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None:
@@ -511,6 +527,7 @@ def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None
     policy_path = config_dir / "confidence_policy.json"
     contracts_path = config_dir / "function_contracts.json"
     preprocessor_path = config_dir / "preprocessor_files.json"
+    domain_path = config_dir / "domain_knowledge.json"
     sink_path.write_text("[]", encoding="utf-8")
     policy_path.write_text("{}", encoding="utf-8")
     contracts_path.write_text("{}", encoding="utf-8")
@@ -522,16 +539,19 @@ def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None
     policy_payload = json.loads(policy_path.read_text(encoding="utf-8"))
     contracts_payload = json.loads(contracts_path.read_text(encoding="utf-8"))
     preprocessor_payload = json.loads(preprocessor_path.read_text(encoding="utf-8"))
+    domain_payload = json.loads(domain_path.read_text(encoding="utf-8"))
 
     assert exit_code == 0
     assert "Force overwrite: yes" in output
     assert any(rule["id"] == "string.match.arg1" for rule in sink_payload)
+    assert all(rule["id"] != "member_access.receiver" for rule in sink_payload)
     assert policy_payload["default_report_min_confidence"] == "high"
     assert contracts_payload == []
     assert preprocessor_payload == {
         "preprocessor_files": [],
         "preprocessor_globs": ["id.lua", "*_id.lua"],
     }
+    assert any(rule["id"] == "uppercase_macro_non_nil" for rule in domain_payload["rules"])
 
 
 def test_cli_encoding_audit_reports_convertible_and_unsupported_files(tmp_path: Path) -> None:
