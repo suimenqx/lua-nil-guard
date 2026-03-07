@@ -42,13 +42,6 @@ _AST_CONTROL_FLOW_QUERY_TEXT: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class _AstGuardOutcome:
-    proofs: tuple[StaticProof, ...]
-    analysis_mode: str
-    unknown_reason: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class _AstOriginOutcome:
     detail: tuple[str, str, int, int] | None
     analysis_mode: str
@@ -62,268 +55,13 @@ class _AstControlFlowContext:
     captures: dict[str, tuple[object, ...]]
 
 
-def _analyze_candidate_legacy(
-    source: str,
-    candidate: CandidateCase,
-    *,
-    function_contracts: tuple[FunctionContract, ...] = (),
-    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]] | None = None,
-    maybe_nil_return_helpers: dict[str, tuple[tuple[int, int], ...]] | None = None,
-    coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]] | None = None,
-    inline_guard_contracts: tuple[FunctionContract, ...] | None = None,
-    macro_index: MacroIndex | None = None,
-    required_module_symbol_map: dict[str, tuple[str, ...]] | None = None,
-    ast_control_flow_context: _AstControlFlowContext | None = None,
-    source_lines: tuple[str, ...] | None = None,
-) -> StaticAnalysisResult:
-    """Apply bounded local heuristics before escalating to agent review."""
-
-    current_module = detect_module_name(source)
-    direct_expression_risks = _direct_expression_risk_signals(
-        candidate.expression,
-        sink_name=candidate.sink_name,
-        current_module=current_module,
-        maybe_nil_return_helpers=tuple(
-            maybe_nil_return_helpers.items()
-        )
-        if maybe_nil_return_helpers is not None
-        else (),
-        coalescing_return_helpers=tuple(
-            coalescing_return_helpers.items()
-        )
-        if coalescing_return_helpers is not None
-        else (),
-    )
-    if not _is_trackable_symbol(candidate.symbol):
-        return StaticAnalysisResult(
-            state="unknown_static",
-            observed_guards=(),
-            origin_candidates=(candidate.expression,),
-            origin_usage_modes=("direct_sink",),
-            origin_return_slots=(1,),
-            proofs=(),
-            risk_signals=direct_expression_risks,
-        )
-
-    lines = source_lines if source_lines is not None else tuple(source.splitlines())
-    prior_lines = lines[: max(0, candidate.line - 1)]
-    ast_context = ast_control_flow_context
-    if ast_context is None:
-        ast_context = _parse_control_flow_tree(source)
-    if ast_context is None:
-        raise ParserBackendUnavailableError(
-            "AST-lite requires Tree-sitter control-flow parsing; context build failed"
-        )
-    origin_outcome = _resolve_origin_with_ast(
-        source,
-        candidate,
-        context=ast_context,
-    )
-    origin_detail = origin_outcome.detail
-    if origin_detail is None:
-        origin_detail = _find_last_assignment_detail(prior_lines, candidate.symbol)
-    origin_context = None
-    if origin_detail is not None:
-        origin_context = (
-            origin_detail[0],
-            origin_detail[1],
-            origin_detail[2],
-        )
-    origin = origin_context[0] if origin_context is not None else None
-    proofs: list[StaticProof] = []
-    risk_signals: list[StaticRiskSignal] = []
-    effective_transparent_return_wrappers = (
-        dict(transparent_return_wrappers)
-        if transparent_return_wrappers is not None
-        else collect_transparent_return_wrappers((source,), allow_local=True)
-    )
-    effective_maybe_nil_return_helpers = (
-        dict(maybe_nil_return_helpers)
-        if maybe_nil_return_helpers is not None
-        else {}
-    )
-    effective_coalescing_return_helpers = (
-        dict(coalescing_return_helpers)
-        if coalescing_return_helpers is not None
-        else {}
-    )
-    effective_inline_guard_contracts = (
-        tuple(inline_guard_contracts)
-        if inline_guard_contracts is not None
-        else collect_inline_guard_contracts((source,), allow_local=True)
-    )
-    effective_required_module_symbol_map = (
-        dict(required_module_symbol_map)
-        if required_module_symbol_map is not None
-        else build_required_module_symbol_map(source)
-    )
-    effective_function_contracts = effective_inline_guard_contracts + tuple(function_contracts)
-    ast_guard_outcome = _analyze_guards_with_ast(
-        source,
-        candidate,
-        context=ast_context,
-    )
-    analysis_mode = ast_guard_outcome.analysis_mode
-    unknown_reason = ast_guard_outcome.unknown_reason
-    current_scope_kind = _scope_kind_for_function_scope(candidate.function_scope)
-    current_top_level_phase = _top_level_phase_for_candidate(source, candidate)
-
-    if ast_guard_outcome.analysis_mode == "ast_primary":
-        proofs.extend(ast_guard_outcome.proofs)
-    else:
-        if _has_active_positive_guard(prior_lines, candidate.symbol):
-            proofs.append(_build_positive_guard_proof(candidate.symbol))
-        if _has_early_exit_guard(prior_lines, candidate.symbol):
-            proofs.append(_build_early_exit_guard_proof(candidate.symbol))
-        if _has_active_assert(prior_lines, candidate.symbol):
-            proofs.append(_build_assert_guard_proof(candidate.symbol))
-        loop_index_guard = _active_for_loop_index_guard(prior_lines, candidate.symbol)
-        if loop_index_guard is not None:
-            proofs.append(loop_index_guard)
-    contract_guard = _active_contract_guard(
-        prior_lines,
-        candidate.symbol,
-        function_contracts=effective_function_contracts,
-        current_module=current_module,
-        current_function_scope=candidate.function_scope,
-        current_top_level_phase=current_top_level_phase,
-        current_scope_kind=current_scope_kind,
-        sink_rule_id=candidate.sink_rule_id,
-        sink_name=candidate.sink_name,
-    )
-    if contract_guard is not None:
-        proofs.append(contract_guard)
-    macro_fact_guard = _macro_fact_guard(
-        candidate,
-        origin_detail,
-        macro_index=macro_index,
-    )
-    if macro_fact_guard is not None:
-        proofs.append(macro_fact_guard)
-    required_module_guard = _required_module_guard(
-        candidate,
-        origin_detail,
-        required_module_symbol_map=effective_required_module_symbol_map,
-    )
-    if required_module_guard is not None:
-        proofs.append(required_module_guard)
-    guarded_field_origin_proof = _guarded_field_origin_proof(
-        prior_lines,
-        origin_detail,
-        subject=candidate.symbol,
-    )
-    if guarded_field_origin_proof is not None:
-        proofs.append(guarded_field_origin_proof)
-    return_contract_guard = _origin_return_contract_guard(
-        prior_lines,
-        origin_context,
-        subject=candidate.symbol,
-        function_contracts=effective_function_contracts,
-        current_module=current_module,
-        current_function_scope=candidate.function_scope,
-        current_top_level_phase=current_top_level_phase,
-        current_scope_kind=current_scope_kind,
-        sink_rule_id=candidate.sink_rule_id,
-        sink_name=candidate.sink_name,
-        transparent_return_wrappers=effective_transparent_return_wrappers,
-    )
-    if return_contract_guard is not None:
-        proofs.append(return_contract_guard)
-    if _has_defaulting_origin(origin):
-        proofs.append(_build_defaulting_origin_proof(candidate.symbol, origin))
-
-    deduped_proofs = _dedupe_proofs(tuple(proofs))
-    if not deduped_proofs:
-        risk_signals.extend(
-            _field_path_risk_signals(
-                prior_lines,
-                candidate,
-                origin_detail,
-                unknown_reason=unknown_reason,
-            )
-        )
-        risk_signals.extend(
-            _wrapper_field_path_risk_signals(
-                prior_lines,
-                origin_detail,
-                subject=candidate.symbol,
-                current_module=current_module,
-                transparent_return_wrappers=effective_transparent_return_wrappers,
-                unknown_reason=unknown_reason,
-            )
-        )
-        risk_signals.extend(
-            _call_nil_return_risk_signals(
-                origin_detail,
-                subject=candidate.symbol,
-                current_module=current_module,
-                maybe_nil_return_helpers=effective_maybe_nil_return_helpers,
-            )
-        )
-        risk_signals.extend(
-            _coalescing_call_risk_signals(
-                origin_detail,
-                subject=candidate.symbol,
-                current_module=current_module,
-                coalescing_return_helpers=effective_coalescing_return_helpers,
-            )
-        )
-    deduped_risk_signals = _dedupe_risk_signals(tuple(risk_signals))
-    observed_guards = tuple(proof.summary for proof in deduped_proofs)
-    state = "safe_static" if deduped_proofs else "unknown_static"
-    if deduped_proofs:
-        unknown_reason = None
-    origins = (origin,) if origin is not None else (candidate.expression,)
-    origin_usage_modes = (
-        (origin_context[1],)
-        if origin_context is not None
-        else ("direct_sink",)
-    )
-    origin_return_slots = (
-        (origin_context[2],)
-        if origin_context is not None
-        else ()
-    )
-    return StaticAnalysisResult(
-        state=state,
-        observed_guards=tuple(observed_guards),
-        origin_candidates=origins,
-        origin_usage_modes=origin_usage_modes,
-        origin_return_slots=origin_return_slots,
-        proofs=deduped_proofs,
-        risk_signals=deduped_risk_signals,
-        analysis_mode=analysis_mode,
-        unknown_reason=unknown_reason,
-        origin_analysis_mode=origin_outcome.analysis_mode,
-        origin_unknown_reason=origin_outcome.unknown_reason,
-    )
-
-
 def _analyze_candidate_ast_lite(
     source: str,
     candidate: CandidateCase,
     *,
-    function_contracts: tuple[FunctionContract, ...] = (),
-    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]] | None = None,
-    maybe_nil_return_helpers: dict[str, tuple[tuple[int, int], ...]] | None = None,
-    coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]] | None = None,
-    inline_guard_contracts: tuple[FunctionContract, ...] | None = None,
-    macro_index: MacroIndex | None = None,
-    required_module_symbol_map: dict[str, tuple[str, ...]] | None = None,
     ast_control_flow_context: _AstControlFlowContext | None = None,
-    source_lines: tuple[str, ...] | None = None,
 ) -> StaticAnalysisResult:
     """AST-lite profile: keep origin/context extraction, skip semantic proofing."""
-
-    _ = (
-        function_contracts,
-        transparent_return_wrappers,
-        maybe_nil_return_helpers,
-        coalescing_return_helpers,
-        inline_guard_contracts,
-        macro_index,
-        required_module_symbol_map,
-    )
     if not _is_trackable_symbol(candidate.symbol):
         return StaticAnalysisResult(
             state="unknown_static",
@@ -389,48 +127,15 @@ def analyze_candidate(
     source: str,
     candidate: CandidateCase,
     *,
-    function_contracts: tuple[FunctionContract, ...] = (),
-    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]] | None = None,
-    maybe_nil_return_helpers: dict[str, tuple[tuple[int, int], ...]] | None = None,
-    coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]] | None = None,
-    inline_guard_contracts: tuple[FunctionContract, ...] | None = None,
-    macro_index: MacroIndex | None = None,
-    required_module_symbol_map: dict[str, tuple[str, ...]] | None = None,
     ast_control_flow_context: _AstControlFlowContext | None = None,
-    source_lines: tuple[str, ...] | None = None,
-    analysis_profile: str = "legacy",
 ) -> StaticAnalysisResult:
-    """Apply bounded local analysis before escalating to agent review."""
+    """AST-lite only analysis used by the runtime pipeline."""
 
-    if analysis_profile == "legacy":
-        return _analyze_candidate_legacy(
-            source,
-            candidate,
-            function_contracts=function_contracts,
-            transparent_return_wrappers=transparent_return_wrappers,
-            maybe_nil_return_helpers=maybe_nil_return_helpers,
-            coalescing_return_helpers=coalescing_return_helpers,
-            inline_guard_contracts=inline_guard_contracts,
-            macro_index=macro_index,
-            required_module_symbol_map=required_module_symbol_map,
-            ast_control_flow_context=ast_control_flow_context,
-            source_lines=source_lines,
-        )
-    if analysis_profile == "ast_lite":
-        return _analyze_candidate_ast_lite(
-            source,
-            candidate,
-            function_contracts=function_contracts,
-            transparent_return_wrappers=transparent_return_wrappers,
-            maybe_nil_return_helpers=maybe_nil_return_helpers,
-            coalescing_return_helpers=coalescing_return_helpers,
-            inline_guard_contracts=inline_guard_contracts,
-            macro_index=macro_index,
-            required_module_symbol_map=required_module_symbol_map,
-            ast_control_flow_context=ast_control_flow_context,
-            source_lines=source_lines,
-        )
-    raise ValueError(f"unsupported analysis_profile: {analysis_profile!r}")
+    return _analyze_candidate_ast_lite(
+        source,
+        candidate,
+        ast_control_flow_context=ast_control_flow_context,
+    )
 
 
 def build_static_analysis_context(source: str):
@@ -439,79 +144,6 @@ def build_static_analysis_context(source: str):
     if context is None:
         raise ParserBackendUnavailableError("AST-lite requires a valid Tree-sitter control-flow context")
     return context
-
-
-def _analyze_guards_with_ast(
-    source: str,
-    candidate: CandidateCase,
-    *,
-    context: _AstControlFlowContext | None = None,
-) -> _AstGuardOutcome:
-    if context is None:
-        return _AstGuardOutcome(proofs=(), analysis_mode="legacy_only")
-
-    target_node = _resolve_candidate_node(context.tree.root_node, candidate)
-    if target_node is None:
-        return _AstGuardOutcome(
-            proofs=(),
-            analysis_mode="ast_fallback_to_legacy",
-            unknown_reason="unresolved_ast_node",
-        )
-
-    unknown_reason = _classify_ast_unknown_reason(source, context, target_node, candidate)
-    if unknown_reason is not None:
-        return _AstGuardOutcome(
-            proofs=(),
-            analysis_mode="ast_fallback_to_legacy",
-            unknown_reason=unknown_reason,
-        )
-
-    proofs: list[StaticProof] = []
-    loop_index_guard = _ast_loop_index_guard_proof(target_node, candidate.symbol, context.source_bytes)
-    if loop_index_guard is not None:
-        proofs.append(loop_index_guard)
-    positive_guard = _ast_positive_guard_proof(target_node, candidate.symbol, context.source_bytes)
-    if positive_guard is not None:
-        proofs.append(positive_guard)
-    alternative_guard = _ast_negative_guard_alternative_proof(
-        target_node,
-        candidate.symbol,
-        context.source_bytes,
-    )
-    if alternative_guard is not None:
-        proofs.append(alternative_guard)
-    loop_break_guard = _ast_loop_break_guard_proof(
-        target_node,
-        candidate.symbol,
-        context.source_bytes,
-    )
-    if loop_break_guard is not None:
-        proofs.append(loop_break_guard)
-    repeat_until_guard = _ast_repeat_until_guard_proof(
-        target_node,
-        candidate.symbol,
-        context.source_bytes,
-    )
-    if repeat_until_guard is not None:
-        proofs.append(repeat_until_guard)
-    early_exit_guard = _ast_early_exit_guard_proof(target_node, candidate.symbol, context.source_bytes)
-    if early_exit_guard is not None:
-        proofs.append(early_exit_guard)
-    assert_guard = _ast_assert_guard_proof(target_node, candidate.symbol, context.source_bytes)
-    if assert_guard is not None:
-        proofs.append(assert_guard)
-
-    if proofs:
-        return _AstGuardOutcome(
-            proofs=_dedupe_proofs(tuple(proofs)),
-            analysis_mode="ast_primary",
-        )
-
-    return _AstGuardOutcome(
-        proofs=(),
-        analysis_mode="ast_fallback_to_legacy",
-        unknown_reason="no_bounded_ast_proof",
-    )
 
 
 def _resolve_origin_with_ast(
@@ -523,14 +155,14 @@ def _resolve_origin_with_ast(
     if context is None:
         return _AstOriginOutcome(
             detail=None,
-            analysis_mode="legacy_origin_only",
+            analysis_mode="ast_origin_unavailable",
         )
 
     target_node = _resolve_candidate_node(context.tree.root_node, candidate)
     if target_node is None:
         return _AstOriginOutcome(
             detail=None,
-            analysis_mode="ast_origin_fallback_to_legacy",
+            analysis_mode="ast_origin_fallback",
             unknown_reason="unresolved_ast_node",
         )
 
@@ -538,7 +170,7 @@ def _resolve_origin_with_ast(
     if unknown_reason is not None:
         return _AstOriginOutcome(
             detail=None,
-            analysis_mode="ast_origin_fallback_to_legacy",
+            analysis_mode="ast_origin_fallback",
             unknown_reason=unknown_reason,
         )
 
@@ -555,7 +187,7 @@ def _resolve_origin_with_ast(
 
     return _AstOriginOutcome(
         detail=None,
-        analysis_mode="ast_origin_fallback_to_legacy",
+        analysis_mode="ast_origin_fallback",
         unknown_reason=origin_reason or "no_bounded_ast_origin",
     )
 

@@ -251,7 +251,7 @@ def test_cli_run_start_status_and_resume(tmp_path: Path) -> None:
     assert f"Run ID: {run_id}" in status_output
     assert "Status: completed" in status_output
     assert "AST exact candidates:" in status_output
-    assert "AST primary cases:" in status_output
+    assert "AST-lite cases:" in status_output
     assert "Analysis modes:" in status_output
     assert "LLM processed cases:" in status_output
     assert "Stage metrics:" in status_output
@@ -1058,9 +1058,7 @@ def test_cli_benchmark_reports_labeled_accuracy(tmp_path: Path, monkeypatch: pyt
     assert "Backend review latency: 0.000s" in output
     assert "Backend average latency: 0.000s" in output
     assert "Backend review average latency: 0.000s" in output
-    assert "AST primary cases:" in output
-    assert "AST fallback cases:" in output
-    assert "Legacy-only cases:" in output
+    assert "AST-lite cases:" in output
 
 
 def test_cli_benchmark_json_outputs_machine_readable_summary(
@@ -1107,9 +1105,6 @@ def test_cli_benchmark_json_outputs_machine_readable_summary(
             backend_model="codeagent-main",
             backend_executable="/tmp/codeagent",
             cases=(),
-            ast_primary_cases=1,
-            ast_fallback_to_legacy_cases=1,
-            legacy_only_cases=0,
         ),
     )
 
@@ -1127,9 +1122,7 @@ def test_cli_benchmark_json_outputs_machine_readable_summary(
     assert payload["backend_total_seconds"] == 0.75
     assert payload["backend_warmup_total_seconds"] == 0.0
     assert payload["backend_review_total_seconds"] == 0.75
-    assert payload["ast_primary_cases"] == 1
-    assert payload["ast_fallback_to_legacy_cases"] == 1
-    assert payload["legacy_only_cases"] == 0
+    assert payload["ast_lite_cases"] == 0
 
 
 def test_cli_benchmark_json_writes_output_file(

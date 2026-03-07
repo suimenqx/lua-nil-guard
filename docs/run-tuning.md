@@ -7,7 +7,7 @@ This guide explains how to query and use run-store data for static-analysis tuni
 Use this when you want to:
 
 - inspect all collected candidates (both statically suppressed and unresolved)
-- measure AST-lite coverage (`ast_lite`) and legacy compatibility mode residue
+- measure AST-lite coverage (`ast_lite`) and domain-pruning effectiveness
 - correlate unknown reasons with sink rules and files
 - tune `sink_rules.json`, `domain_knowledge.json`, and AST-lite context slicing strategy based on data
 
@@ -48,7 +48,7 @@ lua-nil-guard run-export-json /path/to/target-repo [run_id] [output.json]
 `run-status` now includes:
 
 - candidate-source counters (`ast_exact`, `lexical_fallback`)
-- static-analysis mode counters (`ast_lite`, `domain_pruned`, and legacy compatibility modes)
+- static-analysis mode counters (`ast_lite`, `domain_pruned`)
 - origin-analysis mode distribution
 - unknown-reason distribution for `unknown_static`
 - core rates (`prune_rate`, `submission_rate`, `llm_resolution_rate`)
@@ -62,9 +62,6 @@ lua-nil-guard run-export-json /path/to/target-repo [run_id] [output.json]
 - `run.candidate_metrics.submission_rate`
 - `run.candidate_metrics.llm_resolution_rate`
 - `run.candidate_metrics.end_to_end_latency_seconds`
-- `run.candidate_metrics.ast_primary_cases`
-- `run.candidate_metrics.ast_fallback_to_legacy_cases`
-- `run.candidate_metrics.legacy_only_cases`
 - `run.analysis_mode_distribution`
 - `run.origin_analysis_mode_distribution`
 - `run.unknown_reason_distribution`
@@ -96,11 +93,11 @@ ORDER BY file, line, column;
 
 Interpretation:
 
-- `static_state = safe_static`: statically suppressed (legacy-compatible path)
+- `static_state = safe_static`: statically suppressed (deterministic prune path)
 - `analysis_mode = domain_pruned`: deterministically pruned by domain knowledge (no LLM queue)
 - `static_state = unknown_static`: default AST-lite behavior; typically escalated
-- `analysis_mode`: AST-lite or legacy-compatible analysis mode
-- `origin_analysis_mode`: origin-tracing mode (AST primary/fallback)
+- `analysis_mode`: AST-lite mode (or `domain_pruned` for deterministic prunes)
+- `origin_analysis_mode`: origin-tracing mode (`ast_origin_primary`, `ast_origin_fallback`, `ast_origin_unavailable`)
 
 ## AST-lite Observability Queries
 
@@ -161,13 +158,10 @@ Use this as a baseline:
 1. `ast_lite` high
 - Expected in the v3 runtime path.
 
-2. legacy compatibility modes (`ast_primary` / `ast_fallback_to_legacy` / `legacy_only`) non-trivial
-- Re-check if old static-proof paths are still intentionally enabled.
-
-3. unresolved concentrated on a few sink rules
+2. unresolved concentrated on a few sink rules
 - refine those sink rules first (`sink_rules.json`) before broad context-strategy changes.
 
-4. unresolved concentrated on known-safe symbol families
+3. unresolved concentrated on known-safe symbol families
 - add or tighten domain pruning rules (`domain_knowledge.json`).
 
 ## Important Notes

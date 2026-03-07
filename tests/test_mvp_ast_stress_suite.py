@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 
+from lua_nil_guard.agent_backend import HeuristicAdjudicationBackend
 from lua_nil_guard.service import (
     benchmark_repository_review,
     bootstrap_repository,
@@ -40,11 +41,8 @@ def test_ast_stress_suite_benchmark_exposes_ast_migration_counts(tmp_path: Path)
     shutil.copytree(project_root, runtime_root)
     snapshot = bootstrap_repository(runtime_root)
 
-    summary = benchmark_repository_review(snapshot)
+    summary = benchmark_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert summary.total_cases == 4
     assert summary.exact_matches == 0
     assert summary.ast_lite_cases == 4
-    assert summary.ast_primary_cases == 0
-    assert summary.ast_fallback_to_legacy_cases == 0
-    assert summary.legacy_only_cases == 0

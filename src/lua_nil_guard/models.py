@@ -232,9 +232,9 @@ class StaticAnalysisResult:
     origin_return_slots: tuple[int, ...] = ()
     proofs: tuple["StaticProof", ...] = ()
     risk_signals: tuple["StaticRiskSignal", ...] = ()
-    analysis_mode: str = "legacy_only"
+    analysis_mode: str = "ast_lite"
     unknown_reason: str | None = None
-    origin_analysis_mode: str = "legacy_origin_only"
+    origin_analysis_mode: str = "ast_origin_primary"
     origin_unknown_reason: str | None = None
 
 
@@ -440,9 +440,6 @@ class BenchmarkSummary:
     backend_review_total_seconds: float = 0.0
     backend_review_average_seconds: float = 0.0
     ast_lite_cases: int = 0
-    ast_primary_cases: int = 0
-    ast_fallback_to_legacy_cases: int = 0
-    legacy_only_cases: int = 0
 
 
 @dataclass(frozen=True, slots=True)

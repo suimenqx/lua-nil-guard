@@ -87,7 +87,7 @@ def test_verify_verdict_upgrades_safe_to_safe_verified_when_guard_exists() -> No
     assert result.status == "safe_verified"
     assert result.confidence == "high"
     assert result.verification_summary is not None
-    assert result.verification_summary.mode == "legacy_observed_guards"
+    assert result.verification_summary.mode == "observed_guards"
 
 
 def test_verify_verdict_upgrades_safe_to_safe_verified_for_strong_static_proof() -> None:

@@ -261,7 +261,7 @@ def verify_verdict(verdict: Verdict, packet: EvidencePacket) -> Verdict:
                 needs_human=False,
                 autofix_patch=None,
                 verification_summary=VerificationSummary(
-                    mode="legacy_observed_guards",
+                    mode="observed_guards",
                     evidence=verdict.safety_evidence or observed_guards,
                 ),
             )

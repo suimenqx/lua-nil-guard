@@ -2238,9 +2238,6 @@ def _render_benchmark_summary(root: Path, summary) -> str:  # noqa: ANN001
         f"Backend average latency: {payload['backend_average_seconds']:.3f}s",
         f"Backend review average latency: {payload['backend_review_average_seconds']:.3f}s",
         f"AST-lite cases: {payload['ast_lite_cases']}",
-        f"AST primary cases: {payload['ast_primary_cases']}",
-        f"AST fallback cases: {payload['ast_fallback_to_legacy_cases']}",
-        f"Legacy-only cases: {payload['legacy_only_cases']}",
     ]
     if payload["backend_model"] is not None:
         lines.insert(4, f"Backend model: {payload['backend_model']}")
@@ -2485,9 +2482,6 @@ def _serialize_benchmark_summary(root: Path, summary) -> dict[str, object]:  # n
         "backend_average_seconds": summary.backend_average_seconds,
         "backend_review_average_seconds": review_average_seconds,
         "ast_lite_cases": summary.ast_lite_cases,
-        "ast_primary_cases": summary.ast_primary_cases,
-        "ast_fallback_to_legacy_cases": summary.ast_fallback_to_legacy_cases,
-        "legacy_only_cases": summary.legacy_only_cases,
         "cases": [
             {
                 "case_id": case.case_id,
@@ -3031,9 +3025,6 @@ def _render_run_status(status: object, *, run_db_path: Path | None = None) -> st
         f"AST exact candidates: {status.ast_exact_cases}",
         f"Lexical fallback candidates: {status.lexical_fallback_cases}",
         f"AST-lite cases: {status.ast_lite_cases}",
-        f"AST primary cases: {status.ast_primary_cases}",
-        f"AST fallback-to-legacy cases: {status.ast_fallback_to_legacy_cases}",
-        f"AST legacy-only cases: {status.legacy_only_cases}",
         f"Static safe cases: {status.static_safe_cases}",
         f"Static unknown cases: {status.static_unknown_cases}",
         f"Pruned cases: {status.pruned_cases}",
@@ -3200,9 +3191,6 @@ def _run_status_payload(status: object, *, run_db_path: Path | None = None) -> d
             "ast_exact_cases": int(status.ast_exact_cases),
             "lexical_fallback_cases": int(status.lexical_fallback_cases),
             "ast_lite_cases": int(getattr(status, "ast_lite_cases", 0)),
-            "ast_primary_cases": int(status.ast_primary_cases),
-            "ast_fallback_to_legacy_cases": int(status.ast_fallback_to_legacy_cases),
-            "legacy_only_cases": int(status.legacy_only_cases),
             "static_safe_cases": int(status.static_safe_cases),
             "static_unknown_cases": int(status.static_unknown_cases),
             "pruned_cases": int(getattr(status, "pruned_cases", 0)),

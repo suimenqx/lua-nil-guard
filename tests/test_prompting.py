@@ -35,9 +35,9 @@ def test_build_adjudication_prompt_includes_evidence_and_hard_rules() -> None:
         origin_candidates=("req.params.username",),
         observed_guards=("if username then",),
         origin_return_slots=(1,),
-        analysis_mode="ast_primary",
+        analysis_mode="ast_lite",
         unknown_reason="unsupported_control_flow",
-        origin_analysis_mode="ast_origin_fallback_to_legacy",
+        origin_analysis_mode="ast_origin_fallback",
         origin_unknown_reason="no_bounded_ast_origin",
         related_function_contexts=(
             "normalize_name @ lib/normalizer.lua:1\nfunction normalize_name(value)\n  value = value or ''",
@@ -78,9 +78,9 @@ def test_build_adjudication_prompt_includes_evidence_and_hard_rules() -> None:
     assert "string.match" in prompt
     assert "req.params may be nil" in prompt
     assert "origin_return_slots: 1" in prompt
-    assert "analysis_mode: ast_primary" in prompt
+    assert "analysis_mode: ast_lite" in prompt
     assert "unknown_reason: unsupported_control_flow" in prompt
-    assert "origin_analysis_mode: ast_origin_fallback_to_legacy" in prompt
+    assert "origin_analysis_mode: ast_origin_fallback" in prompt
     assert "origin_unknown_reason: no_bounded_ast_origin" in prompt
     assert "proof_kinds: direct_guard" in prompt
     assert "risk_kinds: direct_sink_field_path" in prompt

@@ -12,7 +12,7 @@ from typing import Callable
 
 from .adjudication import attach_autofix_patch
 from .agent_driver_models import AgentProviderSpec
-from .agent_backend import AdjudicationBackend, HeuristicAdjudicationBackend
+from .agent_backend import AdjudicationBackend, create_adjudication_backend
 from .collector import collect_candidates
 from .config_loader import (
     default_preprocessor_config,
@@ -60,7 +60,6 @@ from .repository import discover_lua_files, read_lua_source_lines, read_lua_sour
 from .summaries import (
     SummaryStore,
     detect_module_name,
-    required_module_symbol_map,
     summarize_source,
 )
 from .static_analysis import (
@@ -97,8 +96,6 @@ class _FunctionScopedAnalysisInput:
     start_line: int
     end_line: int
     ast_control_flow_context: object | None
-    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]]
-    inline_guard_contracts: tuple[object, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,9 +111,6 @@ class ReviewRunStatus:
     failed_cases: int
     ast_exact_cases: int
     lexical_fallback_cases: int
-    ast_primary_cases: int
-    ast_fallback_to_legacy_cases: int
-    legacy_only_cases: int
     static_safe_cases: int
     static_unknown_cases: int
     llm_enqueued_cases: int
@@ -421,8 +415,8 @@ class _ReviewRunStore:
                     sink_rule_id TEXT NOT NULL,
                     static_state TEXT NOT NULL,
                     candidate_source TEXT NOT NULL DEFAULT 'ast_exact',
-                    analysis_mode TEXT NOT NULL DEFAULT 'legacy_only',
-                    origin_analysis_mode TEXT NOT NULL DEFAULT 'legacy_origin_only',
+                    analysis_mode TEXT NOT NULL DEFAULT 'ast_lite',
+                    origin_analysis_mode TEXT NOT NULL DEFAULT 'ast_origin_primary',
                     unknown_reason TEXT NOT NULL DEFAULT '',
                     origin_unknown_reason TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL,
@@ -517,11 +511,11 @@ class _ReviewRunStore:
                 )
             if "analysis_mode" not in case_task_columns:
                 self._conn.execute(
-                    "ALTER TABLE case_tasks ADD COLUMN analysis_mode TEXT NOT NULL DEFAULT 'legacy_only'"
+                    "ALTER TABLE case_tasks ADD COLUMN analysis_mode TEXT NOT NULL DEFAULT 'ast_lite'"
                 )
             if "origin_analysis_mode" not in case_task_columns:
                 self._conn.execute(
-                    "ALTER TABLE case_tasks ADD COLUMN origin_analysis_mode TEXT NOT NULL DEFAULT 'legacy_origin_only'"
+                    "ALTER TABLE case_tasks ADD COLUMN origin_analysis_mode TEXT NOT NULL DEFAULT 'ast_origin_primary'"
                 )
             if "unknown_reason" not in case_task_columns:
                 self._conn.execute(
@@ -1212,11 +1206,6 @@ class _ReviewRunStore:
             failed_cases=int(row["failed_cases"]),
             ast_exact_cases=int(row["ast_exact_cases"]),
             lexical_fallback_cases=int(row["lexical_fallback_cases"]),
-            ast_primary_cases=int(analysis_mode_counts.get("ast_primary", 0)),
-            ast_fallback_to_legacy_cases=int(
-                analysis_mode_counts.get("ast_fallback_to_legacy", 0)
-            ),
-            legacy_only_cases=int(analysis_mode_counts.get("legacy_only", 0)),
             static_safe_cases=int(row["static_safe_cases"]),
             static_unknown_cases=int(row["static_unknown_cases"]),
             llm_enqueued_cases=llm_enqueued_cases,
@@ -1252,10 +1241,17 @@ def review_source(
     inline_guard_contracts: tuple[object, ...] | None = None,
     macro_index=None,
     domain_knowledge: DomainKnowledgeConfig | None = None,
-    analysis_profile: str = "ast_lite",
 ) -> tuple[CandidateAssessment, ...]:
     """Collect candidates from one source file and attach local static analysis."""
 
+    _ = (
+        function_contracts,
+        transparent_return_wrappers,
+        maybe_nil_return_helpers,
+        coalescing_return_helpers,
+        inline_guard_contracts,
+        macro_index,
+    )
     candidates = collect_candidates(
         file_path,
         source,
@@ -1265,43 +1261,6 @@ def review_source(
     if not candidates:
         return ()
 
-    base_transparent_return_wrappers = (
-        dict(transparent_return_wrappers)
-        if transparent_return_wrappers is not None
-        else {}
-    )
-    base_inline_guard_contracts = (
-        tuple(inline_guard_contracts)
-        if inline_guard_contracts is not None
-        else ()
-    )
-    effective_maybe_nil_return_helpers = (
-        dict(maybe_nil_return_helpers)
-        if maybe_nil_return_helpers is not None
-        else {}
-    )
-    effective_coalescing_return_helpers = (
-        dict(coalescing_return_helpers)
-        if coalescing_return_helpers is not None
-        else {}
-    )
-    effective_required_module_symbol_map: dict[str, tuple[str, ...]] = {}
-    if analysis_profile == "legacy":
-        base_transparent_return_wrappers.update(
-            collect_transparent_return_wrappers((source,), allow_local=True)
-        )
-        base_inline_guard_contracts = (
-            base_inline_guard_contracts
-            + collect_inline_guard_contracts((source,), allow_local=True)
-        )
-        file_summary = summarize_source(file_path, source)
-        effective_maybe_nil_return_helpers.update(
-            collect_maybe_nil_return_helpers(file_summary)
-        )
-        effective_coalescing_return_helpers.update(
-            collect_coalescing_return_helpers(file_summary)
-        )
-        effective_required_module_symbol_map = required_module_symbol_map(source)
     source_lines = tuple(source.splitlines())
     module_name = detect_module_name(source)
     spans_by_scope = _collect_named_function_spans(
@@ -1350,8 +1309,6 @@ def review_source(
                 start_line=span_start,
                 end_line=span_end,
                 ast_control_flow_context=build_static_analysis_context(scoped_source),
-                transparent_return_wrappers={},
-                inline_guard_contracts=(),
             )
             scoped_analysis_cache[span] = scoped_input
 
@@ -1362,24 +1319,10 @@ def review_source(
                 line=(candidate.line - scoped_input.start_line + 1),
             )
 
-        scoped_transparent_return_wrappers = dict(base_transparent_return_wrappers)
-        scoped_transparent_return_wrappers.update(scoped_input.transparent_return_wrappers)
-        scoped_inline_guard_contracts = (
-            base_inline_guard_contracts + scoped_input.inline_guard_contracts
-        )
         static_analysis = analyze_candidate(
             scoped_input.source,
             scoped_candidate,
-            function_contracts=tuple(function_contracts),
-            transparent_return_wrappers=scoped_transparent_return_wrappers,
-            maybe_nil_return_helpers=effective_maybe_nil_return_helpers,
-            coalescing_return_helpers=effective_coalescing_return_helpers,
-            inline_guard_contracts=scoped_inline_guard_contracts,
-            macro_index=macro_index,
-            required_module_symbol_map=effective_required_module_symbol_map,
             ast_control_flow_context=scoped_input.ast_control_flow_context,
-            source_lines=scoped_input.source_lines,
-            analysis_profile=analysis_profile,
         )
         assessments.append(
             CandidateAssessment(
@@ -1479,16 +1422,6 @@ def _resolve_candidate_function_span(
 def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment, ...]:
     """Run the current static first-pass review across all discovered Lua files."""
 
-    analysis_profile = "ast_lite"
-    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]] = {}
-    inline_guard_contracts: tuple[object, ...] = ()
-    maybe_nil_return_helpers: dict[str, tuple[tuple[int, int], ...]] = {}
-    coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]] = {}
-    if analysis_profile == "legacy":
-        transparent_return_wrappers = _collect_snapshot_transparent_return_wrappers(snapshot)
-        inline_guard_contracts = _collect_snapshot_inline_guard_contracts(snapshot)
-        maybe_nil_return_helpers = _collect_snapshot_maybe_nil_return_helpers(snapshot)
-        coalescing_return_helpers = _collect_snapshot_coalescing_return_helpers(snapshot)
     assessments: list[CandidateAssessment] = []
     for file_path in snapshot.lua_files:
         source = read_lua_source_text(file_path)
@@ -1497,14 +1430,7 @@ def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment
                 file_path,
                 source,
                 snapshot.sink_rules,
-                function_contracts=snapshot.function_contracts,
-                transparent_return_wrappers=transparent_return_wrappers,
-                maybe_nil_return_helpers=maybe_nil_return_helpers,
-                coalescing_return_helpers=coalescing_return_helpers,
-                inline_guard_contracts=inline_guard_contracts,
-                macro_index=snapshot.macro_index,
                 domain_knowledge=snapshot.domain_knowledge,
-                analysis_profile=analysis_profile,
             )
         )
     return tuple(assessments)
@@ -1518,28 +1444,11 @@ def review_repository_file(
 
     resolved_file = _resolve_snapshot_lua_file(snapshot, file_path)
     source = read_lua_source_text(resolved_file)
-    analysis_profile = "ast_lite"
-    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]] = {}
-    inline_guard_contracts: tuple[object, ...] = ()
-    maybe_nil_return_helpers: dict[str, tuple[tuple[int, int], ...]] = {}
-    coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]] = {}
-    if analysis_profile == "legacy":
-        transparent_return_wrappers = _collect_snapshot_transparent_return_wrappers(snapshot)
-        inline_guard_contracts = _collect_snapshot_inline_guard_contracts(snapshot)
-        maybe_nil_return_helpers = _collect_snapshot_maybe_nil_return_helpers(snapshot)
-        coalescing_return_helpers = _collect_snapshot_coalescing_return_helpers(snapshot)
     return review_source(
         resolved_file,
         source,
         snapshot.sink_rules,
-        function_contracts=snapshot.function_contracts,
-        transparent_return_wrappers=transparent_return_wrappers,
-        maybe_nil_return_helpers=maybe_nil_return_helpers,
-        coalescing_return_helpers=coalescing_return_helpers,
-        inline_guard_contracts=inline_guard_contracts,
-        macro_index=snapshot.macro_index,
         domain_knowledge=snapshot.domain_knowledge,
-        analysis_profile=analysis_profile,
     )
 
 
@@ -1604,6 +1513,21 @@ def prepare_evidence_packet(
     )
 
 
+def _resolve_adjudication_backend(
+    backend: AdjudicationBackend | None,
+    *,
+    root: Path,
+) -> AdjudicationBackend:
+    if backend is not None:
+        return backend
+    return create_adjudication_backend(
+        "codex",
+        workdir=root,
+        timeout_seconds=10.0,
+        max_attempts=1,
+    )
+
+
 def run_repository_review(
     snapshot: RepositorySnapshot,
     *,
@@ -1615,7 +1539,10 @@ def run_repository_review(
 
     assessments = review_repository(snapshot)
     _ = knowledge_path
-    adjudication_backend = backend or HeuristicAdjudicationBackend()
+    adjudication_backend = _resolve_adjudication_backend(
+        backend,
+        root=snapshot.root,
+    )
 
     return _run_review_from_assessments(
         snapshot,
@@ -1635,7 +1562,10 @@ def run_repository_review_job(
 ) -> tuple[ReviewRunStatus, tuple[Verdict, ...]]:
     """Run one persistent review job and return run status with ordered verdicts."""
 
-    adjudication_backend = backend or HeuristicAdjudicationBackend()
+    adjudication_backend = _resolve_adjudication_backend(
+        backend,
+        root=snapshot.root,
+    )
     db_path = (
         Path(run_db_path).resolve(strict=False)
         if run_db_path is not None
@@ -1760,7 +1690,10 @@ def run_file_review(
 
     assessments = review_repository_file(snapshot, file_path)
     _ = knowledge_path
-    adjudication_backend = backend or HeuristicAdjudicationBackend()
+    adjudication_backend = _resolve_adjudication_backend(
+        backend,
+        root=snapshot.root,
+    )
 
     return _run_review_from_assessments(
         snapshot,
@@ -1791,7 +1724,10 @@ def benchmark_repository_review(
         )
 
     _ = knowledge_path
-    adjudication_backend = backend or HeuristicAdjudicationBackend()
+    adjudication_backend = _resolve_adjudication_backend(
+        backend,
+        root=snapshot.root,
+    )
     verdicts = _run_review_from_assessments(
         snapshot,
         tuple(assessment for assessment, _ in labeled_assessments),
@@ -1821,25 +1757,10 @@ def benchmark_repository_review(
     actual_risky = sum(1 for case in cases if case.actual_status == "risky")
     actual_safe = sum(1 for case in cases if case.actual_status == "safe")
     actual_uncertain = sum(1 for case in cases if case.actual_status == "uncertain")
-    ast_primary_cases = sum(
-        1
-        for assessment, _ in labeled_assessments
-        if assessment.static_analysis.analysis_mode == "ast_primary"
-    )
     ast_lite_cases = sum(
         1
         for assessment, _ in labeled_assessments
         if assessment.static_analysis.analysis_mode == "ast_lite"
-    )
-    ast_fallback_to_legacy_cases = sum(
-        1
-        for assessment, _ in labeled_assessments
-        if assessment.static_analysis.analysis_mode == "ast_fallback_to_legacy"
-    )
-    legacy_only_cases = sum(
-        1
-        for assessment, _ in labeled_assessments
-        if assessment.static_analysis.analysis_mode == "legacy_only"
     )
     backend_cache_hits = _backend_metric(adjudication_backend, "cache_hits")
     backend_cache_misses = _backend_metric(adjudication_backend, "cache_misses")
@@ -1904,9 +1825,6 @@ def benchmark_repository_review(
         backend_review_total_seconds=backend_review_total_seconds,
         backend_review_average_seconds=backend_review_average_seconds,
         ast_lite_cases=ast_lite_cases,
-        ast_primary_cases=ast_primary_cases,
-        ast_fallback_to_legacy_cases=ast_fallback_to_legacy_cases,
-        legacy_only_cases=legacy_only_cases,
     )
 
 
@@ -2141,7 +2059,10 @@ def draft_review_improvements(
 
     file_module_by_path = _build_file_module_index(snapshot)
     _ = knowledge_path
-    adjudication_backend = backend or HeuristicAdjudicationBackend()
+    adjudication_backend = _resolve_adjudication_backend(
+        backend,
+        root=snapshot.root,
+    )
     verdicts = _run_review_from_assessments(
         snapshot,
         assessments,

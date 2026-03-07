@@ -7,7 +7,7 @@ import shutil
 import pytest
 
 import lua_nil_guard.service as service_module
-from lua_nil_guard.agent_backend import BackendError, CliAgentBackend, CodexCliBackend
+from lua_nil_guard.agent_backend import BackendError, CliAgentBackend, CodexCliBackend, HeuristicAdjudicationBackend
 from lua_nil_guard.models import AdjudicationRecord, AutofixPatch, RoleOpinion, Verdict
 from lua_nil_guard.models import (
     DomainKnowledgeConfig,
@@ -360,7 +360,7 @@ def test_bootstrap_repository_splits_preprocessor_files_and_run_file_review_uses
     target_file.write_text("return string.find(USER_NAME, '^g')\n", encoding="utf-8")
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_file_review(snapshot, target_file)
+    verdicts = run_file_review(snapshot, target_file, backend=HeuristicAdjudicationBackend())
 
     assert snapshot.lua_files == (target_file,)
     assert snapshot.preprocessor_files == (macro_file,)
@@ -483,7 +483,7 @@ def test_run_file_review_uses_cached_macro_facts_after_second_bootstrap(tmp_path
 
     _first_snapshot = bootstrap_repository(tmp_path)
     second_snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_file_review(second_snapshot, target_file)
+    verdicts = run_file_review(second_snapshot, target_file, backend=HeuristicAdjudicationBackend())
 
     assert second_snapshot.macro_cache_status is not None
     assert second_snapshot.macro_cache_status.state == "fresh"
@@ -598,7 +598,7 @@ def test_run_file_review_uses_cross_file_transparent_wrappers_for_static_safety(
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_file_review(snapshot, target_file)
+    verdicts = run_file_review(snapshot, target_file, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -663,7 +663,7 @@ def test_run_file_review_uses_cross_file_ast_inlined_guard_helpers_for_static_sa
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_file_review(snapshot, target_file)
+    verdicts = run_file_review(snapshot, target_file, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -792,7 +792,7 @@ def test_run_file_review_uses_cross_file_ast_defaulting_wrappers_for_static_safe
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_file_review(snapshot, target_file)
+    verdicts = run_file_review(snapshot, target_file, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -1178,7 +1178,6 @@ def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -
     assert summary.backend_average_seconds == 0.0
     assert summary.backend_review_average_seconds == 0.0
     assert summary.ast_lite_cases == 18
-    assert summary.ast_primary_cases + summary.ast_fallback_to_legacy_cases + summary.legacy_only_cases == 0
     assert summary.backend_name == "StrictEvidenceBackend"
     assert summary.backend_model is None
     assert summary.backend_executable is None
@@ -1381,7 +1380,7 @@ def test_export_autofix_patches_writes_patch_file_in_audit_mode(tmp_path: Path) 
     snapshot = bootstrap_repository(tmp_path)
     output_path = tmp_path / "data" / "autofix.json"
 
-    patches = export_autofix_patches(snapshot, output_path=output_path, audit_mode=True)
+    patches = export_autofix_patches(snapshot, backend=HeuristicAdjudicationBackend(), output_path=output_path, audit_mode=True)
 
     assert len(patches) == 1
     patch = patches[0]
