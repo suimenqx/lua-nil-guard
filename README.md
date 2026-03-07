@@ -277,6 +277,120 @@ Those backends require the corresponding local CLI tool, credentials, and networ
 lua-nil-guard generate-backend-manifest my-provider stdout_envelope_cli
 ```
 
+### Codex Review Playbook
+
+Recommended command path for Codex-based Lua nil-risk review:
+
+1. Preflight checks:
+
+```sh
+codex exec --version
+lua-nil-guard doctor
+```
+
+2. Validate on one file first:
+
+```sh
+lua-nil-guard report-file \
+  --backend codex \
+  --model gpt-5.1-codex-mini \
+  --backend-config 'model_reasoning_effort="high"' \
+  /path/to/target-repo/src/demo.lua
+```
+
+3. Expand to repository review:
+
+```sh
+lua-nil-guard report \
+  --backend codex \
+  --model gpt-5.1-codex-mini \
+  --backend-config 'model_reasoning_effort="high"' \
+  /path/to/target-repo
+```
+
+4. Run benchmark and inspect quality/latency:
+
+```sh
+lua-nil-guard benchmark \
+  --backend codex \
+  --model gpt-5.1-codex-mini \
+  --backend-config 'model_reasoning_effort="high"' \
+  /path/to/labeled-repo
+```
+
+Benchmark note: labeled files must follow `provable_risky_*`, `provable_safe_*`, or `provable_uncertain_*`.
+
+If benchmark accuracy is unexpectedly low and `backend_fallbacks` is high (or equals total cases), inspect backend failures first:
+
+```sh
+lua-nil-guard benchmark-json \
+  --backend codex \
+  --model gpt-5.1-codex-mini \
+  --backend-config 'model_reasoning_effort="high"' \
+  /path/to/labeled-repo \
+  build/benchmark_codex.json
+```
+
+Then check `cases[*].backend_failure_reason` in the JSON. A common issue is an incompatible global Codex setting in `~/.codex/config.toml`, such as `model_reasoning_effort = "xhigh"` for models that only support `low|medium|high`. Override per run with `--backend-config 'model_reasoning_effort="high"'` or update your global Codex config.
+
+### Gemini Review Playbook
+
+Recommended command path for Gemini-based Lua nil-risk review:
+
+1. Preflight checks:
+
+```sh
+gemini --version
+lua-nil-guard doctor
+```
+
+2. Validate on one file first:
+
+```sh
+lua-nil-guard report-file \
+  --backend gemini \
+  --backend-timeout 90 \
+  --backend-attempts 1 \
+  /path/to/target-repo/src/demo.lua
+```
+
+3. Expand to repository review:
+
+```sh
+lua-nil-guard report \
+  --backend gemini \
+  --backend-timeout 90 \
+  --backend-attempts 1 \
+  /path/to/target-repo
+```
+
+4. Benchmark and export JSON for diagnosis:
+
+```sh
+lua-nil-guard benchmark-json \
+  --backend gemini \
+  --backend-timeout 90 \
+  --backend-attempts 1 \
+  /path/to/labeled-repo \
+  build/benchmark_gemini.json
+```
+
+Benchmark note: labeled files must follow `provable_risky_*`, `provable_safe_*`, or `provable_uncertain_*`.
+
+Practical tuning guidance:
+
+- If `backend_fallbacks` or `backend_timeouts` is high, increase `--backend-timeout` first (recommended range: `60-120` seconds).
+- Keep `--backend-attempts 1` for stable links and lower latency; use `2` or `3` when network/API jitter exists.
+- If you see `ERR_STREAM_PREMATURE_CLOSE` in `cases[*].backend_failure_reason`, treat it as transient backend transport failure and retry with higher `--backend-attempts`.
+- Start with the default Gemini model first; if you switch to a faster model (for example `--model gemini-2.5-flash`), verify timeout behavior again because latency and response stability may differ.
+
+Observed in local practice on `examples/mvp_cases/agent_semantic_suite` (March 7, 2026):
+
+- `--backend-timeout 25 --backend-attempts 1`: all cases fell back, benchmark degraded heavily.
+- `--backend-timeout 90 --backend-attempts 1`: `17/18` exact matches (`94.4%`), with one fallback caused by a transient `ERR_STREAM_PREMATURE_CLOSE`.
+
+For a compact step-by-step guide (including custom backend manifest setup and model pinning), see [`docs/gemini-playbook.md`](docs/gemini-playbook.md).
+
 ## Repository Layout
 
 Target repositories are expected to contain:

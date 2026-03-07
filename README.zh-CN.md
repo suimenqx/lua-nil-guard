@@ -281,6 +281,120 @@ lua-nil-guard report-file --backend gemini /path/to/target-repo/src/demo.lua
 lua-nil-guard generate-backend-manifest my-provider stdout_envelope_cli
 ```
 
+### Codex 审核实战指引
+
+推荐的 Codex 审核路径（Lua nil 风险）：
+
+1. 先做环境自检：
+
+```sh
+codex exec --version
+lua-nil-guard doctor
+```
+
+2. 先在单文件验证效果：
+
+```sh
+lua-nil-guard report-file \
+  --backend codex \
+  --model gpt-5.1-codex-mini \
+  --backend-config 'model_reasoning_effort="high"' \
+  /path/to/target-repo/src/demo.lua
+```
+
+3. 再扩大到全仓审核：
+
+```sh
+lua-nil-guard report \
+  --backend codex \
+  --model gpt-5.1-codex-mini \
+  --backend-config 'model_reasoning_effort="high"' \
+  /path/to/target-repo
+```
+
+4. 用 benchmark 看准确率和时延：
+
+```sh
+lua-nil-guard benchmark \
+  --backend codex \
+  --model gpt-5.1-codex-mini \
+  --backend-config 'model_reasoning_effort="high"' \
+  /path/to/labeled-repo
+```
+
+Benchmark 约束：标签文件名必须是 `provable_risky_*`、`provable_safe_*` 或 `provable_uncertain_*`。
+
+如果准确率异常低，且 `backend_fallbacks` 很高（甚至等于总 case），先排查后端失败原因：
+
+```sh
+lua-nil-guard benchmark-json \
+  --backend codex \
+  --model gpt-5.1-codex-mini \
+  --backend-config 'model_reasoning_effort="high"' \
+  /path/to/labeled-repo \
+  build/benchmark_codex.json
+```
+
+然后检查 JSON 里的 `cases[*].backend_failure_reason`。常见问题是 `~/.codex/config.toml` 里的全局配置和当前模型不兼容，比如 `model_reasoning_effort = "xhigh"`，但模型只支持 `low|medium|high`。可以用 `--backend-config 'model_reasoning_effort="high"'` 单次覆盖，或直接修正全局 Codex 配置。
+
+### Gemini 审核实战指引
+
+推荐的 Gemini 审核路径（Lua nil 风险）：
+
+1. 先做环境自检：
+
+```sh
+gemini --version
+lua-nil-guard doctor
+```
+
+2. 先在单文件验证效果：
+
+```sh
+lua-nil-guard report-file \
+  --backend gemini \
+  --backend-timeout 90 \
+  --backend-attempts 1 \
+  /path/to/target-repo/src/demo.lua
+```
+
+3. 再扩大到全仓审核：
+
+```sh
+lua-nil-guard report \
+  --backend gemini \
+  --backend-timeout 90 \
+  --backend-attempts 1 \
+  /path/to/target-repo
+```
+
+4. 跑 benchmark-json 做质量和故障排查：
+
+```sh
+lua-nil-guard benchmark-json \
+  --backend gemini \
+  --backend-timeout 90 \
+  --backend-attempts 1 \
+  /path/to/labeled-repo \
+  build/benchmark_gemini.json
+```
+
+Benchmark 约束：标签文件名必须是 `provable_risky_*`、`provable_safe_*` 或 `provable_uncertain_*`。
+
+实战调优建议：
+
+- 如果 `backend_fallbacks` 或 `backend_timeouts` 偏高，优先提高 `--backend-timeout`（建议区间 `60-120` 秒）。
+- 网络稳定且追求时延时，先用 `--backend-attempts 1`；网络抖动明显时改为 `2` 或 `3`。
+- 如果 `cases[*].backend_failure_reason` 里出现 `ERR_STREAM_PREMATURE_CLOSE`，通常是后端传输瞬时失败，建议提高 `--backend-attempts` 后重跑。
+- 建议先用 Gemini 默认模型验证链路；若切到更快模型（例如 `--model gemini-2.5-flash`），需要重新验证超时参数，因为时延和稳定性可能不同。
+
+本地实测（`examples/mvp_cases/agent_semantic_suite`，2026-03-07）：
+
+- `--backend-timeout 25 --backend-attempts 1`：全部 case fallback，准确率显著下降。
+- `--backend-timeout 90 --backend-attempts 1`：`17/18` 命中（`94.4%`），唯一一次 fallback 原因是瞬时 `ERR_STREAM_PREMATURE_CLOSE`。
+
+如果你需要一份更聚焦的跟跑手册（包含自定义 backend manifest 配置和模型指定），请查看 [`docs/gemini-playbook.zh-CN.md`](docs/gemini-playbook.zh-CN.md)。
+
 ## 目标仓库结构
 
 目标仓库需要包含以下配置文件：
