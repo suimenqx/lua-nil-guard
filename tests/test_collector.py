@@ -37,7 +37,7 @@ def test_collect_candidates_finds_configured_function_sinks() -> None:
     assert candidate.expression == "username"
     assert candidate.symbol == "username"
     assert candidate.static_state == "unknown_static"
-    assert candidate.candidate_source == "lexical_fallback"
+    assert candidate.candidate_source == "ast_exact"
 
 
 def test_collect_candidates_tracks_enclosing_function_name() -> None:
@@ -250,7 +250,12 @@ def test_collect_candidates_domain_knowledge_skips_system_table_prefix_receivers
         domain_knowledge=domain,
     )
 
-    assert candidates == ()
+    assert len(candidates) == 2
+    assert all(candidate.static_state == "pruned_static" for candidate in candidates)
+    assert {candidate.prune_reason for candidate in candidates} == {
+        "system_name_table_prefix",
+        "system_cmd_table_prefix",
+    }
 
 
 def test_collect_candidates_domain_knowledge_skips_uppercase_macro_symbols() -> None:
@@ -287,7 +292,9 @@ def test_collect_candidates_domain_knowledge_skips_uppercase_macro_symbols() -> 
         domain_knowledge=domain,
     )
 
-    assert candidates == ()
+    assert len(candidates) == 1
+    assert candidates[0].static_state == "pruned_static"
+    assert candidates[0].prune_reason == "uppercase_macro_non_nil"
 
 
 def test_collect_candidates_finds_configured_length_operator_sinks() -> None:

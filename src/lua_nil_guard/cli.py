@@ -3036,11 +3036,17 @@ def _render_run_status(status: object, *, run_db_path: Path | None = None) -> st
         f"AST legacy-only cases: {status.legacy_only_cases}",
         f"Static safe cases: {status.static_safe_cases}",
         f"Static unknown cases: {status.static_unknown_cases}",
+        f"Pruned cases: {status.pruned_cases}",
         f"LLM enqueued cases: {status.llm_enqueued_cases}",
         f"LLM processed cases: {status.llm_processed_cases}",
+        f"LLM resolved cases: {status.llm_resolved_cases}",
         f"LLM second-hop cases: {status.llm_second_hop_cases}",
         f"Verify safe_verified cases: {status.safe_verified_cases}",
         f"Verify risky_verified cases: {status.risky_verified_cases}",
+        f"Prune rate: {status.prune_rate:.2%}",
+        f"Submission rate: {status.submission_rate:.2%}",
+        f"LLM resolution rate: {status.llm_resolution_rate:.2%}",
+        f"End-to-end latency: {status.end_to_end_latency_seconds:.3f}s",
         f"Created at: {status.created_at}",
         f"Updated at: {status.updated_at}",
         f"Completed at: {status.completed_at or '(running)'}",
@@ -3050,12 +3056,20 @@ def _render_run_status(status: object, *, run_db_path: Path | None = None) -> st
             "  STATIC: "
             f"total={stage_metrics['static']['total_cases']}, "
             f"safe_static={stage_metrics['static']['safe_static_cases']}, "
-            f"unknown_static={stage_metrics['static']['unknown_static_cases']}"
+            f"unknown_static={stage_metrics['static']['unknown_static_cases']}, "
+            f"pruned={stage_metrics['static']['pruned_cases']}, "
+            f"prune_rate={stage_metrics['static']['prune_rate']:.2%}"
         ),
-        f"  QUEUE: llm_enqueued={stage_metrics['queue']['llm_enqueued_cases']}",
+        (
+            "  QUEUE: "
+            f"llm_enqueued={stage_metrics['queue']['llm_enqueued_cases']}, "
+            f"submission_rate={stage_metrics['queue']['submission_rate']:.2%}"
+        ),
         (
             "  LLM: "
             f"llm_processed={stage_metrics['llm']['llm_processed_cases']}, "
+            f"resolved={stage_metrics['llm']['llm_resolved_cases']}, "
+            f"resolution_rate={stage_metrics['llm']['llm_resolution_rate']:.2%}, "
             f"second_hop={stage_metrics['llm']['llm_second_hop_cases']}"
         ),
         (
@@ -3063,6 +3077,7 @@ def _render_run_status(status: object, *, run_db_path: Path | None = None) -> st
             f"safe_verified={stage_metrics['verify']['safe_verified_cases']}, "
             f"risky_verified={stage_metrics['verify']['risky_verified_cases']}"
         ),
+        f"  FINALIZE: end_to_end_latency={stage_metrics['finalize']['end_to_end_latency_seconds']:.3f}s",
         (
             "  FINALIZE: "
             f"completed={stage_metrics['finalize']['completed_cases']}, "
@@ -3113,12 +3128,17 @@ def _run_stage_metrics_payload(status: object) -> dict[str, dict[str, int]]:
             "total_cases": int(status.total_cases),
             "safe_static_cases": int(status.static_safe_cases),
             "unknown_static_cases": int(status.static_unknown_cases),
+            "pruned_cases": int(getattr(status, "pruned_cases", 0)),
+            "prune_rate": float(getattr(status, "prune_rate", 0.0)),
         },
         "queue": {
             "llm_enqueued_cases": int(status.llm_enqueued_cases),
+            "submission_rate": float(getattr(status, "submission_rate", 0.0)),
         },
         "llm": {
             "llm_processed_cases": int(status.llm_processed_cases),
+            "llm_resolved_cases": int(getattr(status, "llm_resolved_cases", 0)),
+            "llm_resolution_rate": float(getattr(status, "llm_resolution_rate", 0.0)),
             "llm_second_hop_cases": int(status.llm_second_hop_cases),
         },
         "verify": {
@@ -3128,6 +3148,9 @@ def _run_stage_metrics_payload(status: object) -> dict[str, dict[str, int]]:
         "finalize": {
             "completed_cases": int(status.completed_cases),
             "failed_cases": int(status.failed_cases),
+            "end_to_end_latency_seconds": float(
+                getattr(status, "end_to_end_latency_seconds", 0.0)
+            ),
         },
     }
 
@@ -3182,13 +3205,21 @@ def _run_status_payload(status: object, *, run_db_path: Path | None = None) -> d
             "legacy_only_cases": int(status.legacy_only_cases),
             "static_safe_cases": int(status.static_safe_cases),
             "static_unknown_cases": int(status.static_unknown_cases),
+            "pruned_cases": int(getattr(status, "pruned_cases", 0)),
             "llm_enqueued_cases": int(status.llm_enqueued_cases),
             "llm_processed_cases": int(status.llm_processed_cases),
+            "llm_resolved_cases": int(getattr(status, "llm_resolved_cases", 0)),
             "llm_second_hop_cases": int(status.llm_second_hop_cases),
             "safe_verified_cases": int(status.safe_verified_cases),
             "risky_verified_cases": int(status.risky_verified_cases),
             "completed_cases": int(status.completed_cases),
             "failed_cases": int(status.failed_cases),
+            "prune_rate": float(getattr(status, "prune_rate", 0.0)),
+            "submission_rate": float(getattr(status, "submission_rate", 0.0)),
+            "llm_resolution_rate": float(getattr(status, "llm_resolution_rate", 0.0)),
+            "end_to_end_latency_seconds": float(
+                getattr(status, "end_to_end_latency_seconds", 0.0)
+            ),
         },
         "stage_metrics": _run_stage_metrics_payload(status),
         "analysis_mode_distribution": _mode_distribution_payload(
@@ -3232,7 +3263,7 @@ def _parse_review_options(
     list[str],
     str | None,
 ]:
-    backend_name = "heuristic"
+    backend_name = "codex"
     model: str | None = None
     skill_path: Path | None = None
     strict_skill = True

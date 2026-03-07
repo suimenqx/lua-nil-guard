@@ -1,5 +1,64 @@
 # LuaNilGuard V3 整体重构计划（最新）
 
+## 执行锁定基线（2026-03-07）
+
+本节为当前唯一执行基线。后续实现、验证、文档与回归均以本节为准，直到全部验收项达成为止；下文历史阶段记录仅保留参考价值。
+
+### 一、完全达成目标（Definition of Done）
+
+1. Tree-sitter 硬依赖
+   - 任何分析命令在 Tree-sitter 不可用时直接失败。
+   - 运行时不再存在 AST 缺失后的语义降级分支。
+2. AST-lite（零推断）
+   - AST 只保留：函数边界定位、候选定位、上下文切片、证据抽取。
+   - 运行主链路不再使用 `proof/risk_signal` 做安全/风险裁决。
+   - 不做跨函数 contract/return 推理。
+3. 主裁决权交给 LLM
+   - 默认 backend 改为 LLM backend（不再默认 heuristic）。
+   - 主路径固定为“候选 + 结构化上下文 + 规则事实 + LLM 仲裁”。
+   - heuristic 仅保留为测试桩或显式调试选项，不参与默认裁决。
+4. 规则前置裁剪强化
+   - `domain_knowledge.json` 继续作为零 AST 快速裁剪入口。
+   - `id.lua` / `*_id.lua` 默认全跳过继续保留。
+   - 裁剪规则命中需具备可追踪原因字段。
+5. 可观测性优先
+   - 必须可查询：已裁剪、已送审、LLM 输出、最终结果。
+   - 核心指标内建输出：裁剪率、送审率、LLM 解决率、端到端时延。
+
+### 二、实施计划（严格执行顺序）
+
+1. 收敛运行时架构
+   - 移除运行主链路中的 legacy 语义分支与相关统计口径。
+   - 清理 AST fallback 语义路径，只保留结构化提取失败即失败。
+2. 重做候选生命周期可观测模型
+   - 在 run DB 增加候选事件表（collect/prune/queue/llm/final）。
+   - `run-status`、`run-export-json`、`docs/run-tuning.md` 同步新指标与 SQL。
+3. 切换默认仲裁到 LLM
+   - CLI 默认 backend 改为 LLM。
+   - 报错信息与 doctor 指南补齐（无模型/无凭据时清晰失败）。
+4. 规则裁剪与大文件策略对齐
+   - 保留现有默认规则并补充“命中原因”记录。
+   - 确认 skip 文件不进入扫描与宏缓存链路。
+5. 测试与文档收口
+   - 删除不再适配的重逻辑测试，补齐 AST-lite/LLM 主链路测试。
+   - README 中英文与 `docs/run-tuning.md` 更新到最终口径。
+   - 最终验收：全量测试通过 + 指标查询样例可跑通。
+
+### 三、验收标准（全部满足才算完成）
+
+1. `pytest` 全量通过。
+2. `run-status` 可直接看到四个核心指标（裁剪率、送审率、LLM 解决率、端到端时延）。
+3. SQL 查询可覆盖裁剪与送审全链路。
+4. Tree-sitter 不可用时分析命令统一失败。
+
+### 四、执行状态（2026-03-07）
+
+1. [x] 已完成：默认 backend 切换为 LLM（`codex`），`heuristic` 仅保留调试/测试用途。
+2. [x] 已完成：domain 裁剪候选纳入 `case_tasks`，可追踪 `analysis_mode=domain_pruned`。
+3. [x] 已完成：`run-status`/`run-export-json` 输出裁剪率、送审率、LLM 解决率、端到端时延。
+4. [x] 已完成：运行主路径 AST-lite 不再做语义证明裁决；AST 上下文构建失败直接报错，不走语义降级。
+5. [x] 已完成：全量测试通过（`PYTHONPATH=src pytest -q` → `522 passed`）。
+
 ## 最新定稿（2026-03-07）
 
 本节为当前生效的最终方案，优先级高于下文历史阶段记录。

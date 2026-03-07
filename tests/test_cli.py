@@ -234,7 +234,9 @@ def test_cli_run_start_status_and_resume(tmp_path: Path) -> None:
     )
     run_db = tmp_path / "run-store.sqlite3"
 
-    exit_code, output = run(["run-start", "--run-db", str(run_db), str(tmp_path)])
+    exit_code, output = run(
+        ["run-start", "--backend", "heuristic", "--run-db", str(run_db), str(tmp_path)]
+    )
     assert exit_code == 0
     assert "Run ID:" in output
     assert "Run Status: completed" in output
@@ -256,7 +258,15 @@ def test_cli_run_start_status_and_resume(tmp_path: Path) -> None:
     assert "Unknown reasons:" in status_output
 
     exit_code, resume_output = run(
-        ["run-resume", "--run-db", str(run_db), str(tmp_path), str(run_id)]
+        [
+            "run-resume",
+            "--backend",
+            "heuristic",
+            "--run-db",
+            str(run_db),
+            str(tmp_path),
+            str(run_id),
+        ]
     )
     assert exit_code == 0
     assert f"Run ID: {run_id}" in resume_output
@@ -1805,7 +1815,7 @@ def test_cli_report_outputs_markdown_findings(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    exit_code, output = run(["report", str(tmp_path)])
+    exit_code, output = run(["report", "--backend", "heuristic", str(tmp_path)])
 
     assert exit_code == 0
     assert "# Lua Nil Risk Report" in output
@@ -1852,7 +1862,7 @@ def test_cli_export_autofix_outputs_machine_readable_patches(tmp_path: Path) -> 
         encoding="utf-8",
     )
 
-    exit_code, output = run(["export-autofix", str(tmp_path)])
+    exit_code, output = run(["export-autofix", "--backend", "heuristic", str(tmp_path)])
 
     assert exit_code == 0
     payload = json.loads(output)
@@ -2148,7 +2158,9 @@ def test_cli_baseline_create_writes_baseline_file(tmp_path: Path) -> None:
     )
     baseline_path = tmp_path / "baseline.json"
 
-    exit_code, output = run(["baseline-create", str(tmp_path), str(baseline_path)])
+    exit_code, output = run(
+        ["baseline-create", "--backend", "heuristic", str(tmp_path), str(baseline_path)]
+    )
 
     assert exit_code == 0
     assert "Baseline entries: 1" in output
@@ -2195,10 +2207,14 @@ def test_cli_report_new_applies_baseline_filter(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     baseline_path = tmp_path / "baseline.json"
-    create_exit_code, _ = run(["baseline-create", str(tmp_path), str(baseline_path)])
+    create_exit_code, _ = run(
+        ["baseline-create", "--backend", "heuristic", str(tmp_path), str(baseline_path)]
+    )
     assert create_exit_code == 0
 
-    exit_code, output = run(["report-new", str(tmp_path), str(baseline_path)])
+    exit_code, output = run(
+        ["report-new", "--backend", "heuristic", str(tmp_path), str(baseline_path)]
+    )
 
     assert exit_code == 0
     assert "No reportable findings." in output
@@ -2347,7 +2363,9 @@ def test_cli_ci_check_fails_when_new_findings_exist(tmp_path: Path) -> None:
     baseline_path = tmp_path / "baseline.json"
     baseline_path.write_text("[]", encoding="utf-8")
 
-    exit_code, output = run(["ci-check", str(tmp_path), str(baseline_path)])
+    exit_code, output = run(
+        ["ci-check", "--backend", "heuristic", str(tmp_path), str(baseline_path)]
+    )
 
     assert exit_code == 1
     assert "New findings: 1" in output

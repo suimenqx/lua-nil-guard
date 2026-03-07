@@ -82,6 +82,9 @@ lua-nil-guard run-resume /path/to/target-repo <run_id>
 - 候选来源计数（`ast_exact`、`lexical_fallback`）
 - 静态分析模式计数（`ast_lite`，以及 legacy 兼容模式）
 - 静态层计数（`safe_static`、`unknown_static`）
+- 生命周期计数（`pruned_cases`、`llm_enqueued`、`llm_processed`、`llm_resolved`）
+- 比率指标（`prune_rate`、`submission_rate`、`llm_resolution_rate`）
+- 端到端时延（`end_to_end_latency_seconds`）
 - LLM 层计数（`llm_enqueued`、`llm_processed`、`llm_second_hop`）
 - verify 层计数（`safe_verified`、`risky_verified`）
 - `unknown_static` case 的 `unknown_reason` 分布
@@ -254,11 +257,12 @@ lua-nil-guard macro-cache-status /path/to/target-repo
 
 ## Backend
 
-默认 backend 是 `heuristic`。如果需要 LLM 裁决，可以通过 `--backend` 使用本地 CLI 集成：
+默认 backend 是 `codex`（LLM）。如果需要切换裁决后端，可以通过 `--backend` 选择：
 
 - `gemini`
 - `claude`
 - `codex`
+- `heuristic`（仅调试/测试）
 
 示例：
 

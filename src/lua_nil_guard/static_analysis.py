@@ -23,7 +23,7 @@ from .models import (
     StaticRiskSignal,
 )
 from .preprocessor import lookup_macro_fact
-from .parser_backend import _load_lua_language
+from .parser_backend import ParserBackendUnavailableError, _load_lua_language
 from .summaries import detect_module_name, required_module_symbol_map as build_required_module_symbol_map
 
 
@@ -110,6 +110,10 @@ def _analyze_candidate_legacy(
     ast_context = ast_control_flow_context
     if ast_context is None:
         ast_context = _parse_control_flow_tree(source)
+    if ast_context is None:
+        raise ParserBackendUnavailableError(
+            "AST-lite requires Tree-sitter control-flow parsing; context build failed"
+        )
     origin_outcome = _resolve_origin_with_ast(
         source,
         candidate,
@@ -333,19 +337,19 @@ def _analyze_candidate_ast_lite(
             origin_analysis_mode="direct_expression",
         )
 
-    lines = source_lines if source_lines is not None else tuple(source.splitlines())
-    prior_lines = lines[: max(0, candidate.line - 1)]
     ast_context = ast_control_flow_context
     if ast_context is None:
         ast_context = _parse_control_flow_tree(source)
+    if ast_context is None:
+        raise ParserBackendUnavailableError(
+            "AST-lite requires Tree-sitter control-flow parsing; context build failed"
+        )
     origin_outcome = _resolve_origin_with_ast(
         source,
         candidate,
         context=ast_context,
     )
     origin_detail = origin_outcome.detail
-    if origin_detail is None:
-        origin_detail = _find_last_assignment_detail(prior_lines, candidate.symbol)
     origin_context = None
     if origin_detail is not None:
         origin_context = (
@@ -431,8 +435,10 @@ def analyze_candidate(
 
 def build_static_analysis_context(source: str):
     """Build a reusable AST control-flow context for one source text."""
-
-    return _parse_control_flow_tree(source)
+    context = _parse_control_flow_tree(source)
+    if context is None:
+        raise ParserBackendUnavailableError("AST-lite requires a valid Tree-sitter control-flow context")
+    return context
 
 
 def _analyze_guards_with_ast(

@@ -48,13 +48,20 @@ lua-nil-guard run-export-json /path/to/target-repo [run_id] [output.json]
 `run-status` now includes:
 
 - candidate-source counters (`ast_exact`, `lexical_fallback`)
-- static-analysis mode counters (`ast_lite`, and legacy compatibility modes)
+- static-analysis mode counters (`ast_lite`, `domain_pruned`, and legacy compatibility modes)
 - origin-analysis mode distribution
 - unknown-reason distribution for `unknown_static`
+- core rates (`prune_rate`, `submission_rate`, `llm_resolution_rate`)
+- end-to-end latency
 
 `run-export-json` includes machine-readable fields:
 
 - `run.candidate_metrics.ast_lite_cases`
+- `run.candidate_metrics.pruned_cases`
+- `run.candidate_metrics.prune_rate`
+- `run.candidate_metrics.submission_rate`
+- `run.candidate_metrics.llm_resolution_rate`
+- `run.candidate_metrics.end_to_end_latency_seconds`
 - `run.candidate_metrics.ast_primary_cases`
 - `run.candidate_metrics.ast_fallback_to_legacy_cases`
 - `run.candidate_metrics.legacy_only_cases`
@@ -90,6 +97,7 @@ ORDER BY file, line, column;
 Interpretation:
 
 - `static_state = safe_static`: statically suppressed (legacy-compatible path)
+- `analysis_mode = domain_pruned`: deterministically pruned by domain knowledge (no LLM queue)
 - `static_state = unknown_static`: default AST-lite behavior; typically escalated
 - `analysis_mode`: AST-lite or legacy-compatible analysis mode
 - `origin_analysis_mode`: origin-tracing mode (AST primary/fallback)
@@ -164,8 +172,8 @@ Use this as a baseline:
 
 ## Important Notes
 
-1. Domain-pruned items are not inserted into `case_tasks`.
-- This is expected behavior for zero-AST fast pruning.
+1. Domain-pruned items are inserted into `case_tasks` with `analysis_mode = domain_pruned`.
+- Use this to compute pruning hotspots and prune-rate trends directly in SQL.
 
 2. `run-report` and `run-export-json.findings` are report-oriented views.
 - They are filtered by reporting policy.

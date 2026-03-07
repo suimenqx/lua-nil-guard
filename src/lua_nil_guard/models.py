@@ -45,6 +45,7 @@ class CandidateCase:
     function_scope: str
     static_state: str
     candidate_source: str = "ast_exact"
+    prune_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

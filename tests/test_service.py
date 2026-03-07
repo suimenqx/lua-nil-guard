@@ -265,7 +265,12 @@ def test_review_source_domain_fast_prune_skips_static_ast_build(monkeypatch) -> 
         domain_knowledge=domain_knowledge,
     )
 
-    assert assessments == ()
+    assert len(assessments) == 1
+    assert assessments[0].candidate.static_state == "safe_static"
+    assert assessments[0].static_analysis.analysis_mode == "domain_pruned"
+    assert assessments[0].static_analysis.observed_guards == (
+        "domain_pruned:system_name_table_prefix",
+    )
 
 
 def test_review_source_scopes_ast_context_to_enclosing_functions(monkeypatch) -> None:

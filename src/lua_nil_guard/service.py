@@ -42,6 +42,7 @@ from .models import (
     MacroCacheStatus,
     RepositorySnapshot,
     SinkRule,
+    StaticAnalysisResult,
     Verdict,
     with_candidate_state,
 )
@@ -130,6 +131,12 @@ class ReviewRunStatus:
     updated_at: str
     completed_at: str | None
     ast_lite_cases: int = 0
+    pruned_cases: int = 0
+    llm_resolved_cases: int = 0
+    prune_rate: float = 0.0
+    submission_rate: float = 0.0
+    llm_resolution_rate: float = 0.0
+    end_to_end_latency_seconds: float = 0.0
 
 
 def _resolve_preprocessor_files(
@@ -1161,6 +1168,38 @@ class _ReviewRunStore:
             column_name="origin_analysis_mode",
         )
         analysis_mode_counts = dict(analysis_mode_distribution)
+        pruned_cases = int(analysis_mode_counts.get("domain_pruned", 0))
+        llm_resolved_row = self._conn.execute(
+            """
+            SELECT SUM(
+                CASE
+                    WHEN llm_attempts > 0 AND verdict_status IN ('safe', 'safe_verified', 'risky', 'risky_verified')
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS llm_resolved_cases
+            FROM case_tasks
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        llm_resolved_cases = int(llm_resolved_row["llm_resolved_cases"] or 0) if llm_resolved_row else 0
+        total_cases = int(row["total_cases"])
+        llm_enqueued_cases = int(row["llm_enqueued_cases"])
+        llm_processed_cases = int(row["llm_processed_cases"])
+        prune_rate = (pruned_cases / total_cases) if total_cases > 0 else 0.0
+        submission_rate = (llm_enqueued_cases / total_cases) if total_cases > 0 else 0.0
+        llm_resolution_rate = (
+            llm_resolved_cases / llm_processed_cases
+            if llm_processed_cases > 0
+            else 0.0
+        )
+        created_text = str(row["created_at"])
+        updated_text = str(row["updated_at"])
+        completed_text = str(row["completed_at"]) if row["completed_at"] is not None else None
+        started_at = datetime.fromisoformat(created_text)
+        ended_at = datetime.fromisoformat(completed_text or updated_text)
+        end_to_end_latency_seconds = max(0.0, (ended_at - started_at).total_seconds())
         return ReviewRunStatus(
             run_id=int(row["run_id"]),
             repository_root=str(row["repository_root"]),
@@ -1168,7 +1207,7 @@ class _ReviewRunStore:
             stage=str(row["stage"]),
             backend_name=str(row["backend_name"]),
             backend_model=(str(row["backend_model"]) if row["backend_model"] is not None else None),
-            total_cases=int(row["total_cases"]),
+            total_cases=total_cases,
             completed_cases=int(row["completed_cases"]),
             failed_cases=int(row["failed_cases"]),
             ast_exact_cases=int(row["ast_exact_cases"]),
@@ -1180,18 +1219,24 @@ class _ReviewRunStore:
             legacy_only_cases=int(analysis_mode_counts.get("legacy_only", 0)),
             static_safe_cases=int(row["static_safe_cases"]),
             static_unknown_cases=int(row["static_unknown_cases"]),
-            llm_enqueued_cases=int(row["llm_enqueued_cases"]),
-            llm_processed_cases=int(row["llm_processed_cases"]),
+            llm_enqueued_cases=llm_enqueued_cases,
+            llm_processed_cases=llm_processed_cases,
             llm_second_hop_cases=llm_second_hop_cases,
             safe_verified_cases=safe_verified_cases,
             risky_verified_cases=risky_verified_cases,
             unknown_reason_distribution=unknown_reason_distribution,
             analysis_mode_distribution=analysis_mode_distribution,
             origin_analysis_mode_distribution=origin_analysis_mode_distribution,
-            created_at=str(row["created_at"]),
-            updated_at=str(row["updated_at"]),
-            completed_at=(str(row["completed_at"]) if row["completed_at"] is not None else None),
+            created_at=created_text,
+            updated_at=updated_text,
+            completed_at=completed_text,
             ast_lite_cases=int(analysis_mode_counts.get("ast_lite", 0)),
+            pruned_cases=pruned_cases,
+            llm_resolved_cases=llm_resolved_cases,
+            prune_rate=prune_rate,
+            submission_rate=submission_rate,
+            llm_resolution_rate=llm_resolution_rate,
+            end_to_end_latency_seconds=end_to_end_latency_seconds,
         )
 
 
@@ -1266,6 +1311,29 @@ def review_source(
     scoped_analysis_cache: dict[tuple[int, int], _FunctionScopedAnalysisInput] = {}
     assessments: list[CandidateAssessment] = []
     for candidate in candidates:
+        if candidate.static_state == "pruned_static":
+            prune_reason = candidate.prune_reason or "domain_pruned"
+            static_analysis = StaticAnalysisResult(
+                state="safe_static",
+                observed_guards=(f"domain_pruned:{prune_reason}",),
+                origin_candidates=(candidate.expression,),
+                origin_usage_modes=("domain_pruned",),
+                origin_return_slots=(),
+                proofs=(),
+                risk_signals=(),
+                analysis_mode="domain_pruned",
+                unknown_reason=prune_reason,
+                origin_analysis_mode="domain_pruned",
+                origin_unknown_reason=prune_reason,
+            )
+            assessments.append(
+                CandidateAssessment(
+                    candidate=with_candidate_state(candidate, static_analysis.state),
+                    static_analysis=static_analysis,
+                )
+            )
+            continue
+
         span = _resolve_candidate_function_span(
             candidate,
             spans_by_scope=spans_by_scope,

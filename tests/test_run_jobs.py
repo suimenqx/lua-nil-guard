@@ -113,8 +113,8 @@ def test_run_repository_review_job_routes_only_unknown_cases_to_backend(tmp_path
     assert status.status == "completed"
     assert status.total_cases == 2
     assert status.completed_cases == 2
-    assert status.ast_exact_cases == 0
-    assert status.lexical_fallback_cases == 2
+    assert status.ast_exact_cases == 2
+    assert status.lexical_fallback_cases == 0
     assert status.ast_lite_cases == 2
     assert status.static_unknown_cases == 2
     assert status.llm_enqueued_cases == 2

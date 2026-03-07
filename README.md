@@ -80,6 +80,9 @@ lua-nil-guard run-resume /path/to/target-repo <run_id>
 - candidate/source counters (`ast_exact`, `lexical_fallback`)
 - static analysis mode counters (`ast_lite`, plus legacy compatibility modes)
 - static-layer counters (`safe_static`, `unknown_static`)
+- lifecycle counters (`pruned_cases`, `llm_enqueued`, `llm_processed`, `llm_resolved`)
+- rate metrics (`prune_rate`, `submission_rate`, `llm_resolution_rate`)
+- end-to-end latency (`end_to_end_latency_seconds`)
 - LLM-layer counters (`llm_enqueued`, `llm_processed`, `llm_second_hop`)
 - verify-layer counters (`safe_verified`, `risky_verified`)
 - `unknown_reason` distribution for `unknown_static` cases
@@ -252,11 +255,12 @@ lua-nil-guard macro-cache-status /path/to/target-repo
 
 ## Backends
 
-The default backend is `heuristic`. For LLM-backed adjudication, use `--backend` with one of the supported local CLI integrations:
+The default backend is `codex` (LLM). You can also choose another supported CLI integration with `--backend`:
 
 - `gemini`
 - `claude`
 - `codex`
+- `heuristic` (debug/test only)
 
 Examples:
 

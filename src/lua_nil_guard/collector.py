@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from .models import CandidateCase, DomainKnowledgeConfig, DomainKnowledgeRule, SinkRule
+from .parser_backend import build_source_ast_index
 
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -60,38 +61,37 @@ def collect_candidates(
     *,
     domain_knowledge: DomainKnowledgeConfig | None = None,
 ) -> tuple[CandidateCase, ...]:
-    """Collect nil-sensitive call sites using deterministic lightweight parsing."""
+    """Collect nil-sensitive call sites using Tree-sitter AST indexing."""
 
     if not sink_rules:
         return ()
 
     domain_skip_rules = _compile_domain_skip_rules(domain_knowledge)
+    ast_index = build_source_ast_index(source)
     path_text = str(file_path)
     candidates: list[CandidateCase] = []
     seen_keys: set[tuple[int, int, str, int]] = set()
     source_lines = source.splitlines()
-    line_offsets = _line_start_offsets(source_lines)
 
     for sink_rule in sink_rules:
-        candidate_source = "lexical_fallback"
+        candidate_source = "ast_exact"
         if sink_rule.kind == "function_arg":
-            argument_events = _collect_function_arg_events_lexical(
-                source_lines,
-                line_offsets,
-                sink_rule.qualified_name,
-                sink_rule.arg_index,
-            )
-            for expression, line, column, offset in argument_events:
+            for call_site in ast_index.call_sites:
+                if call_site.callee != sink_rule.qualified_name:
+                    continue
+                if sink_rule.arg_index < 1 or len(call_site.args) < sink_rule.arg_index:
+                    continue
+                expression = call_site.args[sink_rule.arg_index - 1]
                 _append_candidate(
                     candidates,
                     seen_keys,
                     path_text=path_text,
                     sink_rule=sink_rule,
                     expression=expression,
-                    line=line,
-                    column=column,
+                    line=call_site.line,
+                    column=call_site.column,
                     source=source,
-                    offset=offset,
+                    offset=call_site.offset,
                     candidate_source=candidate_source,
                     domain_skip_rules=domain_skip_rules,
                 )
@@ -104,13 +104,19 @@ def collect_candidates(
                 operator = _binary_operator_for_sink(sink_rule.qualified_name)
                 if operator is None:
                     continue
-                operand_events = _collect_binary_operand_events_lexical(
-                    source_lines,
-                    line_offsets,
-                    operator=operator,
-                    arg_index=sink_rule.arg_index,
-                )
-                for expression, line, column, operand_offset in operand_events:
+                for operand in ast_index.binary_operands:
+                    if operand.operator != operator:
+                        continue
+                    if sink_rule.arg_index == 1:
+                        expression = operand.left
+                        line = operand.left_line
+                        column = operand.left_column
+                        operand_offset = operand.left_offset
+                    else:
+                        expression = operand.right
+                        line = operand.right_line
+                        column = operand.right_column
+                        operand_offset = operand.right_offset
                     _append_candidate(
                         candidates,
                         seen_keys,
@@ -129,25 +135,27 @@ def collect_candidates(
             if sink_rule.kind != "unary_operand":
                 continue
 
-            operand_events = _collect_length_operand_events_lexical(source_lines, line_offsets)
-            for expression, line, column, offset in operand_events:
+            for operand in ast_index.length_operands:
                 _append_candidate(
                     candidates,
                     seen_keys,
                     path_text=path_text,
                     sink_rule=sink_rule,
-                    expression=expression,
-                    line=line,
-                    column=column,
+                    expression=operand.operand,
+                    line=operand.line,
+                    column=operand.column,
                     source=source,
-                    offset=offset,
+                    offset=operand.offset,
                     candidate_source=candidate_source,
                     domain_skip_rules=domain_skip_rules,
                 )
             continue
 
-        receiver_events = _collect_receiver_events_lexical(source_lines, line_offsets)
-        for expression, line, column, offset in receiver_events:
+        for access in ast_index.receiver_accesses:
+            expression = access.receiver
+            line = access.line
+            column = access.column
+            offset = access.offset
             if _is_module_package_seeall_receiver(expression, line, source_lines):
                 continue
             _append_candidate(
@@ -307,18 +315,37 @@ def _append_candidate(
     expression = expression.strip()
     if not expression or _is_obviously_non_nil_literal(expression):
         return
-    if _is_domain_skipped_expression(
-        expression,
-        sink_rule=sink_rule,
-        domain_skip_rules=domain_skip_rules,
-    ):
-        return
     dedupe_key = (line, column, sink_rule.id, sink_rule.arg_index)
     if dedupe_key in seen_keys:
         return
     function_scope, _ = _scan_enclosing_context(source[:offset])
     symbol = expression if _IDENTIFIER_RE.match(expression) else expression
     case_id = f"{path_text}:{line}:{column}:{sink_rule.id}"
+    domain_prune_reason = _domain_prune_reason(
+        expression,
+        sink_rule=sink_rule,
+        domain_skip_rules=domain_skip_rules,
+    )
+    if domain_prune_reason is not None:
+        candidates.append(
+            CandidateCase(
+                case_id=case_id,
+                file=path_text,
+                line=line,
+                column=column,
+                sink_rule_id=sink_rule.id,
+                sink_name=sink_name_override or sink_rule.qualified_name,
+                arg_index=sink_rule.arg_index,
+                expression=expression,
+                symbol=symbol,
+                function_scope=function_scope,
+                static_state="pruned_static",
+                candidate_source=candidate_source,
+                prune_reason=domain_prune_reason,
+            )
+        )
+        seen_keys.add(dedupe_key)
+        return
     candidates.append(
         CandidateCase(
             case_id=case_id,
@@ -333,6 +360,7 @@ def _append_candidate(
             function_scope=function_scope,
             static_state="unknown_static",
             candidate_source=candidate_source,
+            prune_reason=None,
         )
     )
     seen_keys.add(dedupe_key)
@@ -363,14 +391,14 @@ def _compile_domain_skip_rule(rule: DomainKnowledgeRule) -> _CompiledDomainSkipR
     )
 
 
-def _is_domain_skipped_expression(
+def _domain_prune_reason(
     expression: str,
     *,
     sink_rule: SinkRule,
     domain_skip_rules: tuple[_CompiledDomainSkipRule, ...],
-) -> bool:
+) -> str | None:
     if not domain_skip_rules:
-        return False
+        return None
 
     sink_identifiers = {sink_rule.id, sink_rule.qualified_name}
     for rule in domain_skip_rules:
@@ -378,8 +406,8 @@ def _is_domain_skipped_expression(
             continue
         for token in _domain_match_tokens(expression):
             if rule.pattern.fullmatch(token):
-                return True
-    return False
+                return rule.id
+    return None
 
 
 def _domain_match_tokens(expression: str) -> tuple[str, ...]:
