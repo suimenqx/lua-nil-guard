@@ -17,7 +17,7 @@ from .agent_driver_manifest import (
     load_agent_provider_spec_manifest_file,
 )
 from .baseline import BaselineStore, build_baseline, filter_new_findings
-from .config_loader import ConfigError, initialize_repository_config
+from .config_loader import ConfigError, initialize_repository_config, load_backend_config
 from .parser_backend import get_parser_backend_info
 from .repository import audit_lua_source_encodings, normalize_lua_source_encodings
 from .reporting import (
@@ -135,6 +135,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 contracts_path,
                 preprocessor_path,
                 domain_knowledge_path,
+                backend_config_path,
             ) = initialize_repository_config(
                 root,
                 force=force,
@@ -163,6 +164,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
                 f"Function contracts: {contracts_path}",
                 f"Preprocessor config: {preprocessor_path}",
                 f"Domain knowledge: {domain_knowledge_path}",
+                f"Backend config: {backend_config_path}",
                 f"Adjudication policy: {adj_policy_path}",
             ]
         )
@@ -1992,7 +1994,7 @@ def run(argv: Sequence[str]) -> tuple[int, str]:
 
 def _create_review_backend(
     *,
-    backend_name: str,
+    backend_name: str | None,
     root: Path,
     model: str | None,
     skill_path: Path | None,
@@ -2009,10 +2011,14 @@ def _create_review_backend(
     if adjudication_mode not in {None, "single_pass"}:
         raise ValueError("LuaNilGuard v3 supports only adjudication mode: single_pass")
 
+    resolved_backend_name = _resolve_backend_name(
+        backend_name=backend_name,
+        root=root,
+    )
     if backend_manifest_path is not None:
         register_manifest_backed_adjudication_backend(backend_manifest_path, replace=True)
     return create_adjudication_backend(
-        backend_name,
+        resolved_backend_name,
         workdir=root,
         model=model,
         skill_path=skill_path,
@@ -2024,6 +2030,30 @@ def _create_review_backend(
         cache_path=cache_path,
         config_overrides=config_overrides,
     )
+
+
+def _resolve_backend_name(
+    *,
+    backend_name: str | None,
+    root: Path,
+) -> str:
+    if backend_name is not None and backend_name.strip():
+        return backend_name.strip()
+
+    backend_config_path = root / "config" / "backend.json"
+    if not backend_config_path.is_file():
+        raise ConfigError(
+            "Backend is not configured. Create config/backend.json with "
+            '{"default_backend": "codex"} or pass --backend <name>.'
+        )
+
+    try:
+        return load_backend_config(backend_config_path)
+    except ConfigError as exc:
+        raise ConfigError(
+            f"Invalid backend config: {exc}. "
+            f"Fix {backend_config_path} or pass --backend <name>."
+        ) from exc
 
 
 def _parse_register_backend_manifest_args(args: list[str]) -> tuple[bool, Path, Path | None]:
@@ -2942,6 +2972,7 @@ def _usage() -> str:
             "  {cli} annotation-suggest <file.lua>",
             "",
             "Backend values: heuristic | codex | claude | gemini",
+            "Backend default: read from config/backend.json -> default_backend when --backend is omitted",
             "Focus values: all | string",
         ]
     )
@@ -3237,7 +3268,7 @@ def _build_run_export_payload(
 def _parse_review_options(
     args: list[str],
 ) -> tuple[
-    str,
+    str | None,
     str | None,
     Path | None,
     bool,
@@ -3251,7 +3282,7 @@ def _parse_review_options(
     list[str],
     str | None,
 ]:
-    backend_name = "codex"
+    backend_name: str | None = None
     model: str | None = None
     skill_path: Path | None = None
     strict_skill = True

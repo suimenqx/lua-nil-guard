@@ -257,14 +257,24 @@ lua-nil-guard macro-cache-status /path/to/target-repo
 
 ## Backend
 
-默认 backend 是 `codex`（LLM）。如果需要切换裁决后端，可以通过 `--backend` 选择：
+当你不传 `--backend` 时，仓库 CLI 命令会从 `config/backend.json` 读取默认 backend：
+
+```json
+{
+  "default_backend": "codex"
+}
+```
+
+如果 `--backend` 和 `config/backend.json` 都没有提供，命令会直接报错并提示你补配置或显式传参。
+
+如果需要切换裁决后端，可以通过 `--backend` 选择：
 
 - `gemini`
 - `claude`
 - `codex`
 - `heuristic`（仅调试/测试）
 
-service 层 API（`run_repository_review`、`run_file_review`、`run_repository_review_job`、`benchmark_repository_review`、`draft_review_improvements`）在未显式传入 `backend` 时也统一默认使用 `codex`。
+service 层 API（`run_repository_review`、`run_file_review`、`run_repository_review_job`、`benchmark_repository_review`、`draft_review_improvements`）在代码里未显式传入 `backend` 时仍默认使用 `codex`。
 
 示例：
 

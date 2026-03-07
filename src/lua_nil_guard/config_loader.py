@@ -39,7 +39,7 @@ def initialize_repository_config(
     root: str | Path,
     *,
     force: bool = False,
-) -> tuple[Path, Path, Path, Path, Path]:
+) -> tuple[Path, Path, Path, Path, Path, Path]:
     """Write the default review config into a target repository root."""
 
     root_path = Path(root)
@@ -49,6 +49,7 @@ def initialize_repository_config(
     contracts_source = template_root / "function_contracts.json"
     preprocessor_source = template_root / "preprocessor_files.json"
     domain_source = template_root / "domain_knowledge.json"
+    backend_source = template_root / "backend.json"
 
     for source_path in (
         sink_source,
@@ -56,6 +57,7 @@ def initialize_repository_config(
         contracts_source,
         preprocessor_source,
         domain_source,
+        backend_source,
     ):
         if not source_path.is_file():
             raise ConfigError(f"Default config template not found: {source_path}")
@@ -66,6 +68,7 @@ def initialize_repository_config(
     contracts_target = config_dir / "function_contracts.json"
     preprocessor_target = config_dir / "preprocessor_files.json"
     domain_target = config_dir / "domain_knowledge.json"
+    backend_target = config_dir / "backend.json"
 
     config_dir.mkdir(parents=True, exist_ok=True)
     for source_path, target_path in (
@@ -74,11 +77,19 @@ def initialize_repository_config(
         (contracts_source, contracts_target),
         (preprocessor_source, preprocessor_target),
         (domain_source, domain_target),
+        (backend_source, backend_target),
     ):
         if target_path.exists() and not force:
             continue
         target_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
-    return sink_target, policy_target, contracts_target, preprocessor_target, domain_target
+    return (
+        sink_target,
+        policy_target,
+        contracts_target,
+        preprocessor_target,
+        domain_target,
+        backend_target,
+    )
 
 
 def load_sink_rules(path: str | Path) -> list[SinkRule]:
@@ -221,6 +232,21 @@ def load_adjudication_policy(path: str | Path) -> AdjudicationPolicy:
         calibration_cold_start_threshold=int(calibration.get("cold_start_threshold", 30)),
         calibration_recalibrate_interval_runs=int(calibration.get("recalibrate_interval_runs", 5)),
     )
+
+
+def load_backend_config(path: str | Path) -> str:
+    """Load the repository default adjudication backend name."""
+
+    data = _read_json(path)
+    if not isinstance(data, dict):
+        raise ConfigError("Backend config must be a JSON object")
+    default_backend = data.get("default_backend")
+    if not isinstance(default_backend, str) or not default_backend.strip():
+        raise ConfigError("Backend config field 'default_backend' must be a non-empty string")
+    unknown_keys = sorted(set(data) - {"default_backend"})
+    if unknown_keys:
+        raise ConfigError("Unsupported backend config fields: " + ", ".join(unknown_keys))
+    return default_backend.strip()
 
 
 def default_preprocessor_config() -> PreprocessorConfig:

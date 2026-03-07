@@ -8,6 +8,7 @@ import pytest
 from lua_nil_guard.config_loader import (
     ConfigError,
     default_preprocessor_config,
+    load_backend_config,
     load_confidence_policy,
     load_domain_knowledge_config,
     load_function_contracts,
@@ -83,6 +84,31 @@ def test_load_preprocessor_config_reads_defaults() -> None:
     assert config.preprocessor_globs == ()
     assert config.skip_review_files == ()
     assert config.skip_review_globs == ("id.lua", "*_id.lua")
+
+
+def test_load_backend_config_reads_defaults() -> None:
+    backend_name = load_backend_config(ROOT / "config" / "backend.json")
+
+    assert backend_name == "codex"
+
+
+def test_load_backend_config_rejects_missing_default_backend(tmp_path: Path) -> None:
+    config_path = tmp_path / "backend.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="default_backend"):
+        load_backend_config(config_path)
+
+
+def test_load_backend_config_rejects_unknown_fields(tmp_path: Path) -> None:
+    config_path = tmp_path / "backend.json"
+    config_path.write_text(
+        json.dumps({"default_backend": "gemini", "model": "gemini-3.1-pro-preview"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="Unsupported backend config fields"):
+        load_backend_config(config_path)
 
 
 def test_default_preprocessor_config_matches_template_defaults() -> None:

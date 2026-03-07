@@ -255,14 +255,24 @@ lua-nil-guard macro-cache-status /path/to/target-repo
 
 ## Backends
 
-The default backend is `codex` (LLM). You can also choose another supported CLI integration with `--backend`:
+Repository CLI commands now resolve the default backend from `config/backend.json` when `--backend` is omitted:
+
+```json
+{
+  "default_backend": "codex"
+}
+```
+
+If neither `--backend` nor `config/backend.json` is provided, the command exits with an explicit setup hint.
+
+You can also choose another supported CLI integration with `--backend`:
 
 - `gemini`
 - `claude`
 - `codex`
 - `heuristic` (debug/test only)
 
-The service-layer APIs (`run_repository_review`, `run_file_review`, `run_repository_review_job`, `benchmark_repository_review`, and `draft_review_improvements`) now follow the same default and use `codex` when `backend` is not provided.
+The service-layer APIs (`run_repository_review`, `run_file_review`, `run_repository_review_job`, `benchmark_repository_review`, and `draft_review_improvements`) still default to `codex` when `backend` is not provided programmatically.
 
 Examples:
 

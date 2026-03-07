@@ -72,6 +72,7 @@ def test_cli_help_lists_supported_backends() -> None:
     assert "run-status" in output
     assert "run-report" in output
     assert "run-export-json" in output
+    assert "Backend default: read from config/backend.json" in output
 
 
 def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
@@ -409,7 +410,7 @@ def test_cli_report_file_names_non_utf8_dependency_file(tmp_path: Path) -> None:
     bad_file = tmp_path / "src" / "legacy.lua"
     bad_file.write_bytes(b"local value = '\xbd'\n")
 
-    exit_code, output = run(["report-file", str(target_file)])
+    exit_code, output = run(["report-file", "--backend", "heuristic", str(target_file)])
 
     assert exit_code == 2
     assert str(bad_file) in output
@@ -477,11 +478,13 @@ def test_cli_init_config_writes_default_templates(tmp_path: Path) -> None:
     contracts_path = tmp_path / "config" / "function_contracts.json"
     preprocessor_path = tmp_path / "config" / "preprocessor_files.json"
     domain_path = tmp_path / "config" / "domain_knowledge.json"
+    backend_path = tmp_path / "config" / "backend.json"
     sink_payload = json.loads(sink_path.read_text(encoding="utf-8"))
     policy_payload = json.loads(policy_path.read_text(encoding="utf-8"))
     contracts_payload = json.loads(contracts_path.read_text(encoding="utf-8"))
     preprocessor_payload = json.loads(preprocessor_path.read_text(encoding="utf-8"))
     domain_payload = json.loads(domain_path.read_text(encoding="utf-8"))
+    backend_payload = json.loads(backend_path.read_text(encoding="utf-8"))
 
     assert exit_code == 0
     assert "Repository config initialized." in output
@@ -490,6 +493,7 @@ def test_cli_init_config_writes_default_templates(tmp_path: Path) -> None:
     assert f"Function contracts: {contracts_path}" in output
     assert f"Preprocessor config: {preprocessor_path}" in output
     assert f"Domain knowledge: {domain_path}" in output
+    assert f"Backend config: {backend_path}" in output
     assert any(rule["id"] == "string.match.arg1" for rule in sink_payload)
     assert all(rule["id"] != "member_access.receiver" for rule in sink_payload)
     assert policy_payload["default_report_min_confidence"] == "high"
@@ -503,6 +507,7 @@ def test_cli_init_config_writes_default_templates(tmp_path: Path) -> None:
     assert any(rule["id"] == "system_name_table_prefix" for rule in domain_payload["rules"])
     assert any(rule["id"] == "system_cmd_table_prefix" for rule in domain_payload["rules"])
     assert any(rule["id"] == "uppercase_macro_non_nil" for rule in domain_payload["rules"])
+    assert backend_payload == {"default_backend": "codex"}
 
 
 def test_cli_init_config_preserves_existing_files_and_backfills_missing_templates(tmp_path: Path) -> None:
@@ -513,6 +518,7 @@ def test_cli_init_config_preserves_existing_files_and_backfills_missing_template
     contracts_path = config_dir / "function_contracts.json"
     preprocessor_path = config_dir / "preprocessor_files.json"
     domain_path = config_dir / "domain_knowledge.json"
+    backend_path = config_dir / "backend.json"
     sink_path.write_text("[]", encoding="utf-8")
     policy_path.write_text("{}", encoding="utf-8")
     contracts_path.write_text("[]", encoding="utf-8")
@@ -534,6 +540,7 @@ def test_cli_init_config_preserves_existing_files_and_backfills_missing_template
         rule["id"] == "system_name_table_prefix"
         for rule in json.loads(domain_path.read_text(encoding="utf-8"))["rules"]
     )
+    assert json.loads(backend_path.read_text(encoding="utf-8")) == {"default_backend": "codex"}
 
 
 def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None:
@@ -544,10 +551,12 @@ def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None
     contracts_path = config_dir / "function_contracts.json"
     preprocessor_path = config_dir / "preprocessor_files.json"
     domain_path = config_dir / "domain_knowledge.json"
+    backend_path = config_dir / "backend.json"
     sink_path.write_text("[]", encoding="utf-8")
     policy_path.write_text("{}", encoding="utf-8")
     contracts_path.write_text("{}", encoding="utf-8")
     preprocessor_path.write_text("{}", encoding="utf-8")
+    backend_path.write_text('{"default_backend":"gemini"}', encoding="utf-8")
 
     exit_code, output = run(["init-config", "--force", str(tmp_path)])
 
@@ -556,6 +565,7 @@ def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None
     contracts_payload = json.loads(contracts_path.read_text(encoding="utf-8"))
     preprocessor_payload = json.loads(preprocessor_path.read_text(encoding="utf-8"))
     domain_payload = json.loads(domain_path.read_text(encoding="utf-8"))
+    backend_payload = json.loads(backend_path.read_text(encoding="utf-8"))
 
     assert exit_code == 0
     assert "Force overwrite: yes" in output
@@ -570,6 +580,7 @@ def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None
         "skip_review_globs": ["id.lua", "*_id.lua"],
     }
     assert any(rule["id"] == "uppercase_macro_non_nil" for rule in domain_payload["rules"])
+    assert backend_payload == {"default_backend": "codex"}
 
 
 def test_cli_encoding_audit_reports_convertible_and_unsupported_files(tmp_path: Path) -> None:
@@ -1036,7 +1047,7 @@ def test_cli_benchmark_reports_labeled_accuracy(tmp_path: Path, monkeypatch: pyt
         lambda *args, **kwargs: FileLabelBackend(),
     )
 
-    exit_code, output = run(["benchmark", str(runtime_root)])
+    exit_code, output = run(["benchmark", "--backend", "heuristic", str(runtime_root)])
 
     assert exit_code == 0
     assert "# Lua Nil Review Benchmark" in output
@@ -1108,7 +1119,7 @@ def test_cli_benchmark_json_outputs_machine_readable_summary(
         ),
     )
 
-    exit_code, output = run(["benchmark-json", str(tmp_path)])
+    exit_code, output = run(["benchmark-json", "--backend", "heuristic", str(tmp_path)])
 
     payload = json.loads(output)
     assert exit_code == 0
@@ -1173,7 +1184,7 @@ def test_cli_benchmark_json_writes_output_file(
     )
     output_path = tmp_path / "benchmark.json"
 
-    exit_code, output = run(["benchmark-json", str(tmp_path), str(output_path)])
+    exit_code, output = run(["benchmark-json", "--backend", "heuristic", str(tmp_path), str(output_path)])
 
     assert exit_code == 0
     assert "Benchmark JSON export complete." in output
@@ -1216,7 +1227,7 @@ def test_cli_proposal_export_json_outputs_machine_readable_proposals(
         ),
     )
 
-    exit_code, output = run(["proposal-export-json", str(tmp_path)])
+    exit_code, output = run(["proposal-export-json", "--backend", "heuristic", str(tmp_path)])
 
     payload = json.loads(output)
     assert exit_code == 0
@@ -1259,7 +1270,7 @@ def test_cli_proposal_analytics_renders_aggregate_summary(
         ),
     )
 
-    exit_code, output = run(["proposal-analytics", str(tmp_path)])
+    exit_code, output = run(["proposal-analytics", "--backend", "heuristic", str(tmp_path)])
 
     assert exit_code == 0
     assert "# Lua Nil Review Improvement Analytics" in output
@@ -2493,6 +2504,121 @@ def test_cli_report_accepts_backend_option_and_calls_factory(tmp_path: Path, mon
     assert "# Lua Nil Risk Report" in output
 
 
+def test_cli_report_requires_backend_option_or_backend_config(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "local username = req.params.username\nreturn string.match(username, '^a')\n",
+        encoding="utf-8",
+    )
+
+    exit_code, output = run(["report", str(tmp_path)])
+
+    assert exit_code == 2
+    assert "config/backend.json" in output
+    assert "--backend <name>" in output
+
+
+def test_cli_report_uses_backend_from_repository_backend_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "config" / "sink_rules.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "string.match.arg1",
+                    "kind": "function_arg",
+                    "qualified_name": "string.match",
+                    "arg_index": 1,
+                    "nil_sensitive": True,
+                    "failure_mode": "runtime_error",
+                    "default_severity": "high",
+                    "safe_patterns": ["x or ''"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "config" / "backend.json").write_text(
+        json.dumps({"default_backend": "heuristic"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "demo.lua").write_text(
+        "local username = req.params.username\nreturn string.match(username, '^a')\n",
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_factory(
+        name: str,
+        *,
+        workdir=None,
+        model=None,
+        skill_path=None,
+        strict_skill=True,
+        executable=None,
+        timeout_seconds=None,
+        max_attempts=None,
+        expanded_evidence_retry=None,
+        cache_path=None,
+        config_overrides=(),
+    ):
+        captured["name"] = name
+        return object()
+
+    monkeypatch.setattr("lua_nil_guard.cli.create_adjudication_backend", fake_factory)
+    monkeypatch.setattr("lua_nil_guard.cli.run_repository_review", lambda snapshot, backend: ())
+
+    exit_code, output = run(["report", str(tmp_path)])
+
+    assert exit_code == 0
+    assert captured["name"] == "heuristic"
+    assert "# Lua Nil Risk Report" in output
+
+
 def test_cli_report_file_accepts_lua_file_and_uses_repository_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2631,7 +2757,7 @@ def test_cli_report_surfaces_backend_errors_without_traceback(
 
     monkeypatch.setattr("lua_nil_guard.cli.run_repository_review", fake_review)
 
-    exit_code, output = run(["report", str(tmp_path)])
+    exit_code, output = run(["report", "--backend", "codex", str(tmp_path)])
 
     assert exit_code == 2
     assert output == "codex backend failed"
@@ -2741,7 +2867,7 @@ def test_cli_report_applies_focus_filter_to_repository_snapshot(
     monkeypatch.setattr("lua_nil_guard.cli.create_adjudication_backend", lambda *args, **kwargs: object())
     monkeypatch.setattr("lua_nil_guard.cli.run_repository_review", fake_review)
 
-    exit_code, output = run(["report", "--focus", "string", str(tmp_path)])
+    exit_code, output = run(["report", "--focus", "string", "--backend", "heuristic", str(tmp_path)])
 
     assert exit_code == 0
     assert captured["sink_ids"] == ("string.match.arg1",)

@@ -51,6 +51,7 @@ from .collector import collect_candidates
 from .config_loader import (
     ConfigError,
     default_preprocessor_config,
+    load_backend_config,
     load_confidence_policy,
     load_domain_knowledge_config,
     load_function_contracts,
@@ -225,6 +226,7 @@ __all__ = [
     "compile_adjudicator_skill_header",
     "default_adjudicator_skill_path",
     "default_preprocessor_config",
+    "load_backend_config",
     "derive_facts_from_summaries",
     "derive_facts_from_contracts",
     "export_adjudication_tasks",
