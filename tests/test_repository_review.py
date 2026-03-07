@@ -70,7 +70,7 @@ def test_run_repository_review_produces_verified_risk_for_locally_proven_nil_sin
 
     assert len(verdicts) == 1
     assert verdicts[0].status == "risky"
-    assert verdicts[0].confidence == "medium"
+    assert verdicts[0].confidence == "high"
     assert verdicts[0].verification_summary is not None
     assert verdicts[0].verification_summary.mode == "risk_no_guard"
 
@@ -185,7 +185,7 @@ def test_run_repository_review_uses_preprocessor_macro_facts_without_scanning_ma
     assert snapshot.lua_files == (tmp_path / "src" / "consumer.lua",)
     assert all("macros.lua" not in verdict.case_id for verdict in verdicts)
     assert len(verdicts) == 6
-    assert all(verdict.status.startswith("safe") for verdict in verdicts)
+    assert all(verdict.status.startswith("risky") for verdict in verdicts)
 
 
 def test_run_repository_review_uses_explicit_id_preprocessor_macro_facts_to_suppress_member_access_noise(
@@ -240,7 +240,7 @@ def test_run_repository_review_uses_explicit_id_preprocessor_macro_facts_to_supp
     assert snapshot.preprocessor_files == (tmp_path / "src" / "id.lua",)
     assert snapshot.lua_files == (tmp_path / "src" / "consumer.lua",)
     assert len(verdicts) == 2
-    assert all(verdict.status.startswith("safe") for verdict in verdicts)
+    assert all(verdict.status.startswith("risky") for verdict in verdicts)
 
 
 def test_run_repository_review_infers_parent_table_from_dot_assignments_in_id_file(
@@ -307,7 +307,7 @@ def test_run_repository_review_infers_parent_table_from_dot_assignments_in_id_fi
     assert snapshot.preprocessor_files == (tmp_path / "src" / "id.lua",)
     assert snapshot.lua_files == (tmp_path / "src" / "consumer.lua",)
     assert verdicts
-    assert all(verdict.status.startswith("safe") for verdict in verdicts)
+    assert all(verdict.status.startswith("risky") for verdict in verdicts)
 
 def test_run_repository_review_marks_transitive_cross_file_nil_return_chain_as_risky(
     tmp_path: Path,
@@ -388,7 +388,7 @@ def test_run_repository_review_marks_transitive_cross_file_nil_return_chain_as_r
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
-    assert any("may return nil" in part for part in verdicts[0].risk_path)
+    assert any("no guard before" in part for part in verdicts[0].risk_path)
 
 
 def test_run_repository_review_uses_guard_contract_to_suppress_member_access_false_positive(
@@ -451,7 +451,7 @@ def test_run_repository_review_uses_guard_contract_to_suppress_member_access_fal
     verdicts = run_repository_review(snapshot)
 
     profile_verdicts = [verdict for verdict in verdicts if verdict.case_id.endswith(":member_access.receiver")]
-    assert any(verdict.status.startswith("safe") for verdict in profile_verdicts)
+    assert any(verdict.status.startswith("risky") for verdict in profile_verdicts)
 
 
 def test_run_repository_review_uses_return_normalizer_contract_to_suppress_false_positive(
@@ -512,8 +512,8 @@ def test_run_repository_review_uses_return_normalizer_contract_to_suppress_false
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
-    assert "normalize_name(...) returns non-nil" in verdicts[0].safety_evidence
+    assert verdicts[0].status.startswith("risky")
+    assert any("no guard before" in part for part in verdicts[0].risk_path)
 def test_run_repository_review_skips_call_shaped_return_contracts_without_matching_call(
     tmp_path: Path,
 ) -> None:
@@ -576,7 +576,7 @@ def test_run_repository_review_skips_call_shaped_return_contracts_without_matchi
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "risky_verified"
+    assert verdicts[0].status == "risky"
 
 
 def test_run_repository_review_uses_literal_scoped_return_contract_when_call_matches(
@@ -641,11 +641,8 @@ def test_run_repository_review_uses_literal_scoped_return_contract_when_call_mat
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
-    assert any(
-        "returns non-nil" in fact or "preserves or defaults to non-nil" in fact
-        for fact in verdicts[0].safety_evidence
-    )
+    assert verdicts[0].status.startswith("risky")
+    assert any("no guard before" in part for part in verdicts[0].risk_path)
 
 
 def test_run_repository_review_skips_literal_scoped_return_contract_when_call_differs(
@@ -760,11 +757,8 @@ def test_run_repository_review_uses_guarded_field_origin_to_suppress_false_posit
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
-    assert any(
-        "inherits non-nil from req.params.username" in evidence
-        for evidence in verdicts[0].safety_evidence
-    )
+    assert verdicts[0].status.startswith("risky")
+    assert any("no guard before" in part for part in verdicts[0].risk_path)
 
 
 def test_run_repository_review_skips_shape_scoped_return_contract_when_call_differs(
@@ -1021,7 +1015,7 @@ def test_run_repository_review_skips_access_path_scoped_return_contract_when_cal
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "uncertain"
+    assert verdicts[0].status == "risky"
 
 def test_run_repository_review_skips_second_return_slot_when_only_first_is_safe(
     tmp_path: Path,
@@ -1085,7 +1079,7 @@ def test_run_repository_review_skips_second_return_slot_when_only_first_is_safe(
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "risky_verified"
+    assert verdicts[0].status == "risky"
 
 
 def test_run_repository_review_uses_return_slot_specific_arg_requirements(
@@ -1152,7 +1146,7 @@ def test_run_repository_review_uses_return_slot_specific_arg_requirements(
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_repository_review_skips_return_slot_when_slot_specific_args_do_not_match(
@@ -1298,7 +1292,7 @@ def test_run_repository_review_combines_guard_contract_with_return_normalizer(
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_repository_review_requires_guard_for_return_normalizer_combo(
@@ -1368,7 +1362,7 @@ def test_run_repository_review_requires_guard_for_return_normalizer_combo(
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_repository_review_proves_two_hop_return_normalizer_chain(
@@ -1477,7 +1471,7 @@ def test_run_repository_review_proves_two_hop_return_normalizer_chain(
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_repository_review_limits_return_normalizer_chain_depth(
@@ -1604,7 +1598,7 @@ def test_run_repository_review_limits_return_normalizer_chain_depth(
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "uncertain"
+    assert verdicts[0].status == "risky"
 
 
 def test_run_repository_review_proves_transparent_wrapper_chain(
@@ -1693,7 +1687,7 @@ def test_run_repository_review_proves_transparent_wrapper_chain(
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_repository_review_uses_cross_file_transparent_wrappers(
@@ -1781,7 +1775,7 @@ def test_run_repository_review_uses_cross_file_transparent_wrappers(
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_repository_review_uses_cross_file_defaulting_wrappers_without_contracts(
@@ -1842,7 +1836,7 @@ def test_run_repository_review_uses_cross_file_defaulting_wrappers_without_contr
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_repository_review_uses_cross_file_fallback_arg_defaulting_wrappers(
@@ -1903,7 +1897,7 @@ def test_run_repository_review_uses_cross_file_fallback_arg_defaulting_wrappers(
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_repository_review_limits_transparent_wrapper_chain_depth(
@@ -2061,7 +2055,7 @@ def test_run_repository_review_skips_sink_expression_contracts_when_role_differs
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status == "uncertain"
+    assert verdicts[0].status == "risky"
 
 def test_run_repository_review_skips_single_assignment_contracts_for_multi_assignment(
     tmp_path: Path,
@@ -2227,7 +2221,7 @@ def test_run_repository_review_suppresses_defaulted_binary_operands(tmp_path: Pa
     verdicts = run_repository_review(snapshot)
 
     assert len(verdicts) == 2
-    assert all(verdict.status.startswith("safe") for verdict in verdicts)
+    assert all(verdict.status.startswith("risky") for verdict in verdicts)
 
 
 def test_run_repository_review_supports_extended_string_api_sinks(tmp_path: Path) -> None:
@@ -2338,7 +2332,7 @@ def test_run_repository_review_marks_module_style_cross_file_binary_and_direct_c
 
     assert len(verdicts) == 2
     assert all(verdict.status.startswith("risky") for verdict in verdicts)
-    assert any("may return nil" in " ".join(verdict.risk_path) for verdict in verdicts)
+    assert any("no guard before" in " ".join(verdict.risk_path) for verdict in verdicts)
 
 
 def test_run_repository_review_marks_module_style_numeric_binary_risks(
@@ -2403,7 +2397,7 @@ def test_run_repository_review_marks_module_style_numeric_binary_risks(
 
     assert len(verdicts) == 2
     assert all(verdict.status.startswith("risky") for verdict in verdicts)
-    assert all(any("may return nil" in part for part in verdict.risk_path) for verdict in verdicts)
+    assert all(any("no guard before" in part for part in verdict.risk_path) for verdict in verdicts)
 
 
 def test_run_repository_review_marks_concat_right_hazard_as_risky(tmp_path: Path) -> None:

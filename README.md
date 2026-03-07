@@ -78,7 +78,7 @@ lua-nil-guard run-resume /path/to/target-repo <run_id>
 `run-status` and `run-report` now include stage metrics and unknown-reason distribution, including:
 
 - candidate/source counters (`ast_exact`, `lexical_fallback`)
-- static analysis mode counters (`ast_primary`, `ast_fallback_to_legacy`, `legacy_only`)
+- static analysis mode counters (`ast_lite`, plus legacy compatibility modes)
 - static-layer counters (`safe_static`, `unknown_static`)
 - LLM-layer counters (`llm_enqueued`, `llm_processed`, `llm_second_hop`)
 - verify-layer counters (`safe_verified`, `risky_verified`)
@@ -98,6 +98,9 @@ For full tuning and candidate-level observability queries, see [`docs/run-tuning
       "llm": {"llm_processed_cases": 40, "llm_second_hop_cases": 7},
       "verify": {"safe_verified_cases": 86, "risky_verified_cases": 21},
       "finalize": {"completed_cases": 120, "failed_cases": 0}
+    },
+    "candidate_metrics": {
+      "ast_lite_cases": 120
     },
     "unknown_reason_distribution": [
       {"reason": "no_bounded_ast_proof", "count": 31}

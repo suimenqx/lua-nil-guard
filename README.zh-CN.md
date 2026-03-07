@@ -80,7 +80,7 @@ lua-nil-guard run-resume /path/to/target-repo <run_id>
 `run-status` 与 `run-report` 现在会输出阶段指标和 `unknown_reason` 分布，包含：
 
 - 候选来源计数（`ast_exact`、`lexical_fallback`）
-- 静态分析模式计数（`ast_primary`、`ast_fallback_to_legacy`、`legacy_only`）
+- 静态分析模式计数（`ast_lite`，以及 legacy 兼容模式）
 - 静态层计数（`safe_static`、`unknown_static`）
 - LLM 层计数（`llm_enqueued`、`llm_processed`、`llm_second_hop`）
 - verify 层计数（`safe_verified`、`risky_verified`）
@@ -100,6 +100,9 @@ lua-nil-guard run-resume /path/to/target-repo <run_id>
       "llm": {"llm_processed_cases": 40, "llm_second_hop_cases": 7},
       "verify": {"safe_verified_cases": 86, "risky_verified_cases": 21},
       "finalize": {"completed_cases": 120, "failed_cases": 0}
+    },
+    "candidate_metrics": {
+      "ast_lite_cases": 120
     },
     "unknown_reason_distribution": [
       {"reason": "no_bounded_ast_proof", "count": 31}

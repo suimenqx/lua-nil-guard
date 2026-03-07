@@ -33,9 +33,12 @@ def test_review_source_combines_collection_and_static_analysis() -> None:
     assert len(assessments) == 1
     assessment = assessments[0]
     assert assessment.candidate.sink_name == "string.match"
-    assert assessment.candidate.static_state == "safe_static"
-    assert assessment.static_analysis.observed_guards == ("if username then",)
+    assert assessment.candidate.static_state == "unknown_static"
+    assert assessment.static_analysis.observed_guards == ()
     assert assessment.static_analysis.origin_candidates == ("req.params.username",)
+    assert assessment.static_analysis.proofs == ()
+    assert assessment.static_analysis.risk_signals == ()
+    assert assessment.static_analysis.analysis_mode == "ast_lite"
 
 
 def test_review_source_handles_receiver_candidates() -> None:
@@ -76,9 +79,10 @@ def test_review_source_handles_receiver_candidates() -> None:
 
     profile_assessment = assessment_by_expression["profile"]
     assert profile_assessment.candidate.sink_name == "member_access"
-    assert profile_assessment.candidate.static_state == "safe_static"
-    assert profile_assessment.static_analysis.observed_guards == ("if profile then",)
+    assert profile_assessment.candidate.static_state == "unknown_static"
+    assert profile_assessment.static_analysis.observed_guards == ()
     assert profile_assessment.static_analysis.origin_candidates == ("req.profile",)
+    assert profile_assessment.static_analysis.analysis_mode == "ast_lite"
 
 
 def test_review_source_suppresses_receiver_false_positive_for_global_require_module() -> None:
@@ -106,8 +110,9 @@ def test_review_source_suppresses_receiver_false_positive_for_global_require_mod
     assert len(assessments) == 1
     assessment = assessments[0]
     assert assessment.candidate.expression == "bsbsocket"
-    assert assessment.candidate.static_state == "safe_static"
-    assert any(proof.kind == "required_module_guard" for proof in assessment.static_analysis.proofs)
+    assert assessment.candidate.static_state == "unknown_static"
+    assert assessment.static_analysis.proofs == ()
+    assert assessment.static_analysis.analysis_mode == "ast_lite"
 
 
 def test_review_source_handles_length_operator_candidates() -> None:
@@ -136,9 +141,10 @@ def test_review_source_handles_length_operator_candidates() -> None:
     assessment = assessments[0]
     assert assessment.candidate.sink_name == "#"
     assert assessment.candidate.expression == "items"
-    assert assessment.candidate.static_state == "safe_static"
-    assert assessment.static_analysis.observed_guards == ("items = items or ...",)
+    assert assessment.candidate.static_state == "unknown_static"
+    assert assessment.static_analysis.observed_guards == ()
     assert assessment.static_analysis.origin_candidates == ("req.items or {}",)
+    assert assessment.static_analysis.analysis_mode == "ast_lite"
 
 
 def test_review_source_uses_local_ast_inlined_guard_helpers() -> None:
@@ -173,6 +179,7 @@ def test_review_source_uses_local_ast_inlined_guard_helpers() -> None:
 
     assert len(assessments) == 1
     assessment = assessments[0]
-    assert assessment.candidate.static_state == "safe_static"
-    assert assessment.static_analysis.observed_guards == ("assert_present(username)",)
-    assert any(proof.kind == "contract_guard" for proof in assessment.static_analysis.proofs)
+    assert assessment.candidate.static_state == "unknown_static"
+    assert assessment.static_analysis.observed_guards == ()
+    assert assessment.static_analysis.proofs == ()
+    assert assessment.static_analysis.analysis_mode == "ast_lite"

@@ -129,6 +129,7 @@ class ReviewRunStatus:
     created_at: str
     updated_at: str
     completed_at: str | None
+    ast_lite_cases: int = 0
 
 
 def _resolve_preprocessor_files(
@@ -1190,6 +1191,7 @@ class _ReviewRunStore:
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
             completed_at=(str(row["completed_at"]) if row["completed_at"] is not None else None),
+            ast_lite_cases=int(analysis_mode_counts.get("ast_lite", 0)),
         )
 
 
@@ -1205,6 +1207,7 @@ def review_source(
     inline_guard_contracts: tuple[object, ...] | None = None,
     macro_index=None,
     domain_knowledge: DomainKnowledgeConfig | None = None,
+    analysis_profile: str = "ast_lite",
 ) -> tuple[CandidateAssessment, ...]:
     """Collect candidates from one source file and attach local static analysis."""
 
@@ -1222,17 +1225,10 @@ def review_source(
         if transparent_return_wrappers is not None
         else {}
     )
-    base_transparent_return_wrappers.update(
-        collect_transparent_return_wrappers((source,), allow_local=True)
-    )
     base_inline_guard_contracts = (
         tuple(inline_guard_contracts)
         if inline_guard_contracts is not None
         else ()
-    )
-    base_inline_guard_contracts = (
-        base_inline_guard_contracts
-        + collect_inline_guard_contracts((source,), allow_local=True)
     )
     effective_maybe_nil_return_helpers = (
         dict(maybe_nil_return_helpers)
@@ -1244,13 +1240,23 @@ def review_source(
         if coalescing_return_helpers is not None
         else {}
     )
-    effective_maybe_nil_return_helpers.update(
-        collect_maybe_nil_return_helpers(summarize_source(file_path, source))
-    )
-    effective_coalescing_return_helpers.update(
-        collect_coalescing_return_helpers(summarize_source(file_path, source))
-    )
-    effective_required_module_symbol_map = required_module_symbol_map(source)
+    effective_required_module_symbol_map: dict[str, tuple[str, ...]] = {}
+    if analysis_profile == "legacy":
+        base_transparent_return_wrappers.update(
+            collect_transparent_return_wrappers((source,), allow_local=True)
+        )
+        base_inline_guard_contracts = (
+            base_inline_guard_contracts
+            + collect_inline_guard_contracts((source,), allow_local=True)
+        )
+        file_summary = summarize_source(file_path, source)
+        effective_maybe_nil_return_helpers.update(
+            collect_maybe_nil_return_helpers(file_summary)
+        )
+        effective_coalescing_return_helpers.update(
+            collect_coalescing_return_helpers(file_summary)
+        )
+        effective_required_module_symbol_map = required_module_symbol_map(source)
     source_lines = tuple(source.splitlines())
     module_name = detect_module_name(source)
     spans_by_scope = _collect_named_function_spans(
@@ -1305,6 +1311,7 @@ def review_source(
             required_module_symbol_map=effective_required_module_symbol_map,
             ast_control_flow_context=scoped_input.ast_control_flow_context,
             source_lines=scoped_input.source_lines,
+            analysis_profile=analysis_profile,
         )
         assessments.append(
             CandidateAssessment(
@@ -1404,10 +1411,16 @@ def _resolve_candidate_function_span(
 def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment, ...]:
     """Run the current static first-pass review across all discovered Lua files."""
 
-    transparent_return_wrappers = _collect_snapshot_transparent_return_wrappers(snapshot)
-    inline_guard_contracts = _collect_snapshot_inline_guard_contracts(snapshot)
-    maybe_nil_return_helpers = _collect_snapshot_maybe_nil_return_helpers(snapshot)
-    coalescing_return_helpers = _collect_snapshot_coalescing_return_helpers(snapshot)
+    analysis_profile = "ast_lite"
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]] = {}
+    inline_guard_contracts: tuple[object, ...] = ()
+    maybe_nil_return_helpers: dict[str, tuple[tuple[int, int], ...]] = {}
+    coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]] = {}
+    if analysis_profile == "legacy":
+        transparent_return_wrappers = _collect_snapshot_transparent_return_wrappers(snapshot)
+        inline_guard_contracts = _collect_snapshot_inline_guard_contracts(snapshot)
+        maybe_nil_return_helpers = _collect_snapshot_maybe_nil_return_helpers(snapshot)
+        coalescing_return_helpers = _collect_snapshot_coalescing_return_helpers(snapshot)
     assessments: list[CandidateAssessment] = []
     for file_path in snapshot.lua_files:
         source = read_lua_source_text(file_path)
@@ -1423,6 +1436,7 @@ def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment
                 inline_guard_contracts=inline_guard_contracts,
                 macro_index=snapshot.macro_index,
                 domain_knowledge=snapshot.domain_knowledge,
+                analysis_profile=analysis_profile,
             )
         )
     return tuple(assessments)
@@ -1436,10 +1450,16 @@ def review_repository_file(
 
     resolved_file = _resolve_snapshot_lua_file(snapshot, file_path)
     source = read_lua_source_text(resolved_file)
-    transparent_return_wrappers = _collect_snapshot_transparent_return_wrappers(snapshot)
-    inline_guard_contracts = _collect_snapshot_inline_guard_contracts(snapshot)
-    maybe_nil_return_helpers = _collect_snapshot_maybe_nil_return_helpers(snapshot)
-    coalescing_return_helpers = _collect_snapshot_coalescing_return_helpers(snapshot)
+    analysis_profile = "ast_lite"
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]] = {}
+    inline_guard_contracts: tuple[object, ...] = ()
+    maybe_nil_return_helpers: dict[str, tuple[tuple[int, int], ...]] = {}
+    coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]] = {}
+    if analysis_profile == "legacy":
+        transparent_return_wrappers = _collect_snapshot_transparent_return_wrappers(snapshot)
+        inline_guard_contracts = _collect_snapshot_inline_guard_contracts(snapshot)
+        maybe_nil_return_helpers = _collect_snapshot_maybe_nil_return_helpers(snapshot)
+        coalescing_return_helpers = _collect_snapshot_coalescing_return_helpers(snapshot)
     return review_source(
         resolved_file,
         source,
@@ -1451,6 +1471,7 @@ def review_repository_file(
         inline_guard_contracts=inline_guard_contracts,
         macro_index=snapshot.macro_index,
         domain_knowledge=snapshot.domain_knowledge,
+        analysis_profile=analysis_profile,
     )
 
 
@@ -1737,6 +1758,11 @@ def benchmark_repository_review(
         for assessment, _ in labeled_assessments
         if assessment.static_analysis.analysis_mode == "ast_primary"
     )
+    ast_lite_cases = sum(
+        1
+        for assessment, _ in labeled_assessments
+        if assessment.static_analysis.analysis_mode == "ast_lite"
+    )
     ast_fallback_to_legacy_cases = sum(
         1
         for assessment, _ in labeled_assessments
@@ -1809,6 +1835,7 @@ def benchmark_repository_review(
         backend_review_calls=backend_review_calls,
         backend_review_total_seconds=backend_review_total_seconds,
         backend_review_average_seconds=backend_review_average_seconds,
+        ast_lite_cases=ast_lite_cases,
         ast_primary_cases=ast_primary_cases,
         ast_fallback_to_legacy_cases=ast_fallback_to_legacy_cases,
         legacy_only_cases=legacy_only_cases,

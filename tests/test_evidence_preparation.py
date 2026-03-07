@@ -39,7 +39,7 @@ def test_prepare_evidence_packet_uses_static_assessment_context() -> None:
 
     assert packet.case_id == assessment.candidate.case_id
     assert "string.match" in packet.local_context
-    assert packet.static_reasoning["state"] == "safe_static"
+    assert packet.static_reasoning["state"] == "unknown_static"
     assert packet.static_reasoning["analysis_mode"] == assessment.static_analysis.analysis_mode
     assert packet.static_reasoning["unknown_reason"] == (
         assessment.static_analysis.unknown_reason or ""
@@ -50,9 +50,7 @@ def test_prepare_evidence_packet_uses_static_assessment_context() -> None:
     assert packet.static_reasoning["origin_unknown_reason"] == (
         assessment.static_analysis.origin_unknown_reason or ""
     )
-    assert packet.static_reasoning["observed_guards"] == ("if username then",)
-    assert packet.static_reasoning["proof_kinds"] == ("direct_guard",)
+    assert packet.static_reasoning["observed_guards"] == ()
+    assert packet.static_reasoning["proof_kinds"] == ()
     assert packet.static_reasoning["origin_candidates"] == ("req.params.username",)
-    assert len(packet.static_proofs) == 1
-    assert packet.static_proofs[0].summary == "if username then"
-    assert packet.static_proofs[0].subject == "username"
+    assert packet.static_proofs == ()

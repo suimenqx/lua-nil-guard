@@ -1,4 +1,57 @@
-# LuaNilGuard V3 整体重构计划
+# LuaNilGuard V3 整体重构计划（最新）
+
+## 最新定稿（2026-03-07）
+
+本节为当前生效的最终方案，优先级高于下文历史阶段记录。
+
+### 一、架构定稿
+
+1. Tree-sitter 保持硬依赖（不做无 AST 降级路径）。
+2. AST 改为 AST-lite（零推断）：
+   - 仅用于函数边界定位、候选表达式精确定位、上下文切片。
+   - 不再承担安全/风险证明职责。
+3. 候选与领域规则前置：
+   - 候选收集保持轻量词法扫描。
+   - `domain_knowledge.json` 负责快速裁剪（如 `_name_.*`、`_cmd_.*`、全大写宏）。
+4. 评审主权交给 LLM：
+   - 主路径为“候选 + 上下文证据 + 规则事实 + LLM 仲裁”。
+   - AST 不再输出 `proof/risk_signal` 作为核心仲裁依据。
+5. 运行可观测性优先：
+   - 必须可查询全量候选（被裁剪/已送审/最终状态）。
+   - 指标重点转为裁剪率、送审率、LLM 解决率、端到端时延。
+
+### 二、预期目标
+
+1. 复杂度下降：显著减少 AST 规则维护负担。
+2. 性能提升：在 3000+ 行函数和超大 Lua 文件场景下保持响应稳定。
+3. 体验优化：减少规则迭代噪音，提升首轮可用结果速度。
+4. 职责清晰：
+   - AST = 定位与取证
+   - LLM = 语义仲裁
+   - 规则 = 前置裁剪与领域约束
+
+### 三、实施完成标准
+
+1. 主运行路径默认 AST-lite，AST 语义证明不再主导裁决。
+2. Tree-sitter 仍为强制前置依赖。
+3. `domain_knowledge.json` 与大文件跳过策略可持续生效。
+4. 文档和运行观测字段反映 AST-lite 策略。
+5. 全量测试通过。
+
+### 四、当前落地结果（2026-03-07）
+
+1. 已完成 AST-lite 主路径切换：
+   - `review_source/review_repository/review_repository_file` 默认 `analysis_profile=ast_lite`。
+   - AST 仅用于函数内定位与 origin/context 切片；不再输出静态 `proof/risk_signal` 作为主裁决依据。
+2. 已保留 legacy 兼容分支：
+   - `analyze_candidate` 支持 `analysis_profile=legacy|ast_lite`，便于对照和回归。
+3. 已完成运行可观测字段同步：
+   - 运行状态与基准输出新增 `ast_lite_cases`。
+   - CLI/JSON 输出已展示 AST-lite 计数。
+4. 已更新文档：
+   - `README.md`、`README.zh-CN.md`、`docs/run-tuning.md` 已同步 AST-lite 口径。
+5. 已完成全量测试验证：
+   - `PYTHONPATH=src pytest -q` 结果：`522 passed`。
 
 ## 0. 项目基线
 

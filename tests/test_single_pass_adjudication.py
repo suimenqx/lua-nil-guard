@@ -77,7 +77,7 @@ def test_single_pass_returns_risky_when_no_guard_and_no_safety_evidence() -> Non
     result = adjudicate_single_pass(packet, rule)
 
     assert result.verdict.status == "risky"
-    assert result.verdict.confidence == "medium"
+    assert result.verdict.confidence == "high"
     assert len(result.verdict.risk_path) > 0
 
 

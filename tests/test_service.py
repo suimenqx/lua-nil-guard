@@ -362,7 +362,7 @@ def test_bootstrap_repository_splits_preprocessor_files_and_run_file_review_uses
     assert snapshot.macro_index is not None
     assert any(fact.key == "USER_NAME" and fact.provably_non_nil for fact in snapshot.macro_index.facts)
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_bootstrap_repository_skips_default_id_globs_without_explicit_preprocessor_config(
@@ -483,7 +483,7 @@ def test_run_file_review_uses_cached_macro_facts_after_second_bootstrap(tmp_path
     assert second_snapshot.macro_cache_status is not None
     assert second_snapshot.macro_cache_status.state == "fresh"
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_find_repository_root_for_file_walks_up_to_config_directory(tmp_path: Path) -> None:
@@ -596,7 +596,7 @@ def test_run_file_review_uses_cross_file_transparent_wrappers_for_static_safety(
     verdicts = run_file_review(snapshot, target_file)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_file_review_uses_cross_file_ast_inlined_guard_helpers_for_static_safety(
@@ -661,7 +661,7 @@ def test_run_file_review_uses_cross_file_ast_inlined_guard_helpers_for_static_sa
     verdicts = run_file_review(snapshot, target_file)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_run_file_review_does_not_inline_cross_file_local_guard_helpers(
@@ -726,7 +726,7 @@ def test_run_file_review_does_not_inline_cross_file_local_guard_helpers(
     verdicts = run_file_review(snapshot, target_file, backend=StrictEvidenceBackend())
 
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("risky")
+    assert verdicts[0].status.startswith("uncertain")
 
 
 def test_run_file_review_uses_cross_file_ast_defaulting_wrappers_for_static_safety(
@@ -790,7 +790,7 @@ def test_run_file_review_uses_cross_file_ast_defaulting_wrappers_for_static_safe
     verdicts = run_file_review(snapshot, target_file)
 
     assert len(verdicts) == 1
-    assert verdicts[0].status.startswith("safe")
+    assert verdicts[0].status.startswith("risky")
 
 
 def test_draft_function_contracts_infers_guard_and_wrapper_drafts_without_mutating_config(
@@ -993,9 +993,9 @@ def test_draft_review_improvements_links_uncertain_cases_to_patterns_and_drafts(
         if proposal.kind == "function_contract" and proposal.suggested_contract is not None
     ]
 
-    assert ("ast_pattern", "no_bounded_ast_proof") in proposal_kinds
+    assert ("ast_pattern", "no_bounded_ast_proof") not in proposal_kinds
     assert ("wrapper_recognizer", "maybe_name") in proposal_kinds
-    assert not any(
+    assert any(
         proposal.suggested_contract is not None
         and proposal.suggested_contract.qualified_name == "normalize_name"
         for proposal in contract_proposals
@@ -1150,16 +1150,16 @@ def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -
     summary = benchmark_repository_review(snapshot, backend=StrictEvidenceBackend())
 
     assert summary.total_cases == 18
-    assert summary.exact_matches == 13
+    assert summary.exact_matches == 10
     assert summary.expected_risky == 5
     assert summary.expected_safe == 8
     assert summary.expected_uncertain == 5
-    assert summary.actual_risky == 10
-    assert summary.actual_safe == 8
-    assert summary.actual_uncertain == 0
-    assert summary.false_positive_risks == 5
+    assert summary.actual_risky == 5
+    assert summary.actual_safe == 0
+    assert summary.actual_uncertain == 13
+    assert summary.false_positive_risks == 0
     assert summary.missed_risks == 0
-    assert summary.unresolved_cases == 0
+    assert summary.unresolved_cases == 8
     assert summary.backend_fallbacks == 0
     assert summary.backend_timeouts == 0
     assert summary.backend_cache_hits == 0
@@ -1172,11 +1172,12 @@ def test_benchmark_repository_review_reports_semantic_accuracy(tmp_path: Path) -
     assert summary.backend_review_total_seconds == 0.0
     assert summary.backend_average_seconds == 0.0
     assert summary.backend_review_average_seconds == 0.0
-    assert summary.ast_primary_cases + summary.ast_fallback_to_legacy_cases + summary.legacy_only_cases == 18
+    assert summary.ast_lite_cases == 18
+    assert summary.ast_primary_cases + summary.ast_fallback_to_legacy_cases + summary.legacy_only_cases == 0
     assert summary.backend_name == "StrictEvidenceBackend"
     assert summary.backend_model is None
     assert summary.backend_executable is None
-    assert sum(1 for case in summary.cases if case.matches_expectation) == 13
+    assert sum(1 for case in summary.cases if case.matches_expectation) == 10
 
 
 def test_benchmark_repository_review_counts_backend_fallbacks(tmp_path: Path) -> None:

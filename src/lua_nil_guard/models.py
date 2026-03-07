@@ -438,6 +438,7 @@ class BenchmarkSummary:
     backend_review_calls: int = 0
     backend_review_total_seconds: float = 0.0
     backend_review_average_seconds: float = 0.0
+    ast_lite_cases: int = 0
     ast_primary_cases: int = 0
     ast_fallback_to_legacy_cases: int = 0
     legacy_only_cases: int = 0

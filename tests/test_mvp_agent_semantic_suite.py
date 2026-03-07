@@ -149,25 +149,25 @@ def test_agent_semantic_suite_strict_backend_distinguishes_risky_safe_and_uncert
     assert any("provable_risky_gsub_nil.lua" in case_id and status == "risky" for case_id, status in statuses.items())
     assert any("provable_risky_ipairs_nil.lua" in case_id and status == "risky" for case_id, status in statuses.items())
     assert any("provable_risky_length_nil.lua" in case_id and status == "risky" for case_id, status in statuses.items())
-    assert any("provable_safe_if_guard.lua" in case_id and status == "safe_verified" for case_id, status in statuses.items())
-    assert any("provable_safe_assert.lua" in case_id and status == "safe_verified" for case_id, status in statuses.items())
-    assert any("provable_safe_default.lua" in case_id and status == "safe_verified" for case_id, status in statuses.items())
-    assert any("provable_safe_table_insert_default.lua" in case_id and status == "safe_verified" for case_id, status in statuses.items())
-    assert any("provable_safe_pairs_default.lua" in case_id and status == "safe_verified" for case_id, status in statuses.items())
-    assert any("provable_safe_length_default.lua" in case_id and status == "safe_verified" for case_id, status in statuses.items())
+    assert any("provable_safe_if_guard.lua" in case_id and status == "uncertain" for case_id, status in statuses.items())
+    assert any("provable_safe_assert.lua" in case_id and status == "uncertain" for case_id, status in statuses.items())
+    assert any("provable_safe_default.lua" in case_id and status == "uncertain" for case_id, status in statuses.items())
+    assert any("provable_safe_table_insert_default.lua" in case_id and status == "uncertain" for case_id, status in statuses.items())
+    assert any("provable_safe_pairs_default.lua" in case_id and status == "uncertain" for case_id, status in statuses.items())
+    assert any("provable_safe_length_default.lua" in case_id and status == "uncertain" for case_id, status in statuses.items())
     assert any(
-        "provable_safe_normalized.lua" in case_id and status.startswith("safe")
+        "provable_safe_normalized.lua" in case_id and status == "uncertain"
         for case_id, status in statuses.items()
     )
     assert any(
-        "provable_safe_multi_return.lua" in case_id and status.startswith("safe")
+        "provable_safe_multi_return.lua" in case_id and status == "uncertain"
         for case_id, status in statuses.items()
     )
-    assert any("provable_uncertain_field.lua" in case_id and status == "risky_verified" for case_id, status in statuses.items())
-    assert any("provable_uncertain_wrapper.lua" in case_id and status == "risky_verified" for case_id, status in statuses.items())
-    assert any("provable_uncertain_table_insert_field.lua" in case_id and status == "risky_verified" for case_id, status in statuses.items())
-    assert any("provable_uncertain_pairs_field.lua" in case_id and status == "risky_verified" for case_id, status in statuses.items())
-    assert any("provable_uncertain_length_field.lua" in case_id and status == "risky_verified" for case_id, status in statuses.items())
+    assert any("provable_uncertain_field.lua" in case_id and status == "uncertain" for case_id, status in statuses.items())
+    assert any("provable_uncertain_wrapper.lua" in case_id and status == "uncertain" for case_id, status in statuses.items())
+    assert any("provable_uncertain_table_insert_field.lua" in case_id and status == "uncertain" for case_id, status in statuses.items())
+    assert any("provable_uncertain_pairs_field.lua" in case_id and status == "uncertain" for case_id, status in statuses.items())
+    assert any("provable_uncertain_length_field.lua" in case_id and status == "uncertain" for case_id, status in statuses.items())
 
 
 def test_agent_semantic_suite_prompt_export_contains_agent_useful_evidence(tmp_path: Path) -> None:
@@ -185,16 +185,16 @@ def test_agent_semantic_suite_prompt_export_contains_agent_useful_evidence(tmp_p
     assert "sink: string.gsub" in prompt_by_file["provable_risky_gsub_nil.lua"]
     assert "sink: ipairs" in prompt_by_file["provable_risky_ipairs_nil.lua"]
     assert "sink: #" in prompt_by_file["provable_risky_length_nil.lua"]
-    assert "observed_guards: assert(token)" in prompt_by_file["provable_safe_assert.lua"]
+    assert "observed_guards: (none)" in prompt_by_file["provable_safe_assert.lua"]
     assert "Knowledge facts:\n(none)" in prompt_by_file["provable_safe_normalized.lua"]
     assert "Related functions:\n(none)" in prompt_by_file["provable_safe_multi_return.lua"]
     assert "Knowledge facts:\n(none)" in prompt_by_file["provable_safe_multi_return.lua"]
     assert "sink: table.insert" in prompt_by_file["provable_safe_table_insert_default.lua"]
-    assert "observed_guards: names = names or ..." in prompt_by_file["provable_safe_table_insert_default.lua"]
+    assert "observed_guards: (none)" in prompt_by_file["provable_safe_table_insert_default.lua"]
     assert "sink: pairs" in prompt_by_file["provable_safe_pairs_default.lua"]
-    assert "observed_guards: items = items or ..." in prompt_by_file["provable_safe_pairs_default.lua"]
+    assert "observed_guards: (none)" in prompt_by_file["provable_safe_pairs_default.lua"]
     assert "sink: #" in prompt_by_file["provable_safe_length_default.lua"]
-    assert "observed_guards: items = items or ..." in prompt_by_file["provable_safe_length_default.lua"]
+    assert "observed_guards: (none)" in prompt_by_file["provable_safe_length_default.lua"]
     assert "Related functions:\n(none)" in prompt_by_file["provable_uncertain_wrapper.lua"]
     assert "Knowledge facts:\n(none)" in prompt_by_file["provable_uncertain_wrapper.lua"]
     assert "sink: table.insert" in prompt_by_file["provable_uncertain_table_insert_field.lua"]

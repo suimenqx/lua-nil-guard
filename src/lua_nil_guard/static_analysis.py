@@ -62,7 +62,7 @@ class _AstControlFlowContext:
     captures: dict[str, tuple[object, ...]]
 
 
-def analyze_candidate(
+def _analyze_candidate_legacy(
     source: str,
     candidate: CandidateCase,
     *,
@@ -293,6 +293,140 @@ def analyze_candidate(
         origin_analysis_mode=origin_outcome.analysis_mode,
         origin_unknown_reason=origin_outcome.unknown_reason,
     )
+
+
+def _analyze_candidate_ast_lite(
+    source: str,
+    candidate: CandidateCase,
+    *,
+    function_contracts: tuple[FunctionContract, ...] = (),
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]] | None = None,
+    maybe_nil_return_helpers: dict[str, tuple[tuple[int, int], ...]] | None = None,
+    coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]] | None = None,
+    inline_guard_contracts: tuple[FunctionContract, ...] | None = None,
+    macro_index: MacroIndex | None = None,
+    required_module_symbol_map: dict[str, tuple[str, ...]] | None = None,
+    ast_control_flow_context: _AstControlFlowContext | None = None,
+    source_lines: tuple[str, ...] | None = None,
+) -> StaticAnalysisResult:
+    """AST-lite profile: keep origin/context extraction, skip semantic proofing."""
+
+    _ = (
+        function_contracts,
+        transparent_return_wrappers,
+        maybe_nil_return_helpers,
+        coalescing_return_helpers,
+        inline_guard_contracts,
+        macro_index,
+        required_module_symbol_map,
+    )
+    if not _is_trackable_symbol(candidate.symbol):
+        return StaticAnalysisResult(
+            state="unknown_static",
+            observed_guards=(),
+            origin_candidates=(candidate.expression,),
+            origin_usage_modes=("direct_sink",),
+            origin_return_slots=(1,),
+            proofs=(),
+            risk_signals=(),
+            analysis_mode="ast_lite",
+            origin_analysis_mode="direct_expression",
+        )
+
+    lines = source_lines if source_lines is not None else tuple(source.splitlines())
+    prior_lines = lines[: max(0, candidate.line - 1)]
+    ast_context = ast_control_flow_context
+    if ast_context is None:
+        ast_context = _parse_control_flow_tree(source)
+    origin_outcome = _resolve_origin_with_ast(
+        source,
+        candidate,
+        context=ast_context,
+    )
+    origin_detail = origin_outcome.detail
+    if origin_detail is None:
+        origin_detail = _find_last_assignment_detail(prior_lines, candidate.symbol)
+    origin_context = None
+    if origin_detail is not None:
+        origin_context = (
+            origin_detail[0],
+            origin_detail[1],
+            origin_detail[2],
+        )
+    origin = origin_context[0] if origin_context is not None else None
+    origins = (origin,) if origin is not None else (candidate.expression,)
+    origin_usage_modes = (
+        (origin_context[1],)
+        if origin_context is not None
+        else ("direct_sink",)
+    )
+    origin_return_slots = (
+        (origin_context[2],)
+        if origin_context is not None
+        else ()
+    )
+
+    return StaticAnalysisResult(
+        state="unknown_static",
+        observed_guards=(),
+        origin_candidates=origins,
+        origin_usage_modes=origin_usage_modes,
+        origin_return_slots=origin_return_slots,
+        proofs=(),
+        risk_signals=(),
+        analysis_mode="ast_lite",
+        unknown_reason=None,
+        origin_analysis_mode=origin_outcome.analysis_mode,
+        origin_unknown_reason=origin_outcome.unknown_reason,
+    )
+
+
+def analyze_candidate(
+    source: str,
+    candidate: CandidateCase,
+    *,
+    function_contracts: tuple[FunctionContract, ...] = (),
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]] | None = None,
+    maybe_nil_return_helpers: dict[str, tuple[tuple[int, int], ...]] | None = None,
+    coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]] | None = None,
+    inline_guard_contracts: tuple[FunctionContract, ...] | None = None,
+    macro_index: MacroIndex | None = None,
+    required_module_symbol_map: dict[str, tuple[str, ...]] | None = None,
+    ast_control_flow_context: _AstControlFlowContext | None = None,
+    source_lines: tuple[str, ...] | None = None,
+    analysis_profile: str = "legacy",
+) -> StaticAnalysisResult:
+    """Apply bounded local analysis before escalating to agent review."""
+
+    if analysis_profile == "legacy":
+        return _analyze_candidate_legacy(
+            source,
+            candidate,
+            function_contracts=function_contracts,
+            transparent_return_wrappers=transparent_return_wrappers,
+            maybe_nil_return_helpers=maybe_nil_return_helpers,
+            coalescing_return_helpers=coalescing_return_helpers,
+            inline_guard_contracts=inline_guard_contracts,
+            macro_index=macro_index,
+            required_module_symbol_map=required_module_symbol_map,
+            ast_control_flow_context=ast_control_flow_context,
+            source_lines=source_lines,
+        )
+    if analysis_profile == "ast_lite":
+        return _analyze_candidate_ast_lite(
+            source,
+            candidate,
+            function_contracts=function_contracts,
+            transparent_return_wrappers=transparent_return_wrappers,
+            maybe_nil_return_helpers=maybe_nil_return_helpers,
+            coalescing_return_helpers=coalescing_return_helpers,
+            inline_guard_contracts=inline_guard_contracts,
+            macro_index=macro_index,
+            required_module_symbol_map=required_module_symbol_map,
+            ast_control_flow_context=ast_control_flow_context,
+            source_lines=source_lines,
+        )
+    raise ValueError(f"unsupported analysis_profile: {analysis_profile!r}")
 
 
 def build_static_analysis_context(source: str):

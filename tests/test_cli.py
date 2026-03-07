@@ -123,7 +123,8 @@ def test_cli_scan_reports_static_summary(tmp_path: Path) -> None:
     assert "Parser backend: tree_sitter_local" in output
     assert "Parser detail:" in output
     assert "Total candidates: 1" in output
-    assert "safe_static: 1" in output
+    assert "safe_static: 0" in output
+    assert "unknown_static: 1" in output
 
 
 def test_cli_scan_supports_string_focus_filter(tmp_path: Path) -> None:
@@ -454,7 +455,8 @@ def test_cli_scan_file_reports_static_summary(tmp_path: Path) -> None:
     assert "Lua Nil Review Static Summary" in output
     assert f"Target file: {file_path}" in output
     assert "Total candidates: 1" in output
-    assert "safe_static: 1" in output
+    assert "safe_static: 0" in output
+    assert "unknown_static: 1" in output
 
 
 def test_cli_init_config_writes_default_templates(tmp_path: Path) -> None:
@@ -1807,7 +1809,7 @@ def test_cli_report_outputs_markdown_findings(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert "# Lua Nil Risk Report" in output
-    assert "risky_verified" in output
+    assert "status: risky" in output
 
 
 def test_cli_export_autofix_outputs_machine_readable_patches(tmp_path: Path) -> None:

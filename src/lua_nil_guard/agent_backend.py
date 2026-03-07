@@ -49,6 +49,9 @@ class HeuristicAdjudicationBackend:
         record = adjudicate_packet(packet, sink_rule)
         if record.judge.status != "risky":
             return record
+        analysis_mode = packet.static_reasoning.get("analysis_mode")
+        if analysis_mode == "ast_lite":
+            return record
         if _has_local_risk_proof(packet):
             return record
 

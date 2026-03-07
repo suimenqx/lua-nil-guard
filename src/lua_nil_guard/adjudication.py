@@ -98,7 +98,7 @@ def adjudicate_single_pass(packet: EvidencePacket, sink_rule: SinkRule) -> Singl
         verdict = Verdict(
             case_id=packet.case_id,
             status="risky",
-            confidence="medium",
+            confidence="high",
             risk_path=risk_path,
             safety_evidence=(),
             counterarguments_considered=("no explicit guard or trusted non-nil contract found",),

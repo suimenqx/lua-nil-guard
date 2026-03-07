@@ -82,7 +82,7 @@ def test_adjudicate_packet_reports_risk_when_no_safety_evidence_exists() -> None
     assert record.prosecutor.status == "risky"
     assert record.defender.status == "uncertain"
     assert record.judge.status == "risky"
-    assert record.judge.confidence == "medium"
+    assert record.judge.confidence == "high"
     assert "no guard before string.match" in record.judge.risk_path[-1]
     assert record.judge.suggested_fix == "username = username or ''"
     assert record.judge.autofix_patch is not None

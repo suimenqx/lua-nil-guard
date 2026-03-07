@@ -7,9 +7,9 @@ This guide explains how to query and use run-store data for static-analysis tuni
 Use this when you want to:
 
 - inspect all collected candidates (both statically suppressed and unresolved)
-- measure AST effectiveness (`ast_primary`, `ast_fallback_to_legacy`, `legacy_only`)
+- measure AST-lite coverage (`ast_lite`) and legacy compatibility mode residue
 - correlate unknown reasons with sink rules and files
-- tune `sink_rules.json`, `domain_knowledge.json`, and AST strategy based on data
+- tune `sink_rules.json`, `domain_knowledge.json`, and AST-lite context slicing strategy based on data
 
 ## Prerequisites
 
@@ -48,12 +48,13 @@ lua-nil-guard run-export-json /path/to/target-repo [run_id] [output.json]
 `run-status` now includes:
 
 - candidate-source counters (`ast_exact`, `lexical_fallback`)
-- static-analysis mode counters (`ast_primary`, `ast_fallback_to_legacy`, `legacy_only`)
+- static-analysis mode counters (`ast_lite`, and legacy compatibility modes)
 - origin-analysis mode distribution
 - unknown-reason distribution for `unknown_static`
 
 `run-export-json` includes machine-readable fields:
 
+- `run.candidate_metrics.ast_lite_cases`
 - `run.candidate_metrics.ast_primary_cases`
 - `run.candidate_metrics.ast_fallback_to_legacy_cases`
 - `run.candidate_metrics.legacy_only_cases`
@@ -88,12 +89,12 @@ ORDER BY file, line, column;
 
 Interpretation:
 
-- `static_state = safe_static`: statically suppressed (not escalated)
-- `static_state = unknown_static`: not statically suppressed (typically escalated)
-- `analysis_mode`: guard analysis mode
-- `origin_analysis_mode`: origin-tracing analysis mode
+- `static_state = safe_static`: statically suppressed (legacy-compatible path)
+- `static_state = unknown_static`: default AST-lite behavior; typically escalated
+- `analysis_mode`: AST-lite or legacy-compatible analysis mode
+- `origin_analysis_mode`: origin-tracing mode (AST primary/fallback)
 
-## AST Effectiveness Queries
+## AST-lite Observability Queries
 
 ### 1) Static outcomes by analysis mode
 
@@ -149,19 +150,16 @@ ORDER BY cnt DESC, file;
 
 Use this as a baseline:
 
-1. `ast_primary` high + `safe_static` high
-- AST is paying off for current rule mix.
+1. `ast_lite` high
+- Expected in the v3 runtime path.
 
-2. `ast_fallback_to_legacy` high + `no_bounded_ast_proof` high
-- AST is not proving enough; rely more on LLM, or simplify AST proof obligations.
+2. legacy compatibility modes (`ast_primary` / `ast_fallback_to_legacy` / `legacy_only`) non-trivial
+- Re-check if old static-proof paths are still intentionally enabled.
 
-3. `legacy_only` unexpectedly high
-- inspect parser/runtime setup and candidate shapes.
+3. unresolved concentrated on a few sink rules
+- refine those sink rules first (`sink_rules.json`) before broad context-strategy changes.
 
-4. unresolved concentrated on a few sink rules
-- refine those sink rules first (`sink_rules.json`) before broad AST changes.
-
-5. unresolved concentrated on known-safe symbol families
+4. unresolved concentrated on known-safe symbol families
 - add or tighten domain pruning rules (`domain_knowledge.json`).
 
 ## Important Notes
