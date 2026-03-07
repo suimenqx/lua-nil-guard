@@ -117,6 +117,35 @@ class Verdict:
 
 
 @dataclass(frozen=True, slots=True)
+class PreprocessorConfig:
+    """Repository-level configuration for preprocessor dictionary files."""
+
+    preprocessor_files: tuple[str, ...] = ()
+    preprocessor_globs: tuple[str, ...] = ()
+    skip_review_files: tuple[str, ...] = ()
+    skip_review_globs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DomainKnowledgeRule:
+    """One operator-defined rule used for deterministic candidate pruning."""
+
+    id: str
+    action: str
+    symbol_regex: str
+    applies_to_sinks: tuple[str, ...] = ()
+    assumed_non_nil: bool = True
+    assumed_kind: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DomainKnowledgeConfig:
+    """Repository-level domain knowledge rules used for fast pruning."""
+
+    rules: tuple[DomainKnowledgeRule, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class RepositorySnapshot:
     """Resolved repository inputs used to start a review run."""
 
@@ -128,14 +157,7 @@ class RepositorySnapshot:
     macro_index: "MacroIndex | None" = None
     macro_cache_status: "MacroCacheStatus | None" = None
     function_contracts: tuple["FunctionContract", ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class PreprocessorConfig:
-    """Repository-level configuration for preprocessor dictionary files."""
-
-    preprocessor_files: tuple[str, ...] = ()
-    preprocessor_globs: tuple[str, ...] = ()
+    domain_knowledge: DomainKnowledgeConfig = field(default_factory=DomainKnowledgeConfig)
 
 
 @dataclass(frozen=True, slots=True)

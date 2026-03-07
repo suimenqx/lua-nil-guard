@@ -1,0 +1,38 @@
+{
+  "rules": [
+    {
+      "id": "system_name_table_prefix",
+      "action": "skip_candidate",
+      "symbol_regex": "^_name_[A-Z0-9_]+(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+      "applies_to_sinks": [
+        "member_access.receiver",
+        "pairs.arg1",
+        "ipairs.arg1",
+        "length.operand"
+      ],
+      "assumed_non_nil": true,
+      "assumed_kind": "table"
+    },
+    {
+      "id": "system_cmd_table_prefix",
+      "action": "skip_candidate",
+      "symbol_regex": "^_cmd_[A-Z0-9_]+(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+      "applies_to_sinks": [
+        "member_access.receiver",
+        "pairs.arg1",
+        "ipairs.arg1",
+        "length.operand"
+      ],
+      "assumed_non_nil": true,
+      "assumed_kind": "table"
+    },
+    {
+      "id": "uppercase_macro_non_nil",
+      "action": "skip_candidate",
+      "symbol_regex": "^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$",
+      "applies_to_sinks": [],
+      "assumed_non_nil": true,
+      "assumed_kind": "macro"
+    }
+  ]
+}

@@ -9,6 +9,7 @@ from lua_nil_guard.config_loader import (
     ConfigError,
     default_preprocessor_config,
     load_confidence_policy,
+    load_domain_knowledge_config,
     load_function_contracts,
     load_preprocessor_config,
     load_sink_rules,
@@ -28,6 +29,7 @@ def test_load_sink_rules_reads_built_in_rules() -> None:
     assert any(rule.id == "compare.gte.left" for rule in rules)
     assert any(rule.id == "arithmetic.add.left" for rule in rules)
     assert any(rule.id == "string.lower.arg1" for rule in rules)
+    assert all(rule.id != "member_access.receiver" for rule in rules)
 
 
 def test_load_sink_rules_rejects_duplicate_rule_ids(tmp_path: Path) -> None:
@@ -78,14 +80,18 @@ def test_load_preprocessor_config_reads_defaults() -> None:
     config = load_preprocessor_config(ROOT / "config" / "preprocessor_files.json")
 
     assert config.preprocessor_files == ()
-    assert config.preprocessor_globs == ("id.lua", "*_id.lua")
+    assert config.preprocessor_globs == ()
+    assert config.skip_review_files == ()
+    assert config.skip_review_globs == ("id.lua", "*_id.lua")
 
 
 def test_default_preprocessor_config_matches_template_defaults() -> None:
     config = default_preprocessor_config()
 
     assert config.preprocessor_files == ()
-    assert config.preprocessor_globs == ("id.lua", "*_id.lua")
+    assert config.preprocessor_globs == ()
+    assert config.skip_review_files == ()
+    assert config.skip_review_globs == ("id.lua", "*_id.lua")
 
 
 def test_load_preprocessor_config_reads_explicit_files_and_globs(tmp_path: Path) -> None:
@@ -95,6 +101,8 @@ def test_load_preprocessor_config_reads_explicit_files_and_globs(tmp_path: Path)
             {
                 "preprocessor_files": ["src/macros.lua", "src/macros.lua"],
                 "preprocessor_globs": ["legacy/*.lua"],
+                "skip_review_files": ["src/legacy.lua", "src/legacy.lua"],
+                "skip_review_globs": ["vendor/**"],
             }
         ),
         encoding="utf-8",
@@ -104,6 +112,44 @@ def test_load_preprocessor_config_reads_explicit_files_and_globs(tmp_path: Path)
 
     assert config.preprocessor_files == ("src/macros.lua",)
     assert config.preprocessor_globs == ("legacy/*.lua",)
+    assert config.skip_review_files == ("src/legacy.lua",)
+    assert config.skip_review_globs == ("vendor/**",)
+
+
+def test_load_domain_knowledge_config_reads_defaults() -> None:
+    config = load_domain_knowledge_config(ROOT / "config" / "domain_knowledge.json")
+
+    assert len(config.rules) >= 3
+    assert any(rule.id == "system_name_table_prefix" for rule in config.rules)
+    assert any(rule.id == "system_cmd_table_prefix" for rule in config.rules)
+    assert any(rule.id == "uppercase_macro_non_nil" for rule in config.rules)
+
+
+def test_load_domain_knowledge_config_missing_file_returns_empty(tmp_path: Path) -> None:
+    config = load_domain_knowledge_config(tmp_path / "missing.json")
+
+    assert config.rules == ()
+
+
+def test_load_domain_knowledge_config_rejects_invalid_regex(tmp_path: Path) -> None:
+    config_path = tmp_path / "domain_knowledge.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "id": "bad",
+                        "action": "skip_candidate",
+                        "symbol_regex": "[",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="Invalid domain knowledge regex"):
+        load_domain_knowledge_config(config_path)
 
 
 def test_load_function_contracts_rejects_duplicate_names(tmp_path: Path) -> None:

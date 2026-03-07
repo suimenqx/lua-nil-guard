@@ -167,7 +167,9 @@ def test_cli_agent_backend_parses_structured_json_response(tmp_path: Path) -> No
     assert tmp_path in schema_path.parents
     assert "Adjudication policy: lua-nil-adjudicator" in str(captured["stdin_text"])
     assert "Unknown is not risk." in str(captured["stdin_text"])
-    assert "Do not execute shell commands, open files, or inspect the repository." in str(captured["stdin_text"])
+    assert "prefer read-only evidence collection and cite concrete file:line evidence." in str(
+        captured["stdin_text"]
+    )
 
 
 def test_cli_agent_backend_rejects_invalid_json_output() -> None:
@@ -582,7 +584,7 @@ def test_claude_cli_backend_uses_claude_executable_by_default(tmp_path: Path) ->
     assert "--model" in command
     assert command[-2] == "--"
     assert "Adjudication policy: lua-nil-adjudicator" in command[-1]
-    assert "Use only the prompt payload as admissible evidence." in command[-1]
+    assert "use only the prompt payload as admissible evidence." in command[-1]
     assert "The prosecutor and defender objects must each contain:" in command[-1]
     assert captured["stdin_text"] == ""
     assert captured["cwd"] == tmp_path
@@ -771,7 +773,7 @@ def test_codeagent_cli_backend_uses_gemini_executable_by_default(tmp_path: Path)
     assert "-m" in command
     prompt_argument = command[-1]
     assert "Adjudication policy: lua-nil-adjudicator" in prompt_argument
-    assert "Use only the prompt payload as admissible evidence." in prompt_argument
+    assert "use only the prompt payload as admissible evidence." in prompt_argument
     assert captured["stdin_text"] == ""
     assert captured["cwd"] == tmp_path
     assert record.judge.status == "safe"

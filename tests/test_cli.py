@@ -484,7 +484,9 @@ def test_cli_init_config_writes_default_templates(tmp_path: Path) -> None:
     assert contracts_payload == []
     assert preprocessor_payload == {
         "preprocessor_files": [],
-        "preprocessor_globs": ["id.lua", "*_id.lua"],
+        "preprocessor_globs": [],
+        "skip_review_files": [],
+        "skip_review_globs": ["id.lua", "*_id.lua"],
     }
     assert any(rule["id"] == "system_name_table_prefix" for rule in domain_payload["rules"])
     assert any(rule["id"] == "system_cmd_table_prefix" for rule in domain_payload["rules"])
@@ -512,7 +514,9 @@ def test_cli_init_config_preserves_existing_files_and_backfills_missing_template
     assert contracts_path.read_text(encoding="utf-8") == "[]"
     assert json.loads(preprocessor_path.read_text(encoding="utf-8")) == {
         "preprocessor_files": [],
-        "preprocessor_globs": ["id.lua", "*_id.lua"],
+        "preprocessor_globs": [],
+        "skip_review_files": [],
+        "skip_review_globs": ["id.lua", "*_id.lua"],
     }
     assert any(
         rule["id"] == "system_name_table_prefix"
@@ -549,7 +553,9 @@ def test_cli_init_config_force_overwrites_existing_files(tmp_path: Path) -> None
     assert contracts_payload == []
     assert preprocessor_payload == {
         "preprocessor_files": [],
-        "preprocessor_globs": ["id.lua", "*_id.lua"],
+        "preprocessor_globs": [],
+        "skip_review_files": [],
+        "skip_review_globs": ["id.lua", "*_id.lua"],
     }
     assert any(rule["id"] == "uppercase_macro_non_nil" for rule in domain_payload["rules"])
 

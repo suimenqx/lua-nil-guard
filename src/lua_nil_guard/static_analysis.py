@@ -73,6 +73,8 @@ def analyze_candidate(
     inline_guard_contracts: tuple[FunctionContract, ...] | None = None,
     macro_index: MacroIndex | None = None,
     required_module_symbol_map: dict[str, tuple[str, ...]] | None = None,
+    ast_control_flow_context: _AstControlFlowContext | None = None,
+    source_lines: tuple[str, ...] | None = None,
 ) -> StaticAnalysisResult:
     """Apply bounded local heuristics before escalating to agent review."""
 
@@ -103,9 +105,11 @@ def analyze_candidate(
             risk_signals=direct_expression_risks,
         )
 
-    lines = source.splitlines()
+    lines = source_lines if source_lines is not None else tuple(source.splitlines())
     prior_lines = lines[: max(0, candidate.line - 1)]
-    ast_context = _parse_control_flow_tree(source)
+    ast_context = ast_control_flow_context
+    if ast_context is None:
+        ast_context = _parse_control_flow_tree(source)
     origin_outcome = _resolve_origin_with_ast(
         source,
         candidate,
@@ -289,6 +293,12 @@ def analyze_candidate(
         origin_analysis_mode=origin_outcome.analysis_mode,
         origin_unknown_reason=origin_outcome.unknown_reason,
     )
+
+
+def build_static_analysis_context(source: str):
+    """Build a reusable AST control-flow context for one source text."""
+
+    return _parse_control_flow_tree(source)
 
 
 def _analyze_guards_with_ast(

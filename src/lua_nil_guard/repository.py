@@ -71,6 +71,34 @@ def read_lua_source_text(path: str | Path) -> str:
     )
 
 
+def read_lua_source_lines(path: str | Path):
+    """Stream a Lua source file line-by-line as UTF-8."""
+
+    file_path = Path(path)
+    try:
+        with file_path.open("rb") as raw_handle:
+            if raw_handle.read(3) == b"\xef\xbb\xbf":
+                raise SourceEncodingError(
+                    "Lua source file is not valid UTF-8: "
+                    f"{file_path} (detected utf-8-sig). "
+                    "Run `lua-nil-guard normalize-encoding --write <repository>` "
+                    "or re-save this file as UTF-8 before running lua-nil-guard."
+                )
+    except OSError as exc:
+        raise SourceEncodingError(f"Lua source file read failed: {file_path} ({exc})") from exc
+    try:
+        with file_path.open("r", encoding="utf-8", newline="") as handle:
+            for line in handle:
+                yield line
+    except UnicodeDecodeError as exc:
+        raise SourceEncodingError(
+            "Lua source file is not valid UTF-8: "
+            f"{file_path} ({exc}). "
+            "Run `lua-nil-guard normalize-encoding --write <repository>` "
+            "or re-save this file as UTF-8 before running lua-nil-guard."
+        ) from exc
+
+
 def inspect_lua_source_encoding(path: str | Path) -> tuple[LuaSourceEncodingRecord, str | None]:
     """Inspect one Lua file and return a stable encoding verdict."""
 

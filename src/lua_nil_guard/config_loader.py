@@ -2,9 +2,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Any
 
-from .models import AdjudicationPolicy, ConfidencePolicy, FunctionContract, PreprocessorConfig, SinkRule
+from .models import (
+    AdjudicationPolicy,
+    ConfidencePolicy,
+    DomainKnowledgeConfig,
+    DomainKnowledgeRule,
+    FunctionContract,
+    PreprocessorConfig,
+    SinkRule,
+)
 
 _SUPPORTED_ADJUDICATION_MODES = frozenset({"single_pass"})
 
@@ -21,14 +30,16 @@ _SUPPORTED_ARG_SHAPES = frozenset(
     {"identifier", "member_access", "indexed_access", "literal", "call", "expression"}
 )
 _DEFAULT_PREPROCESSOR_FILES: tuple[str, ...] = ()
-_DEFAULT_PREPROCESSOR_GLOBS: tuple[str, ...] = ("id.lua", "*_id.lua")
+_DEFAULT_PREPROCESSOR_GLOBS: tuple[str, ...] = ()
+_DEFAULT_SKIP_REVIEW_FILES: tuple[str, ...] = ()
+_DEFAULT_SKIP_REVIEW_GLOBS: tuple[str, ...] = ("id.lua", "*_id.lua")
 
 
 def initialize_repository_config(
     root: str | Path,
     *,
     force: bool = False,
-) -> tuple[Path, Path, Path, Path]:
+) -> tuple[Path, Path, Path, Path, Path]:
     """Write the default review config into a target repository root."""
 
     root_path = Path(root)
@@ -37,8 +48,15 @@ def initialize_repository_config(
     policy_source = template_root / "confidence_policy.json"
     contracts_source = template_root / "function_contracts.json"
     preprocessor_source = template_root / "preprocessor_files.json"
+    domain_source = template_root / "domain_knowledge.json"
 
-    for source_path in (sink_source, policy_source, contracts_source, preprocessor_source):
+    for source_path in (
+        sink_source,
+        policy_source,
+        contracts_source,
+        preprocessor_source,
+        domain_source,
+    ):
         if not source_path.is_file():
             raise ConfigError(f"Default config template not found: {source_path}")
 
@@ -47,6 +65,7 @@ def initialize_repository_config(
     policy_target = config_dir / "confidence_policy.json"
     contracts_target = config_dir / "function_contracts.json"
     preprocessor_target = config_dir / "preprocessor_files.json"
+    domain_target = config_dir / "domain_knowledge.json"
 
     config_dir.mkdir(parents=True, exist_ok=True)
     for source_path, target_path in (
@@ -54,11 +73,12 @@ def initialize_repository_config(
         (policy_source, policy_target),
         (contracts_source, contracts_target),
         (preprocessor_source, preprocessor_target),
+        (domain_source, domain_target),
     ):
         if target_path.exists() and not force:
             continue
         target_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
-    return sink_target, policy_target, contracts_target, preprocessor_target
+    return sink_target, policy_target, contracts_target, preprocessor_target, domain_target
 
 
 def load_sink_rules(path: str | Path) -> list[SinkRule]:
@@ -131,11 +151,40 @@ def load_preprocessor_config(path: str | Path) -> PreprocessorConfig:
 
     explicit_files = _optional_str_list(data, "preprocessor_files")
     globs = _optional_str_list(data, "preprocessor_globs")
+    skip_files = _optional_str_list(data, "skip_review_files")
+    skip_globs = _optional_str_list(data, "skip_review_globs")
 
     return PreprocessorConfig(
         preprocessor_files=tuple(dict.fromkeys(explicit_files)),
         preprocessor_globs=tuple(dict.fromkeys(globs)),
+        skip_review_files=tuple(dict.fromkeys(skip_files)),
+        skip_review_globs=tuple(dict.fromkeys(skip_globs)),
     )
+
+
+def load_domain_knowledge_config(path: str | Path) -> DomainKnowledgeConfig:
+    """Load optional domain-specific fast-pruning rules."""
+
+    file_path = Path(path)
+    if not file_path.is_file():
+        return DomainKnowledgeConfig()
+    data = _read_json(file_path)
+    if not isinstance(data, dict):
+        raise ConfigError("Domain knowledge config must be a JSON object")
+
+    rules_payload = data.get("rules", [])
+    if not isinstance(rules_payload, list):
+        raise ConfigError("Domain knowledge field 'rules' must be a JSON array")
+
+    rules: list[DomainKnowledgeRule] = []
+    seen_ids: set[str] = set()
+    for item in rules_payload:
+        rule = _parse_domain_knowledge_rule(item)
+        if rule.id in seen_ids:
+            raise ConfigError(f"Duplicate domain knowledge rule id: {rule.id}")
+        seen_ids.add(rule.id)
+        rules.append(rule)
+    return DomainKnowledgeConfig(rules=tuple(rules))
 
 
 def load_adjudication_policy(path: str | Path) -> AdjudicationPolicy:
@@ -180,6 +229,8 @@ def default_preprocessor_config() -> PreprocessorConfig:
     return PreprocessorConfig(
         preprocessor_files=_DEFAULT_PREPROCESSOR_FILES,
         preprocessor_globs=_DEFAULT_PREPROCESSOR_GLOBS,
+        skip_review_files=_DEFAULT_SKIP_REVIEW_FILES,
+        skip_review_globs=_DEFAULT_SKIP_REVIEW_GLOBS,
     )
 
 
@@ -208,6 +259,49 @@ def _parse_sink_rule(data: Any) -> SinkRule:
         failure_mode=failure_mode,
         default_severity=default_severity,
         safe_patterns=tuple(safe_patterns),
+    )
+
+
+def _parse_domain_knowledge_rule(data: Any) -> DomainKnowledgeRule:
+    if not isinstance(data, dict):
+        raise ConfigError("Each domain knowledge rule must be a JSON object")
+
+    try:
+        rule_id = _require_str(data, "id")
+        action = _require_str(data, "action")
+        symbol_regex = _require_str(data, "symbol_regex")
+    except KeyError as exc:
+        raise ConfigError(f"Missing required domain knowledge field: {exc.args[0]}") from exc
+
+    if action != "skip_candidate":
+        raise ConfigError("Domain knowledge field 'action' must be 'skip_candidate'")
+    try:
+        re.compile(symbol_regex)
+    except re.error as exc:
+        raise ConfigError(f"Invalid domain knowledge regex for {rule_id}: {exc}") from exc
+
+    applies_to_sinks = data.get("applies_to_sinks", [])
+    if (
+        not isinstance(applies_to_sinks, list)
+        or any(not isinstance(item, str) or not item for item in applies_to_sinks)
+    ):
+        raise ConfigError("Domain knowledge field 'applies_to_sinks' must be a string array")
+
+    assumed_non_nil = data.get("assumed_non_nil", True)
+    if not isinstance(assumed_non_nil, bool):
+        raise ConfigError("Domain knowledge field 'assumed_non_nil' must be a boolean")
+
+    assumed_kind = data.get("assumed_kind")
+    if assumed_kind is not None and (not isinstance(assumed_kind, str) or not assumed_kind):
+        raise ConfigError("Domain knowledge field 'assumed_kind' must be a non-empty string")
+
+    return DomainKnowledgeRule(
+        id=rule_id,
+        action=action,
+        symbol_regex=symbol_regex,
+        applies_to_sinks=tuple(dict.fromkeys(applies_to_sinks)),
+        assumed_non_nil=assumed_non_nil,
+        assumed_kind=assumed_kind,
     )
 
 

@@ -33,7 +33,7 @@ lua-nil-guard doctor
 lua-nil-guard init-config /path/to/target-repo
 ```
 
-5. By default, LuaNilGuard already treats `id.lua` and `*_id.lua` files as preprocessor dictionary candidates. If your repository contains giant compile-time macro dictionary files, review or extend `config/preprocessor_files.json`, then audit what the tool can ingest from them:
+5. By default, LuaNilGuard skips `id.lua` and `*_id.lua` from both review scanning and macro-cache parsing, so giant generated dictionaries do not impact response time. If you want to ingest compile-time facts from selected files, configure `config/preprocessor_files.json`, then audit/cache what the tool can ingest:
 
 ```sh
 lua-nil-guard macro-audit /path/to/target-repo
@@ -41,8 +41,8 @@ lua-nil-guard macro-build-cache /path/to/target-repo
 lua-nil-guard macro-cache-status /path/to/target-repo
 ```
 
-Those files are treated as preprocessor inputs only: they provide compile-time non-nil facts, but they are not scanned as ordinary business Lua review targets.
-LuaNilGuard also compiles and reuses a local macro cache for them so repeated runs do not need to reparse unchanged giant dictionary files.
+Configured preprocessor files are treated as preprocessor inputs only: they provide compile-time non-nil facts, but they are not scanned as ordinary business Lua review targets.
+LuaNilGuard compiles and reuses a local macro cache for those configured files so repeated runs do not need to reparse unchanged giant dictionary files.
 
 6. If the repository may contain legacy-encoded Lua files, audit and normalize them first:
 
@@ -78,10 +78,13 @@ lua-nil-guard run-resume /path/to/target-repo <run_id>
 `run-status` and `run-report` now include stage metrics and unknown-reason distribution, including:
 
 - candidate/source counters (`ast_exact`, `lexical_fallback`)
+- static analysis mode counters (`ast_primary`, `ast_fallback_to_legacy`, `legacy_only`)
 - static-layer counters (`safe_static`, `unknown_static`)
 - LLM-layer counters (`llm_enqueued`, `llm_processed`, `llm_second_hop`)
 - verify-layer counters (`safe_verified`, `risky_verified`)
 - `unknown_reason` distribution for `unknown_static` cases
+
+For full tuning and candidate-level observability queries, see [`docs/run-tuning.md`](docs/run-tuning.md).
 
 `run-export-json` now exports a structured object:
 
@@ -144,11 +147,10 @@ Out of the box, LuaNilGuard prioritizes Lua nil hazards that commonly lead to im
 - string concatenation with `..` (both operands are checked independently)
 - table iteration via `pairs(...)` and `ipairs(...)`
 - length operator usage with `#value`
-- member access on a possibly nil receiver (`value.name`, `value[key]`)
 - numeric ordering comparisons: `<`, `<=`, `>`, `>=` (`==` and `~=` are intentionally excluded)
 - numeric arithmetic: `+`, `-`, `*`, `/`, `%`, `^` (both operands are checked independently)
 
-These patterns are part of the default `sink_rules.json` template and are intended to be the first customer-visible value surface during trial use.
+These patterns are part of the default `sink_rules.json` template and are intended to be the first customer-visible value surface during trial use. `member_access.receiver` is intentionally not enabled by default; add it manually if your repository wants broad receiver nil checks.
 
 ## Recommended First Run
 
@@ -229,7 +231,7 @@ This report is most useful after you have already tried a few single-file runs. 
 - truly unresolved patterns that may need new bounded recognizers
 - helper functions that may need an explicit contract
 
-If your repository uses giant preprocessor-style macro dictionary files (for example `NAME = ""` or `Defaults.Name = 0` files that are consumed at build time), note that `id.lua` and `*_id.lua` are already treated as preprocessor files by default. Add any additional paths or globs to `config/preprocessor_files.json`, then run:
+If your repository uses giant preprocessor-style macro dictionary files (for example `NAME = ""` or `Defaults.Name = 0` files that are consumed at build time), configure the files you want to parse in `config/preprocessor_files.json`, then run:
 
 ```sh
 lua-nil-guard macro-audit /path/to/target-repo
@@ -274,10 +276,125 @@ Target repositories are expected to contain:
 - `config/confidence_policy.json`
 - `config/function_contracts.json`
 - `config/preprocessor_files.json`
+- `config/domain_knowledge.json`
 
-`init-config` writes the default versions of all four files into the target repository. `function_contracts.json` lets you declare high-confidence wrapper functions such as `normalize_name` that always return a non-nil value, helper guards such as `assert_profile(profile)` via `ensures_non_nil_args`, and normalizers that return a defaulted non-nil value from specific arguments via `returns_non_nil_from_args`. For multi-return helpers you can further split those argument requirements by consumed return slot with `returns_non_nil_from_args_by_return_slot`, so slot `1` and slot `2` do not have to share the same safety preconditions. You can also require that certain input arguments have already been guarded before trusting a specific return slot by using `requires_guarded_args_by_return_slot`, which lets a guard helper contract and a later normalizer contract work together in one proof chain. You can also restrict a contract to specific caller modules with `applies_in_modules`, to specific caller function scopes with `applies_in_function_scopes`, to scope kinds with `applies_to_scope_kinds` (`top_level`, `function_body`), to top-level phases with `applies_to_top_level_phases` (`init`, `post_definitions`), to specific sink rules or sink names with `applies_to_sinks`, to specific call positions with `applies_to_call_roles` (`assignment_origin`, `sink_expression`, `guard_call`), to specific return-value usage modes with `applies_to_usage_modes` (`single_assignment`, `multi_assignment`, `direct_sink`), to specific selected return slots with `applies_to_return_slots` (for example only return slot `1` in a multi-return helper), to a specific call arity with `applies_with_arg_count`, to exact literal arguments with `required_literal_args`, to argument-source shapes with `required_arg_shapes` (`identifier`, `member_access`, `indexed_access`, `literal`, `call`, `expression`), to argument root symbols with `required_arg_roots` (for example `req`, `ngx`, or `fallbacks`), to dotted access-path prefixes with `required_arg_prefixes` (for example `req.params` or `ngx.var`), and to exact normalized access chains with `required_arg_access_paths` (for example `req.params.user` or `req.params[1]`) when a helper is only trustworthy for one exact lookup path. Quoted literal table keys such as `req.params["user"]` normalize to the same `req.params.user` path, while dynamic indexes such as `req.params[token]` do not count as an exact match. This helps suppress false positives without relying on prompt-only inference.
+`init-config` writes the default versions of all five files into the target repository. `function_contracts.json` lets you declare high-confidence wrapper functions such as `normalize_name` that always return a non-nil value, helper guards such as `assert_profile(profile)` via `ensures_non_nil_args`, and normalizers that return a defaulted non-nil value from specific arguments via `returns_non_nil_from_args`. For multi-return helpers you can further split those argument requirements by consumed return slot with `returns_non_nil_from_args_by_return_slot`, so slot `1` and slot `2` do not have to share the same safety preconditions. You can also require that certain input arguments have already been guarded before trusting a specific return slot by using `requires_guarded_args_by_return_slot`, which lets a guard helper contract and a later normalizer contract work together in one proof chain. You can also restrict a contract to specific caller modules with `applies_in_modules`, to specific caller function scopes with `applies_in_function_scopes`, to scope kinds with `applies_to_scope_kinds` (`top_level`, `function_body`), to top-level phases with `applies_to_top_level_phases` (`init`, `post_definitions`), to specific sink rules or sink names with `applies_to_sinks`, to specific call positions with `applies_to_call_roles` (`assignment_origin`, `sink_expression`, `guard_call`), to specific return-value usage modes with `applies_to_usage_modes` (`single_assignment`, `multi_assignment`, `direct_sink`), to specific selected return slots with `applies_to_return_slots` (for example only return slot `1` in a multi-return helper), to a specific call arity with `applies_with_arg_count`, to exact literal arguments with `required_literal_args`, to argument-source shapes with `required_arg_shapes` (`identifier`, `member_access`, `indexed_access`, `literal`, `call`, `expression`), to argument root symbols with `required_arg_roots` (for example `req`, `ngx`, or `fallbacks`), to dotted access-path prefixes with `required_arg_prefixes` (for example `req.params` or `ngx.var`), and to exact normalized access chains with `required_arg_access_paths` (for example `req.params.user` or `req.params[1]`) when a helper is only trustworthy for one exact lookup path. Quoted literal table keys such as `req.params["user"]` normalize to the same `req.params.user` path, while dynamic indexes such as `req.params[token]` do not count as an exact match. This helps suppress false positives without relying on prompt-only inference.
 
-`preprocessor_files.json` is for giant compile-time macro dictionary files that are not ordinary business Lua. The default template already includes `id.lua` and `*_id.lua` as built-in globs. Files matched there are not scanned for ordinary review candidates. Instead, LuaNilGuard ingests bounded facts such as:
+`sink_rules.json` intentionally does not include `member_access.receiver` by default. Add it explicitly when your team wants broad receiver checks:
+
+```json
+{
+  "id": "member_access.receiver",
+  "kind": "receiver",
+  "qualified_name": "member_access",
+  "arg_index": 0,
+  "nil_sensitive": true,
+  "failure_mode": "runtime_error",
+  "default_severity": "high",
+  "safe_patterns": ["assert(x)", "if x then ... end"]
+}
+```
+
+`domain_knowledge.json` supports deterministic zero-AST fast pruning for known-safe symbol families. The default template includes rules for `_name_*` tables, `_cmd_*` tables, and all-uppercase underscore macros:
+
+```json
+{
+  "rules": [
+    {
+      "id": "system_name_table_prefix",
+      "action": "skip_candidate",
+      "symbol_regex": "^_name_[A-Z0-9_]+(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+      "applies_to_sinks": ["member_access.receiver", "pairs.arg1", "ipairs.arg1", "length.operand"]
+    },
+    {
+      "id": "uppercase_macro_non_nil",
+      "action": "skip_candidate",
+      "symbol_regex": "^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$",
+      "applies_to_sinks": []
+    }
+  ]
+}
+```
+
+Quick-start configuration flow for new repositories:
+
+1. Keep defaults from `lua-nil-guard init-config`.
+2. Only add `member_access.receiver` if your team wants receiver-wide checks.
+3. Add narrow domain rules for your naming conventions first, then expand.
+
+Example: `_id_.*` symbols are treated as stable numeric non-nil values:
+
+```json
+{
+  "id": "id_numeric_non_nil",
+  "action": "skip_candidate",
+  "symbol_regex": "^_id_[A-Z0-9_]+$",
+  "applies_to_sinks": [
+    "compare.lt.left",
+    "compare.lt.right",
+    "compare.lte.left",
+    "compare.lte.right",
+    "compare.gt.left",
+    "compare.gt.right",
+    "compare.gte.left",
+    "compare.gte.right",
+    "arithmetic.add.left",
+    "arithmetic.add.right",
+    "arithmetic.sub.left",
+    "arithmetic.sub.right",
+    "arithmetic.mul.left",
+    "arithmetic.mul.right",
+    "arithmetic.div.left",
+    "arithmetic.div.right"
+  ],
+  "assumed_non_nil": true,
+  "assumed_kind": "number"
+}
+```
+
+Example: global default table variables are always present:
+
+```json
+{
+  "id": "global_default_tables",
+  "action": "skip_candidate",
+  "symbol_regex": "^_g_[A-Z0-9_]+(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+  "applies_to_sinks": [
+    "member_access.receiver",
+    "pairs.arg1",
+    "ipairs.arg1",
+    "length.operand"
+  ],
+  "assumed_non_nil": true,
+  "assumed_kind": "table"
+}
+```
+
+Practical guardrails:
+
+- Start with exact prefixes (`^_name_`, `^_cmd_`, `^_id_`) instead of broad patterns.
+- Add sink scope (`applies_to_sinks`) before using catch-all scopes.
+- Validate with one file first (`report-file`), then expand to repository scan.
+
+`preprocessor_files.json` controls file classification for giant generated Lua:
+
+- `preprocessor_files` / `preprocessor_globs`: parse as macro dictionaries (compile-time facts only, no normal candidate scan)
+- `skip_review_files` / `skip_review_globs`: skip completely (no scan, no macro parsing, no cache work)
+
+Default template:
+
+```json
+{
+  "preprocessor_files": [],
+  "preprocessor_globs": [],
+  "skip_review_files": [],
+  "skip_review_globs": ["id.lua", "*_id.lua"]
+}
+```
+
+If you do want to parse selected `id.lua` style files as macro dictionaries, move those rules to `preprocessor_*` and remove them from `skip_review_*`.
+
+LuaNilGuard can ingest bounded facts such as:
 
 - `NAME = ""`
 - `COUNT = 0`

@@ -71,7 +71,7 @@ def fallback_adjudicator_skill_header() -> str:
             "- Absence of proof is not proof of bug.",
             "",
             "Hard rules:",
-            "- Use only the provided code and declared facts.",
+            "- Use only evidence from the target repository and declared facts, and cite `file:line` when possible.",
             "- Do not assume undocumented business guarantees.",
             "- Do not report risk without a concrete path explanation.",
             "- Do not report safety without explicit supporting evidence.",

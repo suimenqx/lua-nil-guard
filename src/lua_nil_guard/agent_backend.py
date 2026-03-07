@@ -259,8 +259,8 @@ class CliAgentBackend:
                 "- suggested_fix",
                 "- needs_human",
                 "",
-                "Do not execute shell commands, open files, or inspect the repository.",
-                "Use only the prompt payload as admissible evidence.",
+                "If your runtime supports repository access, prefer read-only evidence collection and cite concrete file:line evidence.",
+                "If no repository access is available, use only the prompt payload as admissible evidence.",
                 "",
                 "Output JSON only. Do not include markdown fences or extra text.",
             ]
@@ -611,8 +611,8 @@ class ClaudeCliBackend(CliAgentBackend):
                 "- counterarguments_considered",
                 "- suggested_fix",
                 "- needs_human",
-                "Do not execute shell commands, open files, or inspect the repository.",
-                "Use only the prompt payload as admissible evidence.",
+                "If your runtime supports repository access, prefer read-only evidence collection and cite concrete file:line evidence.",
+                "If no repository access is available, use only the prompt payload as admissible evidence.",
                 "Do not include markdown fences or explanatory prose.",
             ]
         )

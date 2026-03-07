@@ -124,28 +124,53 @@ def test_resolve_macro_facts_handles_direct_aliases_and_cycles() -> None:
     assert resolved["B"].provably_non_nil is False
 
 
-def test_split_preprocessor_files_respects_explicit_and_glob_rules(tmp_path: Path) -> None:
+def test_split_preprocessor_files_respects_explicit_glob_and_skip_rules(tmp_path: Path) -> None:
     src = tmp_path / "src"
     legacy = tmp_path / "legacy"
+    generated = tmp_path / "generated"
     src.mkdir()
     legacy.mkdir()
+    generated.mkdir()
     business = src / "demo.lua"
     macro = src / "macros.lua"
     globbed = legacy / "defaults.lua"
-    for file_path in (business, macro, globbed):
+    skipped = generated / "id.lua"
+    for file_path in (business, macro, globbed, skipped):
         file_path.write_text("return nil\n", encoding="utf-8")
 
-    review_files, preprocessor_files = split_preprocessor_files(
+    review_files, preprocessor_files, skipped_files = split_preprocessor_files(
         tmp_path,
-        (business, macro, globbed),
+        (business, macro, globbed, skipped),
         PreprocessorConfig(
             preprocessor_files=("src/macros.lua",),
             preprocessor_globs=("legacy/*.lua",),
+            skip_review_globs=("generated/*.lua",),
         ),
     )
 
     assert review_files == (business,)
     assert preprocessor_files == (macro, globbed)
+    assert skipped_files == (skipped,)
+
+
+def test_split_preprocessor_files_prioritizes_skip_over_preprocessor(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    conflicted = src / "id.lua"
+    conflicted.write_text("A = 1\n", encoding="utf-8")
+
+    review_files, preprocessor_files, skipped_files = split_preprocessor_files(
+        tmp_path,
+        (conflicted,),
+        PreprocessorConfig(
+            preprocessor_files=("src/id.lua",),
+            skip_review_files=("src/id.lua",),
+        ),
+    )
+
+    assert review_files == ()
+    assert preprocessor_files == ()
+    assert skipped_files == (conflicted,)
 
 
 def test_build_macro_index_and_audit_use_source_loader(tmp_path: Path) -> None:
@@ -167,6 +192,26 @@ def test_build_macro_index_and_audit_use_source_loader(tmp_path: Path) -> None:
     assert len(audit.facts) == 2
     assert len(index.facts) == 2
     assert any(fact.key == "GREETING" and fact.provably_non_nil for fact in index.facts)
+
+
+def test_build_macro_audit_supports_streaming_line_loader(tmp_path: Path) -> None:
+    macro = tmp_path / "macros.lua"
+    macro.write_text("GREETING = \"hi\"\nTABLE = {}\n", encoding="utf-8")
+
+    def load_lines(path: Path):
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                yield line
+
+    audit = build_macro_audit(
+        tmp_path,
+        (macro,),
+        line_loader=load_lines,
+    )
+
+    assert audit.files == (str(macro),)
+    assert len(audit.facts) == 2
+    assert len(audit.unresolved_lines) == 0
 
 
 def test_build_macro_cache_and_ensure_macro_index_reuse_fresh_cache(tmp_path: Path) -> None:

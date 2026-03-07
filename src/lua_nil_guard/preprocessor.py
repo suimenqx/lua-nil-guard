@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path, PurePosixPath
 import re
@@ -31,32 +32,43 @@ def split_preprocessor_files(
     root: str | Path,
     lua_files: tuple[Path, ...],
     config: PreprocessorConfig,
-) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+) -> tuple[tuple[Path, ...], tuple[Path, ...], tuple[Path, ...]]:
     """Split discovered Lua files into review targets and preprocessor inputs."""
 
     root_path = Path(root)
     explicit = {item.replace("\\", "/") for item in config.preprocessor_files}
     globs = tuple(item.replace("\\", "/") for item in config.preprocessor_globs)
+    skip_explicit = {item.replace("\\", "/") for item in config.skip_review_files}
+    skip_globs = tuple(item.replace("\\", "/") for item in config.skip_review_globs)
     review_files: list[Path] = []
     preprocessor_files: list[Path] = []
+    skipped_files: list[Path] = []
 
     for file_path in lua_files:
         relative = file_path.relative_to(root_path).as_posix()
-        if relative in explicit or any(PurePosixPath(relative).match(pattern) for pattern in globs):
+        if relative in skip_explicit or any(
+            PurePosixPath(relative).match(pattern) for pattern in skip_globs
+        ):
+            skipped_files.append(file_path)
+        elif relative in explicit or any(PurePosixPath(relative).match(pattern) for pattern in globs):
             preprocessor_files.append(file_path)
         else:
             review_files.append(file_path)
 
-    return tuple(review_files), tuple(preprocessor_files)
+    return tuple(review_files), tuple(preprocessor_files), tuple(skipped_files)
 
 
 def build_macro_audit(
     root: str | Path,
     preprocessor_files: tuple[Path, ...],
     *,
-    source_loader,
+    source_loader=None,
+    line_loader=None,
 ) -> MacroAuditResult:
     """Parse all configured preprocessor files into an operator-facing audit result."""
+
+    if source_loader is None and line_loader is None:
+        raise ValueError("build_macro_audit requires source_loader or line_loader")
 
     root_path = Path(root)
     facts: list[MacroFact] = []
@@ -64,12 +76,19 @@ def build_macro_audit(
     files: list[str] = []
     for file_path in preprocessor_files:
         files.append(str(file_path))
-        source = source_loader(file_path)
-        parsed_facts, unresolved_lines = parse_macro_file(
-            file_path,
-            source,
-            root=root_path,
-        )
+        if line_loader is not None:
+            parsed_facts, unresolved_lines = parse_macro_lines(
+                file_path,
+                line_loader(file_path),
+                root=root_path,
+            )
+        else:
+            source = source_loader(file_path)
+            parsed_facts, unresolved_lines = parse_macro_file(
+                file_path,
+                source,
+                root=root_path,
+            )
         facts.extend(parsed_facts)
         unresolved.extend(unresolved_lines)
 
@@ -85,11 +104,17 @@ def build_macro_index(
     root: str | Path,
     preprocessor_files: tuple[Path, ...],
     *,
-    source_loader,
+    source_loader=None,
+    line_loader=None,
 ) -> MacroIndex:
     """Build a resolved macro index from configured preprocessor files."""
 
-    audit = build_macro_audit(root, preprocessor_files, source_loader=source_loader)
+    audit = build_macro_audit(
+        root,
+        preprocessor_files,
+        source_loader=source_loader,
+        line_loader=line_loader,
+    )
     return _macro_index_from_audit(audit)
 
 
@@ -163,7 +188,8 @@ def build_macro_cache(
     root: str | Path,
     preprocessor_files: tuple[Path, ...],
     *,
-    source_loader,
+    source_loader=None,
+    line_loader=None,
 ) -> tuple[MacroIndex, MacroCacheStatus]:
     """Build and persist compiled macro cache for the configured files."""
 
@@ -183,7 +209,12 @@ def build_macro_cache(
             ),
         )
 
-    audit = build_macro_audit(root_path, preprocessor_files, source_loader=source_loader)
+    audit = build_macro_audit(
+        root_path,
+        preprocessor_files,
+        source_loader=source_loader,
+        line_loader=line_loader,
+    )
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(cache_path)
     try:
@@ -215,7 +246,8 @@ def ensure_macro_index(
     root: str | Path,
     preprocessor_files: tuple[Path, ...],
     *,
-    source_loader,
+    source_loader=None,
+    line_loader=None,
 ) -> tuple[MacroIndex, MacroCacheStatus]:
     """Load macro facts from cache when valid, otherwise rebuild them."""
 
@@ -231,7 +263,12 @@ def ensure_macro_index(
             ),
             status,
         )
-    return build_macro_cache(root, preprocessor_files, source_loader=source_loader)
+    return build_macro_cache(
+        root,
+        preprocessor_files,
+        source_loader=source_loader,
+        line_loader=line_loader,
+    )
 
 
 def load_macro_audit_from_cache(
@@ -273,6 +310,21 @@ def parse_macro_file(
 ) -> tuple[tuple[MacroFact, ...], tuple[MacroUnresolvedLine, ...]]:
     """Parse one preprocessor dictionary file using a bounded line parser."""
 
+    return parse_macro_lines(
+        file_path,
+        io.StringIO(source),
+        root=root,
+    )
+
+
+def parse_macro_lines(
+    file_path: str | Path,
+    lines,
+    *,
+    root: str | Path | None = None,
+) -> tuple[tuple[MacroFact, ...], tuple[MacroUnresolvedLine, ...]]:
+    """Parse preprocessor dictionary lines using a bounded line parser."""
+
     file_path = Path(file_path)
     root_path = Path(root) if root is not None else None
     display_path = (
@@ -284,7 +336,8 @@ def parse_macro_file(
     unresolved: list[MacroUnresolvedLine] = []
     inferred_parent_lines: dict[str, int] = {}
 
-    for line_no, raw_line in enumerate(source.splitlines(), start=1):
+    for line_no, raw_line in enumerate(lines, start=1):
+        raw_line = raw_line.rstrip("\r\n")
         line = _strip_comment(raw_line).strip()
         if not line:
             continue
@@ -625,7 +678,7 @@ def _write_cache(
     )
     connection.executemany(
         "INSERT INTO files(path, size, mtime_ns) VALUES(?, ?, ?)",
-        tuple(
+        (
             (
                 relative_path,
                 int(file_path.stat().st_size),
@@ -645,7 +698,7 @@ def _write_cache(
             resolved_kind, resolved_value, alias_target
         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        tuple(
+        (
             (
                 ordinal,
                 fact.key,
@@ -663,7 +716,7 @@ def _write_cache(
     )
     connection.executemany(
         "INSERT INTO unresolved(ordinal, file, line, content, reason) VALUES(?, ?, ?, ?, ?)",
-        tuple(
+        (
             (
                 ordinal,
                 item.file,

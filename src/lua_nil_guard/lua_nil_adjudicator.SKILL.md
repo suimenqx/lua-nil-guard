@@ -31,7 +31,7 @@ Judge only this question:
 
 ## Hard Rules
 
-- Use only the provided code and declared facts.
+- Use only evidence from the target repository and declared facts, and cite `file:line` when possible.
 - Do not assume undocumented business guarantees.
 - Do not report risk without a concrete path explanation.
 - Do not report safety without explicit supporting evidence.

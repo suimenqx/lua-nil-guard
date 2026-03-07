@@ -12,8 +12,8 @@ from typing import Callable
 
 from .adjudication import attach_autofix_patch
 from .agent_driver_models import AgentProviderSpec
-from .agent_backend import AdjudicationBackend, CliAgentBackend, HeuristicAdjudicationBackend
-from .collector import collect_candidates, top_level_phase_for_prefix
+from .agent_backend import AdjudicationBackend, HeuristicAdjudicationBackend
+from .collector import collect_candidates
 from .config_loader import (
     default_preprocessor_config,
     load_confidence_policy,
@@ -24,18 +24,10 @@ from .config_loader import (
 )
 from .knowledge import (
     KnowledgeBase,
-    contract_applies_in_function_scope,
-    contract_applies_in_module,
-    contract_applies_to_call,
-    contract_applies_to_scope_kind,
-    contract_applies_to_top_level_phase,
-    contract_applies_to_sink,
     derive_facts_from_contracts,
     derive_facts_from_summaries,
-    facts_for_subject,
 )
 from .models import (
-    AdjudicationRecord,
     AutofixPatch,
     BenchmarkCacheComparison,
     BenchmarkCaseResult,
@@ -67,7 +59,6 @@ from .repository import discover_lua_files, read_lua_source_lines, read_lua_sour
 from .summaries import (
     SummaryStore,
     detect_module_name,
-    detect_required_module_line,
     required_module_symbol_map,
     summarize_source,
 )
@@ -83,82 +74,19 @@ from .verification import verify_verdict
 
 
 _CALL_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*(?:[.:][A-Za-z_][A-Za-z0-9_]*)*)\s*\(")
-_CALL_EXPRESSION_RE = re.compile(
-    r"^\s*([A-Za-z_][A-Za-z0-9_]*(?:[.:][A-Za-z_][A-Za-z0-9_]*)*)\s*\((.*)\)\s*$"
-)
-_INLINE_CALL_RE = re.compile(
-    r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*(?:[.:][A-Za-z_][A-Za-z0-9_]*)*)\s*\("
-)
 _FUNCTION_NAME_RE = re.compile(
     r"^\s*(?:local\s+)?function\s+([A-Za-z_][A-Za-z0-9_.:]*)\s*\(",
 )
 _ANONYMOUS_FUNCTION_RE = re.compile(r"(?:=\s*|return\s+)function\b")
-_FUNCTION_BLOCK_RE = re.compile(
-    r"\b(?:local\s+)?function(?:\s+[A-Za-z_][A-Za-z0-9_.:]*|\s*)\s*\("
-)
-_CONTROL_FLOW_START_RE = re.compile(r"^\s*(if|for|while)\b")
-_LUA_KEYWORDS = frozenset(
-    {
-        "and",
-        "break",
-        "do",
-        "elseif",
-        "end",
-        "for",
-        "function",
-        "if",
-        "local",
-        "not",
-        "or",
-        "repeat",
-        "return",
-        "then",
-        "until",
-        "while",
-    }
-)
-_TRUNCATED_CONTEXT_MARKER = "  ... (truncated)"
 _DEFAULT_RUN_DB_NAME = "review_runs.sqlite3"
 _RUN_STORE_DIRNAME = ".lua_nil_guard"
 
 
-@dataclass(frozen=True, slots=True)
-class _RelatedEvidenceBudget:
-    max_depth: int
-    max_contexts: int
-    max_context_lines: int
-    max_summary_items: int
-
-
-_FIRST_HOP_RELATED_EVIDENCE_BUDGET = _RelatedEvidenceBudget(
-    max_depth=1,
-    max_contexts=4,
-    max_context_lines=48,
-    max_summary_items=8,
-)
-_SECOND_HOP_RELATED_EVIDENCE_BUDGET = _RelatedEvidenceBudget(
-    max_depth=2,
-    max_contexts=6,
-    max_context_lines=72,
-    max_summary_items=12,
-)
-
-
-@dataclass(frozen=True, slots=True)
-class _FunctionContextBlock:
-    qualified_name: str
-    file: str
-    line: int
-    evidence_score: int
-    rendered: str
-    callees: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _RelatedEvidenceSelection:
-    function_names: tuple[str, ...]
-    summary_texts: tuple[str, ...]
-    context_texts: tuple[str, ...]
+def _strip_lua_comment(line: str) -> str:
+    comment_index = line.find("--")
+    if comment_index == -1:
+        return line
+    return line[:comment_index]
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,7 +131,9 @@ class ReviewRunStatus:
     completed_at: str | None
 
 
-def _resolve_preprocessor_files(root_path: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+def _resolve_preprocessor_files(
+    root_path: Path,
+) -> tuple[tuple[Path, ...], tuple[Path, ...], tuple[Path, ...]]:
     all_lua_files = tuple(discover_lua_files(root_path))
     preprocessor_config_path = root_path / "config" / "preprocessor_files.json"
     preprocessor_config = (
@@ -246,7 +176,7 @@ def bootstrap_repository(root: str | Path) -> RepositorySnapshot:
         if domain_knowledge_path.is_file()
         else DomainKnowledgeConfig()
     )
-    review_lua_files, preprocessor_files = _resolve_preprocessor_files(root_path)
+    review_lua_files, preprocessor_files, _skipped_files = _resolve_preprocessor_files(root_path)
     macro_index, macro_cache_status = ensure_macro_index(
         root_path,
         preprocessor_files,
@@ -275,7 +205,7 @@ def macro_cache_status_for_repository(root: str | Path) -> MacroCacheStatus:
         raise FileNotFoundError(f"Repository root not found: {root_path}")
     if not root_path.is_dir():
         raise NotADirectoryError(f"Repository root is not a directory: {root_path}")
-    _review_files, preprocessor_files = _resolve_preprocessor_files(root_path)
+    _review_files, preprocessor_files, _skipped_files = _resolve_preprocessor_files(root_path)
     return inspect_macro_cache(root_path, preprocessor_files)
 
 
@@ -287,7 +217,7 @@ def build_repository_macro_cache(root: str | Path) -> MacroCacheStatus:
         raise FileNotFoundError(f"Repository root not found: {root_path}")
     if not root_path.is_dir():
         raise NotADirectoryError(f"Repository root is not a directory: {root_path}")
-    _review_files, preprocessor_files = _resolve_preprocessor_files(root_path)
+    _review_files, preprocessor_files, _skipped_files = _resolve_preprocessor_files(root_path)
     _macro_index, status = build_macro_cache(
         root_path,
         preprocessor_files,
@@ -1595,21 +1525,13 @@ def run_repository_review(
     """Run the current end-to-end local review pipeline across a repository."""
 
     assessments = review_repository(snapshot)
-    summaries = _collect_repository_summaries(snapshot)
-    summary_text_by_name = _build_summary_text_index(summaries)
-    function_context_by_name = _build_function_context_index(snapshot, summaries)
-    file_module_by_path = _build_file_module_index(snapshot)
-    facts = _load_knowledge_facts(snapshot, knowledge_path)
+    _ = knowledge_path
     adjudication_backend = backend or HeuristicAdjudicationBackend()
 
     return _run_review_from_assessments(
         snapshot,
         assessments,
         adjudication_backend=adjudication_backend,
-        summary_text_by_name=summary_text_by_name,
-        function_context_by_name=function_context_by_name,
-        file_module_by_path=file_module_by_path,
-        facts=facts,
         only_unknown_for_agent=only_unknown_for_agent,
     )
 
@@ -1651,11 +1573,7 @@ def run_repository_review_job(
         store.ensure_case_tasks(run_id=effective_run_id, assessments=assessments)
         existing_verdicts = store.load_completed_verdicts(run_id=effective_run_id)
 
-        summaries = _collect_repository_summaries(snapshot)
-        summary_text_by_name = _build_summary_text_index(summaries)
-        function_context_by_name = _build_function_context_index(snapshot, summaries)
-        file_module_by_path = _build_file_module_index(snapshot)
-        facts = _load_knowledge_facts(snapshot, knowledge_path)
+        _ = knowledge_path
 
         store.update_stage(run_id=effective_run_id, stage="QUEUE")
         store.update_stage(run_id=effective_run_id, stage="LLM")
@@ -1663,10 +1581,6 @@ def run_repository_review_job(
             snapshot,
             assessments,
             adjudication_backend=adjudication_backend,
-            summary_text_by_name=summary_text_by_name,
-            function_context_by_name=function_context_by_name,
-            file_module_by_path=file_module_by_path,
-            facts=facts,
             run_store=store,
             run_id=effective_run_id,
             only_unknown_for_agent=True,
@@ -1756,21 +1670,13 @@ def run_file_review(
     """Run the current end-to-end review pipeline for one Lua file with repository context."""
 
     assessments = review_repository_file(snapshot, file_path)
-    summaries = _collect_repository_summaries(snapshot)
-    summary_text_by_name = _build_summary_text_index(summaries)
-    function_context_by_name = _build_function_context_index(snapshot, summaries)
-    file_module_by_path = _build_file_module_index(snapshot)
-    facts = _load_knowledge_facts(snapshot, knowledge_path)
+    _ = knowledge_path
     adjudication_backend = backend or HeuristicAdjudicationBackend()
 
     return _run_review_from_assessments(
         snapshot,
         assessments,
         adjudication_backend=adjudication_backend,
-        summary_text_by_name=summary_text_by_name,
-        function_context_by_name=function_context_by_name,
-        file_module_by_path=file_module_by_path,
-        facts=facts,
         only_unknown_for_agent=only_unknown_for_agent,
     )
 
@@ -1795,27 +1701,12 @@ def benchmark_repository_review(
             "provable_safe_* or provable_uncertain_*"
         )
 
-    summaries = _collect_repository_summaries(snapshot)
-    summary_text_by_name = _build_summary_text_index(summaries)
-    function_context_by_name = _build_function_context_index(snapshot, summaries)
-    file_module_by_path = _build_file_module_index(snapshot)
-    facts = (
-        _load_knowledge_facts(snapshot, knowledge_path)
-        if knowledge_path is not None
-        else _merge_knowledge_facts(
-            derive_facts_from_summaries(summaries),
-            derive_facts_from_contracts(snapshot.function_contracts),
-        )
-    )
+    _ = knowledge_path
     adjudication_backend = backend or HeuristicAdjudicationBackend()
     verdicts = _run_review_from_assessments(
         snapshot,
         tuple(assessment for assessment, _ in labeled_assessments),
         adjudication_backend=adjudication_backend,
-        summary_text_by_name=summary_text_by_name,
-        function_context_by_name=function_context_by_name,
-        file_module_by_path=file_module_by_path,
-        facts=facts,
     )
     verdict_by_case_id = {verdict.case_id: verdict for verdict in verdicts}
 
@@ -1959,10 +1850,6 @@ def _run_review_from_assessments(
     assessments: tuple[CandidateAssessment, ...],
     *,
     adjudication_backend: AdjudicationBackend,
-    summary_text_by_name: dict[str, tuple[str, ...]],
-    function_context_by_name: dict[str, tuple[_FunctionContextBlock, ...]],
-    file_module_by_path: dict[str, str | None],
-    facts: tuple[object, ...],
     run_store: _ReviewRunStore | None = None,
     run_id: int | None = None,
     only_unknown_for_agent: bool = False,
@@ -1997,29 +1884,9 @@ def _run_review_from_assessments(
                     case_id=case_id,
                 )
             llm_attempts = 0
-            second_hop_used = False
-            related_evidence = _build_related_evidence(
-                assessment,
-                summary_text_by_name=summary_text_by_name,
-                function_context_by_name=function_context_by_name,
-                file_module_by_path=file_module_by_path,
-                budget=_FIRST_HOP_RELATED_EVIDENCE_BUDGET,
-            )
-            knowledge_facts = _knowledge_facts_for_assessment(
-                assessment,
-                related_evidence.function_names,
-                facts,
-                function_contracts=snapshot.function_contracts,
-                current_module=file_module_by_path.get(_normalize_path_key(assessment.candidate.file)),
-                source=source,
-            )
             packet = prepare_evidence_packet(
                 assessment,
                 source,
-                related_functions=related_evidence.function_names,
-                function_summaries=related_evidence.summary_texts,
-                knowledge_facts=knowledge_facts,
-                related_function_contexts=related_evidence.context_texts,
             )
             try:
                 if only_unknown_for_agent and assessment.static_analysis.state != "unknown_static":
@@ -2045,59 +1912,6 @@ def _run_review_from_assessments(
                             backend_model=backend_model,
                         )
                     final_verdict = verify_verdict(verdict, packet)
-                    if (
-                        assessment.static_analysis.state == "unknown_static"
-                        and _should_retry_with_expanded_evidence(
-                            adjudication_backend,
-                            adjudication,
-                            final_verdict,
-                        )
-                    ):
-                        expanded_related_evidence = _build_related_evidence(
-                            assessment,
-                            summary_text_by_name=summary_text_by_name,
-                            function_context_by_name=function_context_by_name,
-                            file_module_by_path=file_module_by_path,
-                            budget=_SECOND_HOP_RELATED_EVIDENCE_BUDGET,
-                        )
-                        if expanded_related_evidence != related_evidence:
-                            second_hop_used = True
-                            expanded_packet = prepare_evidence_packet(
-                                assessment,
-                                source,
-                                related_functions=expanded_related_evidence.function_names,
-                                function_summaries=expanded_related_evidence.summary_texts,
-                                knowledge_facts=_knowledge_facts_for_assessment(
-                                    assessment,
-                                    expanded_related_evidence.function_names,
-                                    facts,
-                                    function_contracts=snapshot.function_contracts,
-                                    current_module=file_module_by_path.get(
-                                        _normalize_path_key(assessment.candidate.file)
-                                    ),
-                                    source=source,
-                                ),
-                                related_function_contexts=expanded_related_evidence.context_texts,
-                            )
-                            expanded_adjudication = adjudication_backend.adjudicate(
-                                expanded_packet,
-                                sink_rule_by_id[assessment.candidate.sink_rule_id],
-                            )
-                            llm_attempts += 1
-                            expanded_verdict = attach_autofix_patch(
-                                expanded_adjudication.judge,
-                                expanded_packet,
-                                sink_rule_by_id[assessment.candidate.sink_rule_id],
-                            )
-                            if run_store is not None and run_id is not None:
-                                run_store.record_adjudication(
-                                    run_id=run_id,
-                                    case_id=case_id,
-                                    verdict=expanded_verdict,
-                                    backend_name=backend_name,
-                                    backend_model=backend_model,
-                                )
-                            final_verdict = verify_verdict(expanded_verdict, expanded_packet)
             except Exception as exc:
                 if run_store is not None and run_id is not None:
                     run_store.mark_case_failed(
@@ -2112,7 +1926,7 @@ def _run_review_from_assessments(
                     run_id=run_id,
                     verdict=final_verdict,
                     llm_attempts=llm_attempts,
-                    second_hop_used=second_hop_used,
+                    second_hop_used=False,
                 )
             verdict_cache[case_id] = final_verdict
             verdicts.append(final_verdict)
@@ -2230,20 +2044,13 @@ def draft_review_improvements(
     if not assessments:
         return ()
 
-    summaries = _collect_repository_summaries(snapshot)
-    summary_text_by_name = _build_summary_text_index(summaries)
-    function_context_by_name = _build_function_context_index(snapshot, summaries)
     file_module_by_path = _build_file_module_index(snapshot)
-    facts = _load_knowledge_facts(snapshot, knowledge_path)
+    _ = knowledge_path
     adjudication_backend = backend or HeuristicAdjudicationBackend()
     verdicts = _run_review_from_assessments(
         snapshot,
         assessments,
         adjudication_backend=adjudication_backend,
-        summary_text_by_name=summary_text_by_name,
-        function_context_by_name=function_context_by_name,
-        file_module_by_path=file_module_by_path,
-        facts=facts,
     )
     verdict_by_case_id = {verdict.case_id: verdict for verdict in verdicts}
     draft_contract_by_name = {
@@ -2424,11 +2231,7 @@ def export_adjudication_tasks(
     """Export agent-ready prompt tasks for all collected candidates."""
 
     sink_rule_by_id = {rule.id: rule for rule in snapshot.sink_rules}
-    summaries = _collect_repository_summaries(snapshot)
-    summary_text_by_name = _build_summary_text_index(summaries)
-    function_context_by_name = _build_function_context_index(snapshot, summaries)
-    file_module_by_path = _build_file_module_index(snapshot)
-    facts = _load_knowledge_facts(snapshot, knowledge_path)
+    _ = knowledge_path
     transparent_return_wrappers = _collect_snapshot_transparent_return_wrappers(snapshot)
     inline_guard_contracts = _collect_snapshot_inline_guard_contracts(snapshot)
     tasks: list[dict[str, object]] = []
@@ -2440,34 +2243,13 @@ def export_adjudication_tasks(
             source,
             snapshot.sink_rules,
             function_contracts=snapshot.function_contracts,
-            transparent_return_wrappers=transparent_return_wrappers,
-            inline_guard_contracts=inline_guard_contracts,
-            domain_knowledge=snapshot.domain_knowledge,
-        ):
-            related_evidence = _build_related_evidence(
-                assessment,
-                summary_text_by_name=summary_text_by_name,
-                function_context_by_name=function_context_by_name,
-                file_module_by_path=file_module_by_path,
-                budget=_FIRST_HOP_RELATED_EVIDENCE_BUDGET,
-            )
-            knowledge_facts = tuple(
-                _knowledge_facts_for_assessment(
-                    assessment,
-                    related_evidence.function_names,
-                    facts,
-                    function_contracts=snapshot.function_contracts,
-                    current_module=file_module_by_path.get(_normalize_path_key(assessment.candidate.file)),
-                    source=source,
-                )
-            )
+                transparent_return_wrappers=transparent_return_wrappers,
+                inline_guard_contracts=inline_guard_contracts,
+                domain_knowledge=snapshot.domain_knowledge,
+            ):
             packet = prepare_evidence_packet(
                 assessment,
                 source,
-                related_functions=related_evidence.function_names,
-                function_summaries=related_evidence.summary_texts,
-                knowledge_facts=knowledge_facts,
-                related_function_contexts=related_evidence.context_texts,
             )
             sink_rule = sink_rule_by_id[assessment.candidate.sink_rule_id]
             tasks.append(
@@ -2781,397 +2563,6 @@ def _apply_autofix_group(
     return applied, ()
 
 
-def _build_summary_text_index(summaries: tuple[object, ...]) -> dict[str, tuple[str, ...]]:
-    index: dict[str, list[str]] = {}
-    for summary in summaries:
-        text = (
-            f"{summary.qualified_name} params={summary.params} "
-            f"guards={list(summary.guards)} returns={list(summary.returns)}"
-        )
-        index.setdefault(summary.qualified_name, []).append(text)
-    return {key: tuple(value) for key, value in index.items()}
-
-
-def _build_function_context_index(
-    snapshot: RepositorySnapshot,
-    summaries: tuple[object, ...],
-) -> dict[str, tuple[_FunctionContextBlock, ...]]:
-    path_lookup = {str(path): path for path in snapshot.lua_files}
-    source_lookup: dict[str, str] = {}
-    index: dict[str, list[_FunctionContextBlock]] = {}
-    known_function_names = {
-        summary.qualified_name
-        for summary in summaries
-        if isinstance(getattr(summary, "qualified_name", None), str)
-    }
-
-    for summary in summaries:
-        path_key = str(summary.file)
-        file_path = path_lookup.get(path_key, Path(path_key))
-        if path_key not in source_lookup:
-            try:
-                source_lookup[path_key] = read_lua_source_text(file_path)
-            except OSError:
-                continue
-        snippet, callees = _extract_function_context_snippet(
-            source_lookup[path_key],
-            summary.line,
-            summary.module_name,
-            known_function_names,
-        )
-        if not snippet:
-            continue
-        rendered = "\n".join(
-            [
-                f"{summary.qualified_name} @ {summary.file}:{summary.line}",
-                snippet,
-            ]
-        )
-        index.setdefault(summary.qualified_name, []).append(
-            _FunctionContextBlock(
-                qualified_name=summary.qualified_name,
-                file=str(summary.file),
-                line=summary.line,
-                evidence_score=_summary_evidence_score(summary),
-                rendered=rendered,
-                callees=callees,
-            )
-        )
-
-    return {key: tuple(value) for key, value in index.items()}
-
-
-def _extract_function_context_snippet(
-    source: str,
-    start_line: int,
-    module_name: str | None,
-    known_function_names: set[str],
-) -> tuple[str, tuple[str, ...]]:
-    lines = source.splitlines()
-    start_index = max(0, start_line - 1)
-    if start_index >= len(lines):
-        return "", ()
-
-    snippet_lines = [lines[start_index]]
-    callee_names: list[str] = []
-    depth = 1
-    index = start_index + 1
-
-    while index < len(lines):
-        line = lines[index]
-        snippet_lines.append(line)
-        callee_names.extend(
-            _call_names_from_line(
-                line,
-                default_module=module_name,
-                known_function_names=known_function_names,
-            )
-        )
-        depth += _opened_block_count(line)
-        depth -= _closed_block_count(line)
-        if depth <= 0:
-            break
-        index += 1
-
-    while snippet_lines and not snippet_lines[-1].strip():
-        snippet_lines.pop()
-    return "\n".join(snippet_lines), tuple(dict.fromkeys(callee_names))
-
-
-def _summary_evidence_score(summary: object) -> int:
-    score = 0
-    guards = getattr(summary, "guards", ())
-    returns = getattr(summary, "returns", ())
-    if isinstance(guards, tuple) and guards:
-        score += 2
-    if isinstance(returns, tuple) and returns:
-        score += 1
-    return score
-
-
-def _build_related_evidence(
-    assessment: CandidateAssessment,
-    *,
-    summary_text_by_name: dict[str, tuple[str, ...]],
-    function_context_by_name: dict[str, tuple[_FunctionContextBlock, ...]],
-    file_module_by_path: dict[str, str | None],
-    budget: _RelatedEvidenceBudget = _FIRST_HOP_RELATED_EVIDENCE_BUDGET,
-) -> _RelatedEvidenceSelection:
-    current_file_key = _normalize_path_key(assessment.candidate.file)
-    known_function_names = frozenset(
-        set(summary_text_by_name) | set(function_context_by_name)
-    )
-    direct_related_functions = _related_functions_from_assessment(
-        assessment,
-        current_module=file_module_by_path.get(current_file_key),
-        known_function_names=known_function_names,
-    )
-    ordered_functions, depth_by_function = _expand_related_functions(
-        direct_related_functions,
-        function_context_by_name,
-        max_depth=budget.max_depth,
-    )
-    selected_contexts = _select_related_function_contexts(
-        ordered_functions,
-        depth_by_function=depth_by_function,
-        function_context_by_name=function_context_by_name,
-        current_file=assessment.candidate.file,
-        max_contexts=budget.max_contexts,
-        max_context_lines=budget.max_context_lines,
-    )
-
-    function_names: list[str] = list(direct_related_functions)
-    for qualified_name, _ in selected_contexts:
-        if qualified_name not in function_names:
-            function_names.append(qualified_name)
-    for qualified_name in ordered_functions:
-        if qualified_name in function_names:
-            continue
-        if summary_text_by_name.get(qualified_name):
-            function_names.append(qualified_name)
-
-    summary_texts = _select_function_summaries(
-        tuple(function_names),
-        summary_text_by_name=summary_text_by_name,
-        max_items=budget.max_summary_items,
-    )
-    context_texts = tuple(rendered for _, rendered in selected_contexts)
-
-    return _RelatedEvidenceSelection(
-        function_names=tuple(function_names),
-        summary_texts=summary_texts,
-        context_texts=context_texts,
-    )
-
-
-def _knowledge_facts_for_assessment(
-    assessment: CandidateAssessment,
-    related_functions: tuple[str, ...],
-    facts: tuple[object, ...],
-    *,
-    function_contracts: tuple[object, ...] = (),
-    current_module: str | None = None,
-    source: str | None = None,
-) -> tuple[object, ...]:
-    current_top_level_phase = _top_level_phase_for_assessment(assessment, source)
-    current_scope_kind = _scope_kind_for_function_scope(assessment.candidate.function_scope)
-    applicable_contracts = tuple(
-        contract
-        for contract in function_contracts
-        if contract_applies_in_module(contract, current_module)
-        and contract_applies_in_function_scope(
-            contract,
-            assessment.candidate.function_scope,
-        )
-        and contract_applies_to_top_level_phase(contract, current_top_level_phase)
-        and contract_applies_to_scope_kind(
-            contract,
-            current_scope_kind,
-        )
-        and contract_applies_to_sink(
-            contract,
-            current_sink_rule_id=assessment.candidate.sink_rule_id,
-            current_sink_name=assessment.candidate.sink_name,
-        )
-    )
-    fact_texts = list(
-        fact
-        for subject in related_functions + (assessment.candidate.function_scope,)
-        for fact in facts_for_subject(facts, subject)
-    )
-    call_contexts_by_function = _contract_calls_from_assessment(
-        assessment,
-        current_module=current_module,
-        known_function_names=frozenset(contract.qualified_name for contract in applicable_contracts),
-    )
-    scoped_contract_statements = [
-        fact.statement
-        for fact in derive_facts_from_contracts(
-            applicable_contracts,
-            current_module=current_module,
-            current_function_scope=assessment.candidate.function_scope,
-            current_top_level_phase=current_top_level_phase,
-            current_scope_kind=current_scope_kind,
-            current_sink_rule_id=assessment.candidate.sink_rule_id,
-            current_sink_name=assessment.candidate.sink_name,
-        )
-        if fact.subject in related_functions
-    ]
-    for contract in applicable_contracts:
-        if not contract.returns_non_nil:
-            continue
-        if contract.qualified_name not in related_functions:
-            continue
-        if not (
-            contract.applies_to_call_roles
-            or contract.applies_to_usage_modes
-            or contract.applies_to_return_slots
-            or contract.applies_with_arg_count
-            or contract.required_literal_args
-            or contract.required_arg_shapes
-            or contract.required_arg_roots
-            or contract.required_arg_prefixes
-            or contract.required_arg_access_paths
-        ):
-            continue
-        call_contexts = call_contexts_by_function.get(contract.qualified_name, ())
-        if not any(
-            contract_applies_to_call(
-                contract,
-                arg_count=len(args),
-                arg_values=args,
-                call_role=call_role,
-                usage_mode=usage_mode,
-                return_slot=return_slot,
-            )
-            for args, call_role, usage_mode, return_slot in call_contexts
-        ):
-            continue
-        scoped_contract_statements.append(
-            f"{contract.qualified_name} returns non-nil value"
-        )
-    for fact in scoped_contract_statements:
-        fact_texts.append(fact)
-    return tuple(dict.fromkeys(fact_texts))
-
-
-def _should_retry_with_expanded_evidence(
-    backend: AdjudicationBackend,
-    adjudication: AdjudicationRecord,
-    verdict: Verdict,
-) -> bool:
-    if verdict.status != "uncertain":
-        return False
-    if not _supports_expanded_evidence_retry(backend):
-        return False
-    return "expand_context" in {
-        adjudication.prosecutor.recommended_next_action,
-        adjudication.defender.recommended_next_action,
-    }
-
-
-def _supports_expanded_evidence_retry(backend: AdjudicationBackend) -> bool:
-    if isinstance(backend, CliAgentBackend):
-        explicit_setting = getattr(backend, "expanded_evidence_retry", None)
-        if isinstance(explicit_setting, bool):
-            return explicit_setting
-        max_attempts = getattr(backend, "max_attempts", 1)
-        return isinstance(max_attempts, int) and max_attempts == 1
-    return bool(getattr(backend, "supports_expanded_evidence_retry", False))
-
-
-def _select_function_summaries(
-    function_names: tuple[str, ...],
-    *,
-    summary_text_by_name: dict[str, tuple[str, ...]],
-    max_items: int,
-) -> tuple[str, ...]:
-    selected: list[str] = []
-    for function_name in function_names:
-        for summary_text in summary_text_by_name.get(function_name, ()):
-            if len(selected) >= max_items:
-                return tuple(selected)
-            selected.append(summary_text)
-    return tuple(selected)
-
-
-def _select_related_function_contexts(
-    ordered_functions: tuple[str, ...],
-    *,
-    depth_by_function: dict[str, int],
-    function_context_by_name: dict[str, tuple[_FunctionContextBlock, ...]],
-    current_file: str,
-    max_contexts: int,
-    max_context_lines: int,
-) -> tuple[tuple[str, str], ...]:
-    candidates: list[_FunctionContextBlock] = []
-    current_file_key = _normalize_path_key(current_file)
-    function_order = {name: index for index, name in enumerate(ordered_functions)}
-
-    for function_name in ordered_functions:
-        candidates.extend(function_context_by_name.get(function_name, ()))
-
-    candidates.sort(
-        key=lambda block: (
-            depth_by_function.get(block.qualified_name, max(function_order.values(), default=0) + 1),
-            0 if _normalize_path_key(block.file) == current_file_key else 1,
-            -block.evidence_score,
-            function_order.get(block.qualified_name, len(function_order)),
-            block.line,
-            block.file,
-        )
-    )
-
-    selected: list[tuple[str, str]] = []
-    seen_contexts: set[str] = set()
-    used_lines = 0
-
-    for block in candidates:
-        if len(selected) >= max_contexts:
-            break
-        if block.rendered in seen_contexts:
-            continue
-
-        remaining_lines = max_context_lines - used_lines
-        if remaining_lines <= 0:
-            break
-
-        rendered = block.rendered
-        block_line_count = len(rendered.splitlines())
-        if block_line_count > remaining_lines:
-            if remaining_lines < 3:
-                break
-            rendered = _truncate_context_text(rendered, remaining_lines)
-
-        selected.append((block.qualified_name, rendered))
-        seen_contexts.add(block.rendered)
-        used_lines += len(rendered.splitlines())
-
-    return tuple(selected)
-
-
-def _truncate_context_text(rendered: str, max_lines: int) -> str:
-    lines = rendered.splitlines()
-    if len(lines) <= max_lines:
-        return rendered
-    if max_lines <= 1:
-        return lines[0]
-    truncated = lines[: max_lines - 1]
-    truncated.append(_TRUNCATED_CONTEXT_MARKER)
-    return "\n".join(truncated)
-
-
-def _call_names_from_line(
-    line: str,
-    *,
-    default_module: str | None = None,
-    known_function_names: frozenset[str] | set[str] = frozenset(),
-) -> tuple[str, ...]:
-    code = _strip_lua_comment(line)
-    if not code.strip():
-        return ()
-    if detect_required_module_line(code) is not None:
-        return ()
-    if re.match(r"^\s*(?:local\s+)?function\b", code):
-        return ()
-    names = []
-    for match in _INLINE_CALL_RE.finditer(code):
-        raw_name = match.group(1)
-        short_name = raw_name.rsplit(".", 1)[-1].rsplit(":", 1)[-1]
-        if short_name in _LUA_KEYWORDS:
-            continue
-        if raw_name == "require":
-            continue
-        names.append(
-            _resolve_related_name(
-                raw_name,
-                default_module=default_module,
-                known_function_names=known_function_names,
-            )
-        )
-    return tuple(dict.fromkeys(names))
-
-
 def _opens_non_function_block(stripped_line: str) -> bool:
     return (
         (stripped_line.startswith("if ") and stripped_line.endswith(" then"))
@@ -3180,50 +2571,6 @@ def _opens_non_function_block(stripped_line: str) -> bool:
         or (stripped_line.startswith("while ") and stripped_line.endswith(" do"))
         or stripped_line == "do"
     )
-
-
-def _opened_block_count(line: str) -> int:
-    code = _strip_lua_comment(line).strip()
-    if not code:
-        return 0
-
-    count = 0
-    if _FUNCTION_BLOCK_RE.search(code):
-        count += len(_FUNCTION_BLOCK_RE.findall(code))
-
-    control_match = _CONTROL_FLOW_START_RE.match(code)
-    if control_match is not None:
-        keyword = control_match.group(1)
-        if keyword == "if" and re.search(r"\bthen\b", code):
-            count += 1
-        elif keyword in {"for", "while"} and re.search(r"\bdo\b", code):
-            count += 1
-    elif code == "do":
-        count += 1
-
-    if re.match(r"^\s*repeat\b", code):
-        count += 1
-
-    return count
-
-
-def _closed_block_count(line: str) -> int:
-    code = _strip_lua_comment(line)
-    if not code.strip():
-        return 0
-    return len(re.findall(r"\bend\b", code)) + len(re.findall(r"\buntil\b", code))
-
-
-def _strip_lua_comment(line: str) -> str:
-    return line.partition("--")[0]
-
-
-def _load_knowledge_facts(
-    snapshot: RepositorySnapshot,
-    knowledge_path: str | Path | None,
-) -> tuple[object, ...]:
-    path = Path(knowledge_path) if knowledge_path is not None else snapshot.root / "data" / "knowledge.json"
-    return KnowledgeBase(path).load()
 
 
 def _merge_knowledge_facts(*fact_groups: tuple[object, ...]) -> tuple[object, ...]:
@@ -3422,33 +2769,6 @@ def _apply_autofix_patch_to_lines(lines: list[str], patch: AutofixPatch) -> None
     lines[start_index:end_index] = replacement_lines
 
 
-def _expand_related_functions(
-    related_functions: tuple[str, ...],
-    function_context_by_name: dict[str, tuple[_FunctionContextBlock, ...]],
-    *,
-    max_depth: int,
-) -> tuple[tuple[str, ...], dict[str, int]]:
-    ordered: list[str] = []
-    depth_by_function: dict[str, int] = {}
-    queue = [(function_name, 0) for function_name in tuple(dict.fromkeys(related_functions))]
-
-    while queue:
-        function_name, depth = queue.pop(0)
-        if function_name in depth_by_function:
-            continue
-        depth_by_function[function_name] = depth
-        ordered.append(function_name)
-        if depth >= max_depth:
-            continue
-        for context in function_context_by_name.get(function_name, ()):
-            for callee in context.callees:
-                if callee in depth_by_function or callee not in function_context_by_name:
-                    continue
-                queue.append((callee, depth + 1))
-
-    return tuple(ordered), depth_by_function
-
-
 def _related_functions_from_assessment(
     assessment: CandidateAssessment,
     *,
@@ -3483,58 +2803,6 @@ def _call_name_from_expression(
     )
 
 
-def _contract_calls_from_assessment(
-    assessment: CandidateAssessment,
-    *,
-    current_module: str | None = None,
-    known_function_names: frozenset[str] | set[str] = frozenset(),
-) -> dict[str, tuple[tuple[tuple[str, ...], str, str | None, int | None], ...]]:
-    call_args: dict[str, list[tuple[tuple[str, ...], str, str | None, int | None]]] = {}
-    usage_modes = assessment.static_analysis.origin_usage_modes
-    return_slots = assessment.static_analysis.origin_return_slots
-    for index, origin in enumerate(assessment.static_analysis.origin_candidates):
-        parsed = _parse_call_expression(
-            origin,
-            default_module=current_module,
-            known_function_names=known_function_names,
-        )
-        if parsed is None:
-            continue
-        function_name, args = parsed
-        usage_mode = usage_modes[index] if index < len(usage_modes) else _usage_mode_for_origin(
-            assessment,
-            origin,
-        )
-        return_slot = (
-            return_slots[index]
-            if index < len(return_slots)
-            else _return_slot_for_origin(assessment, origin)
-        )
-        call_args.setdefault(function_name, []).append(
-            (args, _call_role_for_origin(assessment, origin), usage_mode, return_slot)
-        )
-    return {key: tuple(value) for key, value in call_args.items()}
-
-
-def _parse_call_expression(
-    expression: str,
-    *,
-    default_module: str | None = None,
-    known_function_names: frozenset[str] | set[str] = frozenset(),
-) -> tuple[str, tuple[str, ...]] | None:
-    match = _CALL_EXPRESSION_RE.match(_strip_lua_comment(expression).strip())
-    if match is None:
-        return None
-    return (
-        _resolve_related_name(
-            match.group(1),
-            default_module=default_module,
-            known_function_names=known_function_names,
-        ),
-        tuple(_split_top_level_values(match.group(2))),
-    )
-
-
 def _resolve_related_name(
     raw_name: str,
     *,
@@ -3551,80 +2819,6 @@ def _resolve_related_name(
     if normalized in known_function_names:
         return normalized
     return normalized
-
-
-def _split_top_level_values(values_text: str) -> list[str]:
-    values: list[str] = []
-    start = 0
-    depth = 0
-    quote: str | None = None
-    escaped = False
-
-    for index, char in enumerate(values_text):
-        if quote is not None:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == quote:
-                quote = None
-            continue
-
-        if char in {"'", '"'}:
-            quote = char
-            continue
-        if char in "([{":
-            depth += 1
-            continue
-        if char in ")]}":
-            depth = max(0, depth - 1)
-            continue
-        if char == "," and depth == 0:
-            values.append(values_text[start:index].strip())
-            start = index + 1
-
-    tail = values_text[start:].strip()
-    if tail:
-        values.append(tail)
-    return values
-
-
-def _strip_lua_comment(line: str) -> str:
-    return line.partition("--")[0]
-
-
-def _call_role_for_origin(assessment: CandidateAssessment, origin: str) -> str:
-    if origin == assessment.candidate.expression:
-        return "sink_expression"
-    return "assignment_origin"
-
-
-def _usage_mode_for_origin(assessment: CandidateAssessment, origin: str) -> str:
-    if origin == assessment.candidate.expression:
-        return "direct_sink"
-    return "single_assignment"
-
-
-def _return_slot_for_origin(assessment: CandidateAssessment, origin: str) -> int:
-    if origin == assessment.candidate.expression:
-        return 1
-    return 1
-
-
-def _scope_kind_for_function_scope(function_scope: str | None) -> str | None:
-    if function_scope is None:
-        return None
-    return "top_level" if function_scope == "main" else "function_body"
-
-
-def _top_level_phase_for_assessment(
-    assessment: CandidateAssessment,
-    source: str | None,
-) -> str | None:
-    if source is None or assessment.candidate.function_scope != "main":
-        return None
-    prefix = "\n".join(source.splitlines()[: max(0, assessment.candidate.line - 1)])
-    return top_level_phase_for_prefix(prefix)
 
 
 def _build_file_module_index(snapshot: RepositorySnapshot) -> dict[str, str | None]:
