@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from lua_nil_guard.agent_backend import HeuristicAdjudicationBackend
 from lua_nil_guard.service import bootstrap_repository, run_repository_review
 
 
@@ -66,7 +67,7 @@ def test_run_repository_review_produces_verified_risk_for_locally_proven_nil_sin
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status == "risky"
@@ -179,7 +180,7 @@ def test_run_repository_review_uses_preprocessor_macro_facts_without_scanning_ma
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert snapshot.preprocessor_files == (tmp_path / "src" / "macros.lua",)
     assert snapshot.lua_files == (tmp_path / "src" / "consumer.lua",)
@@ -235,7 +236,7 @@ def test_run_repository_review_uses_explicit_id_preprocessor_macro_facts_to_supp
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert snapshot.preprocessor_files == (tmp_path / "src" / "id.lua",)
     assert snapshot.lua_files == (tmp_path / "src" / "consumer.lua",)
@@ -302,7 +303,7 @@ def test_run_repository_review_infers_parent_table_from_dot_assignments_in_id_fi
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert snapshot.preprocessor_files == (tmp_path / "src" / "id.lua",)
     assert snapshot.lua_files == (tmp_path / "src" / "consumer.lua",)
@@ -384,7 +385,7 @@ def test_run_repository_review_marks_transitive_cross_file_nil_return_chain_as_r
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -448,7 +449,7 @@ def test_run_repository_review_uses_guard_contract_to_suppress_member_access_fal
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     profile_verdicts = [verdict for verdict in verdicts if verdict.case_id.endswith(":member_access.receiver")]
     assert any(verdict.status.startswith("risky") for verdict in profile_verdicts)
@@ -509,7 +510,7 @@ def test_run_repository_review_uses_return_normalizer_contract_to_suppress_false
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -573,7 +574,7 @@ def test_run_repository_review_skips_call_shaped_return_contracts_without_matchi
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status == "risky"
@@ -638,7 +639,7 @@ def test_run_repository_review_uses_literal_scoped_return_contract_when_call_mat
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -704,7 +705,7 @@ def test_run_repository_review_skips_literal_scoped_return_contract_when_call_di
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -754,7 +755,7 @@ def test_run_repository_review_uses_guarded_field_origin_to_suppress_false_posit
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -820,7 +821,7 @@ def test_run_repository_review_skips_shape_scoped_return_contract_when_call_diff
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -884,7 +885,7 @@ def test_run_repository_review_skips_root_scoped_return_contract_when_call_diffe
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -948,7 +949,7 @@ def test_run_repository_review_skips_prefix_scoped_return_contract_when_call_dif
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -1012,7 +1013,7 @@ def test_run_repository_review_skips_access_path_scoped_return_contract_when_cal
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status == "risky"
@@ -1076,7 +1077,7 @@ def test_run_repository_review_skips_second_return_slot_when_only_first_is_safe(
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status == "risky"
@@ -1143,7 +1144,7 @@ def test_run_repository_review_uses_return_slot_specific_arg_requirements(
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -1210,7 +1211,7 @@ def test_run_repository_review_skips_return_slot_when_slot_specific_args_do_not_
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -1289,7 +1290,7 @@ def test_run_repository_review_combines_guard_contract_with_return_normalizer(
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -1359,7 +1360,7 @@ def test_run_repository_review_requires_guard_for_return_normalizer_combo(
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -1468,7 +1469,7 @@ def test_run_repository_review_proves_two_hop_return_normalizer_chain(
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -1595,7 +1596,7 @@ def test_run_repository_review_limits_return_normalizer_chain_depth(
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status == "risky"
@@ -1684,7 +1685,7 @@ def test_run_repository_review_proves_transparent_wrapper_chain(
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -1772,7 +1773,7 @@ def test_run_repository_review_uses_cross_file_transparent_wrappers(
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -1833,7 +1834,7 @@ def test_run_repository_review_uses_cross_file_defaulting_wrappers_without_contr
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -1894,7 +1895,7 @@ def test_run_repository_review_uses_cross_file_fallback_arg_defaulting_wrappers(
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -1988,7 +1989,7 @@ def test_run_repository_review_limits_transparent_wrapper_chain_depth(
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -2052,7 +2053,7 @@ def test_run_repository_review_skips_sink_expression_contracts_when_role_differs
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status == "risky"
@@ -2116,7 +2117,7 @@ def test_run_repository_review_skips_single_assignment_contracts_for_multi_assig
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -2173,7 +2174,7 @@ def test_run_repository_review_marks_binary_operand_hazards_as_risky(tmp_path: P
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 3
     assert all(verdict.status.startswith("risky") for verdict in verdicts)
@@ -2218,7 +2219,7 @@ def test_run_repository_review_suppresses_defaulted_binary_operands(tmp_path: Pa
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 2
     assert all(verdict.status.startswith("risky") for verdict in verdicts)
@@ -2262,7 +2263,7 @@ def test_run_repository_review_supports_extended_string_api_sinks(tmp_path: Path
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 2
     assert all(verdict.status.startswith("risky") for verdict in verdicts)
@@ -2328,7 +2329,7 @@ def test_run_repository_review_marks_module_style_cross_file_binary_and_direct_c
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 2
     assert all(verdict.status.startswith("risky") for verdict in verdicts)
@@ -2393,7 +2394,7 @@ def test_run_repository_review_marks_module_style_numeric_binary_risks(
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 2
     assert all(verdict.status.startswith("risky") for verdict in verdicts)
@@ -2427,7 +2428,7 @@ def test_run_repository_review_marks_concat_right_hazard_as_risky(tmp_path: Path
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 1
     assert verdicts[0].status.startswith("risky")
@@ -2484,7 +2485,7 @@ def test_run_repository_review_marks_remaining_ordered_comparisons_as_risky(tmp_
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 3
     assert all(verdict.status.startswith("risky") for verdict in verdicts)
@@ -2548,7 +2549,7 @@ def test_run_repository_review_ignores_equality_comparisons(tmp_path: Path) -> N
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert verdicts == ()
 
@@ -2628,7 +2629,7 @@ def test_run_repository_review_marks_remaining_arithmetic_hazards_as_risky(tmp_p
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 5
     assert all(verdict.status.startswith("risky") for verdict in verdicts)
@@ -2683,7 +2684,7 @@ def test_run_repository_review_supports_remaining_extended_string_api_sinks(tmp_
     )
 
     snapshot = bootstrap_repository(tmp_path)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
 
     assert len(verdicts) == 3
     assert all(verdict.status.startswith("risky") for verdict in verdicts)

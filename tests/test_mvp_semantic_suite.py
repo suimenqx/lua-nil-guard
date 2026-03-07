@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import shutil
 
+from lua_nil_guard.agent_backend import HeuristicAdjudicationBackend
 from lua_nil_guard.reporting import render_json_report
 from lua_nil_guard.service import (
     bootstrap_repository,
@@ -44,7 +45,7 @@ def test_semantic_suite_reports_only_provable_risks_after_knowledge_refresh(tmp_
     snapshot = bootstrap_repository(runtime_root)
 
     facts = refresh_knowledge_base(snapshot)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
     payload = json.loads(render_json_report(verdicts, snapshot.confidence_policy))
     case_ids = {item["case_id"] for item in payload}
 

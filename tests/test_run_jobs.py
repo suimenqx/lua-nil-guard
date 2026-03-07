@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from lua_nil_guard.agent_backend import HeuristicAdjudicationBackend
 from lua_nil_guard.models import AdjudicationRecord, RoleOpinion, Verdict
 from lua_nil_guard.service import (
     bootstrap_repository,
@@ -170,8 +171,8 @@ def test_repository_review_run_status_defaults_to_latest_run(tmp_path: Path) -> 
     snapshot = bootstrap_repository(tmp_path)
     run_db = tmp_path / "runs.sqlite3"
 
-    first_status, _ = run_repository_review_job(snapshot, run_db_path=run_db)
-    second_status, _ = run_repository_review_job(snapshot, run_db_path=run_db)
+    first_status, _ = run_repository_review_job(snapshot, backend=HeuristicAdjudicationBackend(), run_db_path=run_db)
+    second_status, _ = run_repository_review_job(snapshot, backend=HeuristicAdjudicationBackend(), run_db_path=run_db)
 
     latest = repository_review_run_status(tmp_path, run_db_path=run_db)
     assert latest.run_id == second_status.run_id

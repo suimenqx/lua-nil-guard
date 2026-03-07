@@ -80,7 +80,7 @@ lua-nil-guard run-resume /path/to/target-repo <run_id>
 `run-status` 与 `run-report` 现在会输出阶段指标和 `unknown_reason` 分布，包含：
 
 - 候选来源计数（`ast_exact`、`lexical_fallback`）
-- 静态分析模式计数（`ast_lite`，以及 legacy 兼容模式）
+- 静态分析模式计数（`ast_lite`、`domain_pruned`）
 - 静态层计数（`safe_static`、`unknown_static`）
 - 生命周期计数（`pruned_cases`、`llm_enqueued`、`llm_processed`、`llm_resolved`）
 - 比率指标（`prune_rate`、`submission_rate`、`llm_resolution_rate`）
@@ -263,6 +263,8 @@ lua-nil-guard macro-cache-status /path/to/target-repo
 - `claude`
 - `codex`
 - `heuristic`（仅调试/测试）
+
+service 层 API（`run_repository_review`、`run_file_review`、`run_repository_review_job`、`benchmark_repository_review`、`draft_review_improvements`）在未显式传入 `backend` 时也统一默认使用 `codex`。
 
 示例：
 

@@ -78,7 +78,7 @@ lua-nil-guard run-resume /path/to/target-repo <run_id>
 `run-status` and `run-report` now include stage metrics and unknown-reason distribution, including:
 
 - candidate/source counters (`ast_exact`, `lexical_fallback`)
-- static analysis mode counters (`ast_lite`, plus legacy compatibility modes)
+- static analysis mode counters (`ast_lite`, `domain_pruned`)
 - static-layer counters (`safe_static`, `unknown_static`)
 - lifecycle counters (`pruned_cases`, `llm_enqueued`, `llm_processed`, `llm_resolved`)
 - rate metrics (`prune_rate`, `submission_rate`, `llm_resolution_rate`)
@@ -261,6 +261,8 @@ The default backend is `codex` (LLM). You can also choose another supported CLI 
 - `claude`
 - `codex`
 - `heuristic` (debug/test only)
+
+The service-layer APIs (`run_repository_review`, `run_file_review`, `run_repository_review_job`, `benchmark_repository_review`, and `draft_review_improvements`) now follow the same default and use `codex` when `backend` is not provided.
 
 Examples:
 

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import shutil
 
+from lua_nil_guard.agent_backend import HeuristicAdjudicationBackend
 from lua_nil_guard.reporting import render_json_report
 from lua_nil_guard.service import (
     bootstrap_repository,
@@ -19,7 +20,7 @@ def test_demo_project_mvp_reports_only_the_real_risk_after_knowledge_refresh(tmp
     snapshot = bootstrap_repository(runtime_root)
 
     facts = refresh_knowledge_base(snapshot)
-    verdicts = run_repository_review(snapshot)
+    verdicts = run_repository_review(snapshot, backend=HeuristicAdjudicationBackend())
     payload = json.loads(render_json_report(verdicts, snapshot.confidence_policy))
 
     assert len(facts) == 1
