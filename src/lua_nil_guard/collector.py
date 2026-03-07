@@ -1,14 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 from pathlib import Path
 
-from .models import CandidateCase, SinkRule
-from .parser_backend import (
-    ParserBackendUnavailableError,
-    SourceAstIndex,
-    build_source_ast_index,
-)
+from .models import CandidateCase, DomainKnowledgeConfig, DomainKnowledgeRule, SinkRule
 
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -27,6 +23,14 @@ _LEXICAL_LENGTH_RE = re.compile(
     r"#\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
 )
 _LEXICAL_SIMPLE_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*|[-+]?(?:0[xX][0-9A-Fa-f]+|\d+(?:\.\d*)?|\.\d+)")
+_LEXICAL_BINARY_TOKEN_RE = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_.:]*\([^()]*\)"
+    r"|[A-Za-z_][A-Za-z0-9_.]*"
+    r"|[-+]?(?:0[xX][0-9A-Fa-f]+|\d+(?:\.\d*)?|\.\d+)"
+    r"|'(?:\\.|[^'])*'"
+    r'|"(?:\\.|[^"])*"'
+)
+_ROOT_SYMBOL_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)")
 _BINARY_OPERATOR_BY_NAME = {
     "concat": "..",
     "compare.lt": "<",
@@ -42,39 +46,41 @@ _BINARY_OPERATOR_BY_NAME = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class _CompiledDomainSkipRule:
+    id: str
+    pattern: re.Pattern[str]
+    applies_to_sinks: tuple[str, ...]
+
+
 def collect_candidates(
     file_path: str | Path,
     source: str,
     sink_rules: tuple[SinkRule, ...],
+    *,
+    domain_knowledge: DomainKnowledgeConfig | None = None,
 ) -> tuple[CandidateCase, ...]:
     """Collect nil-sensitive call sites using deterministic lightweight parsing."""
 
+    if not sink_rules:
+        return ()
+
+    domain_skip_rules = _compile_domain_skip_rules(domain_knowledge)
     path_text = str(file_path)
     candidates: list[CandidateCase] = []
     seen_keys: set[tuple[int, int, str, int]] = set()
     source_lines = source.splitlines()
     line_offsets = _line_start_offsets(source_lines)
-    ast_index = _load_ast_index(source)
-    use_lexical_fallback = ast_index is None or ast_index.has_error
-    ast_call_sites_by_name: dict[tuple[str, int], tuple[tuple[str, int, int, int], ...]] = {}
-    if ast_index is not None:
-        ast_call_sites_by_name = _group_call_sites(ast_index)
 
     for sink_rule in sink_rules:
+        candidate_source = "lexical_fallback"
         if sink_rule.kind == "function_arg":
-            if not use_lexical_fallback and ast_index is not None:
-                argument_events = ast_call_sites_by_name.get(
-                    (sink_rule.qualified_name, sink_rule.arg_index),
-                    (),
-                )
-            else:
-                argument_events = _collect_function_arg_events_lexical(
-                    source_lines,
-                    line_offsets,
-                    sink_rule.qualified_name,
-                    sink_rule.arg_index,
-                )
-            candidate_source = "lexical_fallback" if use_lexical_fallback else "ast_exact"
+            argument_events = _collect_function_arg_events_lexical(
+                source_lines,
+                line_offsets,
+                sink_rule.qualified_name,
+                sink_rule.arg_index,
+            )
             for expression, line, column, offset in argument_events:
                 _append_candidate(
                     candidates,
@@ -87,6 +93,7 @@ def collect_candidates(
                     source=source,
                     offset=offset,
                     candidate_source=candidate_source,
+                    domain_skip_rules=domain_skip_rules,
                 )
             continue
 
@@ -97,20 +104,12 @@ def collect_candidates(
                 operator = _binary_operator_for_sink(sink_rule.qualified_name)
                 if operator is None:
                     continue
-                if not use_lexical_fallback and ast_index is not None:
-                    operand_events = _collect_binary_operand_events_ast(
-                        ast_index,
-                        operator=operator,
-                        arg_index=sink_rule.arg_index,
-                    )
-                else:
-                    operand_events = _collect_binary_operand_events_lexical(
-                        source_lines,
-                        line_offsets,
-                        operator=operator,
-                        arg_index=sink_rule.arg_index,
-                    )
-                candidate_source = "lexical_fallback" if use_lexical_fallback else "ast_exact"
+                operand_events = _collect_binary_operand_events_lexical(
+                    source_lines,
+                    line_offsets,
+                    operator=operator,
+                    arg_index=sink_rule.arg_index,
+                )
                 for expression, line, column, operand_offset in operand_events:
                     _append_candidate(
                         candidates,
@@ -124,19 +123,13 @@ def collect_candidates(
                         offset=operand_offset,
                         sink_name_override=sink_rule.id,
                         candidate_source=candidate_source,
+                        domain_skip_rules=domain_skip_rules,
                     )
                 continue
             if sink_rule.kind != "unary_operand":
                 continue
 
-            if not use_lexical_fallback and ast_index is not None:
-                operand_events = tuple(
-                    (operand.operand, operand.line, operand.column, operand.offset)
-                    for operand in ast_index.length_operands
-                )
-            else:
-                operand_events = _collect_length_operand_events_lexical(source_lines, line_offsets)
-            candidate_source = "lexical_fallback" if use_lexical_fallback else "ast_exact"
+            operand_events = _collect_length_operand_events_lexical(source_lines, line_offsets)
             for expression, line, column, offset in operand_events:
                 _append_candidate(
                     candidates,
@@ -149,17 +142,11 @@ def collect_candidates(
                     source=source,
                     offset=offset,
                     candidate_source=candidate_source,
+                    domain_skip_rules=domain_skip_rules,
                 )
             continue
 
-        if not use_lexical_fallback and ast_index is not None:
-            receiver_events = tuple(
-                (access.receiver, access.line, access.column, access.offset)
-                for access in ast_index.receiver_accesses
-            )
-        else:
-            receiver_events = _collect_receiver_events_lexical(source_lines, line_offsets)
-        candidate_source = "lexical_fallback" if use_lexical_fallback else "ast_exact"
+        receiver_events = _collect_receiver_events_lexical(source_lines, line_offsets)
         for expression, line, column, offset in receiver_events:
             if _is_module_package_seeall_receiver(expression, line, source_lines):
                 continue
@@ -174,6 +161,7 @@ def collect_candidates(
                 source=source,
                 offset=offset,
                 candidate_source=candidate_source,
+                domain_skip_rules=domain_skip_rules,
             )
 
     candidates.sort(key=lambda item: (item.line, item.column, item.sink_rule_id))
@@ -314,9 +302,16 @@ def _append_candidate(
     offset: int,
     sink_name_override: str | None = None,
     candidate_source: str,
+    domain_skip_rules: tuple[_CompiledDomainSkipRule, ...],
 ) -> None:
     expression = expression.strip()
     if not expression or _is_obviously_non_nil_literal(expression):
+        return
+    if _is_domain_skipped_expression(
+        expression,
+        sink_rule=sink_rule,
+        domain_skip_rules=domain_skip_rules,
+    ):
         return
     dedupe_key = (line, column, sink_rule.id, sink_rule.arg_index)
     if dedupe_key in seen_keys:
@@ -343,27 +338,66 @@ def _append_candidate(
     seen_keys.add(dedupe_key)
 
 
-def _load_ast_index(source: str) -> SourceAstIndex | None:
-    try:
-        return build_source_ast_index(source)
-    except ParserBackendUnavailableError:
+def _compile_domain_skip_rules(
+    domain_knowledge: DomainKnowledgeConfig | None,
+) -> tuple[_CompiledDomainSkipRule, ...]:
+    if domain_knowledge is None:
+        return ()
+    compiled: list[_CompiledDomainSkipRule] = []
+    for rule in domain_knowledge.rules:
+        compiled_rule = _compile_domain_skip_rule(rule)
+        if compiled_rule is not None:
+            compiled.append(compiled_rule)
+    return tuple(compiled)
+
+
+def _compile_domain_skip_rule(rule: DomainKnowledgeRule) -> _CompiledDomainSkipRule | None:
+    if rule.action != "skip_candidate":
         return None
+    if not rule.assumed_non_nil:
+        return None
+    return _CompiledDomainSkipRule(
+        id=rule.id,
+        pattern=re.compile(rule.symbol_regex),
+        applies_to_sinks=rule.applies_to_sinks,
+    )
 
 
-def _group_call_sites(
-    ast_index: SourceAstIndex,
-) -> dict[tuple[str, int], tuple[tuple[str, int, int, int], ...]]:
-    grouped: dict[tuple[str, int], list[tuple[str, int, int, int]]] = {}
-    for call_site in ast_index.call_sites:
-        for arg_index, arg in enumerate(call_site.args, start=1):
-            grouped.setdefault(
-                (call_site.callee, arg_index),
-                [],
-            ).append((arg.strip(), call_site.line, call_site.column, call_site.offset))
-    return {
-        key: tuple(sorted(values, key=lambda item: (item[1], item[2])))
-        for key, values in grouped.items()
-    }
+def _is_domain_skipped_expression(
+    expression: str,
+    *,
+    sink_rule: SinkRule,
+    domain_skip_rules: tuple[_CompiledDomainSkipRule, ...],
+) -> bool:
+    if not domain_skip_rules:
+        return False
+
+    sink_identifiers = {sink_rule.id, sink_rule.qualified_name}
+    for rule in domain_skip_rules:
+        if rule.applies_to_sinks and not sink_identifiers.intersection(rule.applies_to_sinks):
+            continue
+        for token in _domain_match_tokens(expression):
+            if rule.pattern.fullmatch(token):
+                return True
+    return False
+
+
+def _domain_match_tokens(expression: str) -> tuple[str, ...]:
+    stripped = expression.strip()
+    tokens: list[str] = []
+    if stripped:
+        tokens.append(stripped)
+    root = _root_symbol(stripped)
+    if root is not None and root not in tokens:
+        tokens.append(root)
+    return tuple(tokens)
+
+
+def _root_symbol(expression: str) -> str | None:
+    match = _ROOT_SYMBOL_RE.match(expression)
+    if match is None:
+        return None
+    return match.group(1)
 
 
 def _collect_function_arg_events_lexical(
@@ -380,23 +414,24 @@ def _collect_function_arg_events_lexical(
     events: list[tuple[str, int, int, int]] = []
     for idx, raw_line in enumerate(source_lines, start=1):
         code = _strip_lua_comment(raw_line)
-        if target not in code:
+        masked_code = _mask_lua_strings(code)
+        if target not in masked_code:
             continue
         search_from = 0
         while True:
-            call_start = code.find(target, search_from)
+            call_start = masked_code.find(target, search_from)
             if call_start < 0:
                 break
             call_end = call_start + len(target)
-            before_ok = call_start == 0 or not _is_identifier_char(code[call_start - 1])
-            after_ok = call_end >= len(code) or not _is_identifier_char(code[call_end])
+            before_ok = call_start == 0 or not _is_identifier_char(masked_code[call_start - 1])
+            after_ok = call_end >= len(masked_code) or not _is_identifier_char(masked_code[call_end])
             if not before_ok or not after_ok:
                 search_from = call_end
                 continue
             open_paren = call_end
-            while open_paren < len(code) and code[open_paren].isspace():
+            while open_paren < len(masked_code) and masked_code[open_paren].isspace():
                 open_paren += 1
-            if open_paren >= len(code) or code[open_paren] != "(":
+            if open_paren >= len(masked_code) or masked_code[open_paren] != "(":
                 search_from = call_end
                 continue
             raw_args_text, parsed_to = _extract_parenthesized_content(code, open_paren)
@@ -420,23 +455,6 @@ def _collect_function_arg_events_lexical(
     return tuple(events)
 
 
-def _collect_binary_operand_events_ast(
-    ast_index: SourceAstIndex,
-    *,
-    operator: str,
-    arg_index: int,
-) -> tuple[tuple[str, int, int, int], ...]:
-    events: list[tuple[str, int, int, int]] = []
-    for operand in ast_index.binary_operands:
-        if operand.operator != operator:
-            continue
-        if arg_index == 1:
-            events.append((operand.left, operand.left_line, operand.left_column, operand.left_offset))
-        else:
-            events.append((operand.right, operand.right_line, operand.right_column, operand.right_offset))
-    return tuple(events)
-
-
 def _collect_binary_operand_events_lexical(
     source_lines: list[str],
     line_offsets: tuple[int, ...],
@@ -444,18 +462,22 @@ def _collect_binary_operand_events_lexical(
     operator: str,
     arg_index: int,
 ) -> tuple[tuple[str, int, int, int], ...]:
-    escaped_operator = re.escape(operator)
-    pattern = re.compile(
-        rf"(?<![A-Za-z0-9_])(?P<left>{_LEXICAL_SIMPLE_TOKEN_RE.pattern})\s*{escaped_operator}\s*(?P<right>{_LEXICAL_SIMPLE_TOKEN_RE.pattern})"
-    )
     events: list[tuple[str, int, int, int]] = []
-    target_key = "left" if arg_index == 1 else "right"
     for idx, raw_line in enumerate(source_lines, start=1):
         code = _strip_lua_comment(raw_line)
-        for match in pattern.finditer(code):
-            expression = match.group(target_key).strip()
-            column = match.start(target_key) + 1
-            offset = line_offsets[idx - 1] + match.start(target_key)
+        masked_code = _mask_lua_strings(code)
+        for operator_index in _operator_positions(masked_code, operator):
+            if arg_index == 1:
+                token = _extract_left_binary_token(code, operator_index)
+            else:
+                token = _extract_right_binary_token(
+                    code,
+                    operator_index + len(operator),
+                )
+            if token is None:
+                continue
+            expression, column = token
+            offset = line_offsets[idx - 1] + (column - 1)
             events.append((expression, idx, column, offset))
     return tuple(events)
 
@@ -467,7 +489,8 @@ def _collect_length_operand_events_lexical(
     events: list[tuple[str, int, int, int]] = []
     for idx, raw_line in enumerate(source_lines, start=1):
         code = _strip_lua_comment(raw_line)
-        for match in _LEXICAL_LENGTH_RE.finditer(code):
+        masked_code = _mask_lua_strings(code)
+        for match in _LEXICAL_LENGTH_RE.finditer(masked_code):
             expression = match.group(1).strip()
             column = match.start(1) + 1
             offset = line_offsets[idx - 1] + match.start(1)
@@ -482,17 +505,152 @@ def _collect_receiver_events_lexical(
     events: list[tuple[str, int, int, int]] = []
     for idx, raw_line in enumerate(source_lines, start=1):
         code = _strip_lua_comment(raw_line)
-        for match in _LEXICAL_RECEIVER_ACCESS_RE.finditer(code):
+        masked_code = _mask_lua_strings(code)
+        for match in _LEXICAL_RECEIVER_ACCESS_RE.finditer(masked_code):
             receiver = match.group(1).strip()
-            end_index = match.end()
-            while end_index < len(code) and code[end_index].isspace():
-                end_index += 1
-            if end_index < len(code) and code[end_index] in {"(", ":"}:
+            delimiter = masked_code[match.end() - 1]
+            if delimiter == "." and _is_dot_index_call_callee(masked_code, match.end()):
+                continue
+            if delimiter == "[" and _is_bracket_index_call_callee(masked_code, match.end()):
                 continue
             column = match.start(1) + 1
             offset = line_offsets[idx - 1] + match.start(1)
             events.append((receiver, idx, column, offset))
     return tuple(events)
+
+
+def _mask_lua_strings(code: str) -> str:
+    chars = list(code)
+    quote: str | None = None
+    escape = False
+    for index, char in enumerate(chars):
+        if quote is None:
+            if char in {"'", '"'}:
+                quote = char
+                chars[index] = " "
+            continue
+        chars[index] = " "
+        if escape:
+            escape = False
+            continue
+        if char == "\\":
+            escape = True
+            continue
+        if char == quote:
+            quote = None
+    return "".join(chars)
+
+
+def _operator_positions(code: str, operator: str) -> tuple[int, ...]:
+    positions: list[int] = []
+    search_from = 0
+    while True:
+        index = code.find(operator, search_from)
+        if index < 0:
+            break
+        if _is_valid_operator_occurrence(code, index, operator):
+            positions.append(index)
+        search_from = index + 1
+    return tuple(positions)
+
+
+def _is_valid_operator_occurrence(code: str, index: int, operator: str) -> bool:
+    if operator == "<" and index + 1 < len(code) and code[index + 1] == "=":
+        return False
+    if operator == ">" and index + 1 < len(code) and code[index + 1] == "=":
+        return False
+    if operator == "..":
+        prev_char = code[index - 1] if index > 0 else ""
+        next_char = code[index + 2] if index + 2 < len(code) else ""
+        if prev_char == "." or next_char == ".":
+            return False
+    return True
+
+
+def _extract_left_binary_token(
+    code: str,
+    operator_index: int,
+) -> tuple[str, int] | None:
+    prefix_code = code[:operator_index]
+    match = re.search(
+        rf"(?P<token>{_LEXICAL_BINARY_TOKEN_RE.pattern})\s*$",
+        prefix_code,
+    )
+    if match is None:
+        return None
+    token_start = match.start("token")
+    token_end = match.end("token")
+    token_text = prefix_code[token_start:token_end].strip()
+    if not token_text:
+        return None
+    return token_text, token_start + 1
+
+
+def _extract_right_binary_token(
+    code: str,
+    start_index: int,
+) -> tuple[str, int] | None:
+    suffix_code = code[start_index:]
+    match = re.match(
+        rf"\s*(?P<token>{_LEXICAL_BINARY_TOKEN_RE.pattern})",
+        suffix_code,
+    )
+    if match is None:
+        return None
+    token_start = start_index + match.start("token")
+    token_end = start_index + match.end("token")
+    token_text = code[token_start:token_end].strip()
+    if not token_text:
+        return None
+    return token_text, token_start + 1
+
+
+def _is_dot_index_call_callee(masked_code: str, cursor: int) -> bool:
+    while cursor < len(masked_code) and masked_code[cursor].isspace():
+        cursor += 1
+    name_start = cursor
+    while cursor < len(masked_code) and _is_identifier_char(masked_code[cursor]):
+        cursor += 1
+    if cursor == name_start:
+        return False
+    while cursor < len(masked_code) and masked_code[cursor].isspace():
+        cursor += 1
+    return cursor < len(masked_code) and masked_code[cursor] in {"(", ":"}
+
+
+def _is_bracket_index_call_callee(masked_code: str, cursor: int) -> bool:
+    depth = 1
+    quote: str | None = None
+    escape = False
+    while cursor < len(masked_code):
+        char = masked_code[cursor]
+        if quote is not None:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == quote:
+                quote = None
+            cursor += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            cursor += 1
+            continue
+        if char == "[":
+            depth += 1
+            cursor += 1
+            continue
+        if char == "]":
+            depth -= 1
+            cursor += 1
+            if depth == 0:
+                break
+            continue
+        cursor += 1
+    while cursor < len(masked_code) and masked_code[cursor].isspace():
+        cursor += 1
+    return cursor < len(masked_code) and masked_code[cursor] in {"(", ":"}
 
 
 def _line_start_offsets(lines: list[str]) -> tuple[int, ...]:

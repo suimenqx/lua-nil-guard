@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 import difflib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 import re
@@ -17,6 +17,7 @@ from .collector import collect_candidates, top_level_phase_for_prefix
 from .config_loader import (
     default_preprocessor_config,
     load_confidence_policy,
+    load_domain_knowledge_config,
     load_function_contracts,
     load_preprocessor_config,
     load_sink_rules,
@@ -40,6 +41,7 @@ from .models import (
     BenchmarkCaseResult,
     BenchmarkSummary,
     CandidateAssessment,
+    DomainKnowledgeConfig,
     EvidencePacket,
     FunctionContract,
     ImprovementAnalytics,
@@ -61,7 +63,7 @@ from .preprocessor import (
     split_preprocessor_files,
 )
 from .prompting import build_adjudication_prompt
-from .repository import discover_lua_files, read_lua_source_text
+from .repository import discover_lua_files, read_lua_source_lines, read_lua_source_text
 from .summaries import (
     SummaryStore,
     detect_module_name,
@@ -71,6 +73,7 @@ from .summaries import (
 )
 from .static_analysis import (
     analyze_candidate,
+    build_static_analysis_context,
     collect_coalescing_return_helpers,
     collect_maybe_nil_return_helpers,
     collect_inline_guard_contracts,
@@ -86,6 +89,10 @@ _CALL_EXPRESSION_RE = re.compile(
 _INLINE_CALL_RE = re.compile(
     r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*(?:[.:][A-Za-z_][A-Za-z0-9_]*)*)\s*\("
 )
+_FUNCTION_NAME_RE = re.compile(
+    r"^\s*(?:local\s+)?function\s+([A-Za-z_][A-Za-z0-9_.:]*)\s*\(",
+)
+_ANONYMOUS_FUNCTION_RE = re.compile(r"(?:=\s*|return\s+)function\b")
 _FUNCTION_BLOCK_RE = re.compile(
     r"\b(?:local\s+)?function(?:\s+[A-Za-z_][A-Za-z0-9_.:]*|\s*)\s*\("
 )
@@ -155,6 +162,17 @@ class _RelatedEvidenceSelection:
 
 
 @dataclass(frozen=True, slots=True)
+class _FunctionScopedAnalysisInput:
+    source: str
+    source_lines: tuple[str, ...]
+    start_line: int
+    end_line: int
+    ast_control_flow_context: object | None
+    transparent_return_wrappers: dict[str, tuple[tuple[int, int], ...]]
+    inline_guard_contracts: tuple[object, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ReviewRunStatus:
     run_id: int
     repository_root: str
@@ -217,11 +235,18 @@ def bootstrap_repository(root: str | Path) -> RepositorySnapshot:
         if contracts_path.is_file()
         else ()
     )
+    domain_knowledge_path = root_path / "config" / "domain_knowledge.json"
+    domain_knowledge = (
+        load_domain_knowledge_config(domain_knowledge_path)
+        if domain_knowledge_path.is_file()
+        else DomainKnowledgeConfig()
+    )
     review_lua_files, preprocessor_files = _resolve_preprocessor_files(root_path)
     macro_index, macro_cache_status = ensure_macro_index(
         root_path,
         preprocessor_files,
         source_loader=read_lua_source_text,
+        line_loader=read_lua_source_lines,
     )
 
     return RepositorySnapshot(
@@ -233,6 +258,7 @@ def bootstrap_repository(root: str | Path) -> RepositorySnapshot:
         macro_index=macro_index,
         macro_cache_status=macro_cache_status,
         function_contracts=function_contracts,
+        domain_knowledge=domain_knowledge,
     )
 
 
@@ -261,6 +287,7 @@ def build_repository_macro_cache(root: str | Path) -> MacroCacheStatus:
         root_path,
         preprocessor_files,
         source_loader=read_lua_source_text,
+        line_loader=read_lua_source_lines,
     )
     return status
 
@@ -1192,24 +1219,34 @@ def review_source(
     coalescing_return_helpers: dict[str, tuple[tuple[int, int, int], ...]] | None = None,
     inline_guard_contracts: tuple[object, ...] | None = None,
     macro_index=None,
+    domain_knowledge: DomainKnowledgeConfig | None = None,
 ) -> tuple[CandidateAssessment, ...]:
     """Collect candidates from one source file and attach local static analysis."""
 
-    effective_transparent_return_wrappers = (
+    candidates = collect_candidates(
+        file_path,
+        source,
+        sink_rules,
+        domain_knowledge=domain_knowledge,
+    )
+    if not candidates:
+        return ()
+
+    base_transparent_return_wrappers = (
         dict(transparent_return_wrappers)
         if transparent_return_wrappers is not None
         else {}
     )
-    effective_transparent_return_wrappers.update(
+    base_transparent_return_wrappers.update(
         collect_transparent_return_wrappers((source,), allow_local=True)
     )
-    effective_inline_guard_contracts = (
+    base_inline_guard_contracts = (
         tuple(inline_guard_contracts)
         if inline_guard_contracts is not None
         else ()
     )
-    effective_inline_guard_contracts = (
-        effective_inline_guard_contracts
+    base_inline_guard_contracts = (
+        base_inline_guard_contracts
         + collect_inline_guard_contracts((source,), allow_local=True)
     )
     effective_maybe_nil_return_helpers = (
@@ -1229,18 +1266,60 @@ def review_source(
         collect_coalescing_return_helpers(summarize_source(file_path, source))
     )
     effective_required_module_symbol_map = required_module_symbol_map(source)
+    source_lines = tuple(source.splitlines())
+    module_name = detect_module_name(source)
+    spans_by_scope = _collect_named_function_spans(
+        source_lines,
+        module_name=module_name,
+    )
+    scoped_analysis_cache: dict[tuple[int, int], _FunctionScopedAnalysisInput] = {}
     assessments: list[CandidateAssessment] = []
-    for candidate in collect_candidates(file_path, source, sink_rules):
-        static_analysis = analyze_candidate(
-            source,
+    for candidate in candidates:
+        span = _resolve_candidate_function_span(
             candidate,
+            spans_by_scope=spans_by_scope,
+            total_lines=len(source_lines),
+        )
+        scoped_input = scoped_analysis_cache.get(span)
+        if scoped_input is None:
+            span_start, span_end = span
+            scoped_lines = source_lines[span_start - 1 : span_end]
+            scoped_source = "\n".join(scoped_lines)
+            scoped_input = _FunctionScopedAnalysisInput(
+                source=scoped_source,
+                source_lines=tuple(scoped_lines),
+                start_line=span_start,
+                end_line=span_end,
+                ast_control_flow_context=build_static_analysis_context(scoped_source),
+                transparent_return_wrappers={},
+                inline_guard_contracts=(),
+            )
+            scoped_analysis_cache[span] = scoped_input
+
+        scoped_candidate = candidate
+        if scoped_input.start_line > 1 or scoped_input.end_line < len(source_lines):
+            scoped_candidate = replace(
+                candidate,
+                line=(candidate.line - scoped_input.start_line + 1),
+            )
+
+        scoped_transparent_return_wrappers = dict(base_transparent_return_wrappers)
+        scoped_transparent_return_wrappers.update(scoped_input.transparent_return_wrappers)
+        scoped_inline_guard_contracts = (
+            base_inline_guard_contracts + scoped_input.inline_guard_contracts
+        )
+        static_analysis = analyze_candidate(
+            scoped_input.source,
+            scoped_candidate,
             function_contracts=tuple(function_contracts),
-            transparent_return_wrappers=effective_transparent_return_wrappers,
+            transparent_return_wrappers=scoped_transparent_return_wrappers,
             maybe_nil_return_helpers=effective_maybe_nil_return_helpers,
             coalescing_return_helpers=effective_coalescing_return_helpers,
-            inline_guard_contracts=effective_inline_guard_contracts,
+            inline_guard_contracts=scoped_inline_guard_contracts,
             macro_index=macro_index,
             required_module_symbol_map=effective_required_module_symbol_map,
+            ast_control_flow_context=scoped_input.ast_control_flow_context,
+            source_lines=scoped_input.source_lines,
         )
         assessments.append(
             CandidateAssessment(
@@ -1249,6 +1328,92 @@ def review_source(
             )
         )
     return tuple(assessments)
+
+
+def _collect_named_function_spans(
+    source_lines: tuple[str, ...],
+    *,
+    module_name: str | None,
+) -> dict[str, tuple[tuple[int, int], ...]]:
+    """Collect lexical named-function line spans for function-scoped AST analysis."""
+
+    stack: list[tuple[str, str | None, int]] = []
+    spans: dict[str, list[tuple[int, int]]] = {}
+
+    for line_number, raw_line in enumerate(source_lines, start=1):
+        code = _strip_lua_comment(raw_line)
+        stripped = code.strip()
+        if not stripped:
+            continue
+
+        function_match = _FUNCTION_NAME_RE.match(code)
+        if function_match is not None:
+            qualified_name = _qualify_scoped_function_name(
+                function_match.group(1),
+                module_name=module_name,
+            )
+            stack.append(("function", qualified_name, line_number))
+            continue
+
+        if _ANONYMOUS_FUNCTION_RE.search(stripped):
+            stack.append(("anon_function", None, line_number))
+            continue
+        if stripped == "repeat":
+            stack.append(("repeat", None, line_number))
+            continue
+        if _opens_non_function_block(stripped):
+            stack.append(("block", None, line_number))
+            continue
+        if stripped == "end":
+            if not stack:
+                continue
+            kind, qualified_name, start_line = stack.pop()
+            if kind == "function" and qualified_name is not None:
+                spans.setdefault(qualified_name, []).append((start_line, line_number))
+            continue
+        if stripped.startswith("until "):
+            if stack and stack[-1][0] == "repeat":
+                stack.pop()
+
+    return {
+        key: tuple(sorted(value, key=lambda item: (item[0], item[1])))
+        for key, value in spans.items()
+    }
+
+
+def _qualify_scoped_function_name(
+    raw_name: str,
+    *,
+    module_name: str | None,
+) -> str:
+    normalized = raw_name.strip().replace(":", ".")
+    if "." in normalized:
+        return normalized
+    if module_name:
+        return f"{module_name}.{normalized}"
+    return normalized
+
+
+def _resolve_candidate_function_span(
+    candidate,
+    *,
+    spans_by_scope: dict[str, tuple[tuple[int, int], ...]],
+    total_lines: int,
+) -> tuple[int, int]:
+    """Resolve the smallest lexical function span that contains a candidate line."""
+
+    scope_spans = spans_by_scope.get(candidate.function_scope, ())
+    matching = tuple(
+        span
+        for span in scope_spans
+        if span[0] <= candidate.line <= span[1]
+    )
+    if not matching:
+        return (1, max(1, total_lines))
+    return min(
+        matching,
+        key=lambda span: ((span[1] - span[0]), -span[0]),
+    )
 
 
 def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment, ...]:
@@ -1272,6 +1437,7 @@ def review_repository(snapshot: RepositorySnapshot) -> tuple[CandidateAssessment
                 coalescing_return_helpers=coalescing_return_helpers,
                 inline_guard_contracts=inline_guard_contracts,
                 macro_index=snapshot.macro_index,
+                domain_knowledge=snapshot.domain_knowledge,
             )
         )
     return tuple(assessments)
@@ -1299,6 +1465,7 @@ def review_repository_file(
         coalescing_return_helpers=coalescing_return_helpers,
         inline_guard_contracts=inline_guard_contracts,
         macro_index=snapshot.macro_index,
+        domain_knowledge=snapshot.domain_knowledge,
     )
 
 
@@ -1322,6 +1489,7 @@ def macro_audit_repository(snapshot: RepositorySnapshot) -> MacroAuditResult:
         snapshot.root,
         snapshot.preprocessor_files,
         source_loader=read_lua_source_text,
+        line_loader=read_lua_source_lines,
     )
 
 
@@ -2219,6 +2387,7 @@ def export_adjudication_tasks(
             function_contracts=snapshot.function_contracts,
             transparent_return_wrappers=transparent_return_wrappers,
             inline_guard_contracts=inline_guard_contracts,
+            domain_knowledge=snapshot.domain_knowledge,
         ):
             related_evidence = _build_related_evidence(
                 assessment,
@@ -2946,6 +3115,16 @@ def _call_names_from_line(
             )
         )
     return tuple(dict.fromkeys(names))
+
+
+def _opens_non_function_block(stripped_line: str) -> bool:
+    return (
+        (stripped_line.startswith("if ") and stripped_line.endswith(" then"))
+        or (stripped_line.startswith("elseif ") and stripped_line.endswith(" then"))
+        or (stripped_line.startswith("for ") and stripped_line.endswith(" do"))
+        or (stripped_line.startswith("while ") and stripped_line.endswith(" do"))
+        or stripped_line == "do"
+    )
 
 
 def _opened_block_count(line: str) -> int:

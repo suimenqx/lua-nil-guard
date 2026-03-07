@@ -6,9 +6,16 @@ import shutil
 
 import pytest
 
+import lua_nil_guard.service as service_module
 from lua_nil_guard.agent_backend import BackendError, CliAgentBackend, CodexCliBackend
 from lua_nil_guard.models import AdjudicationRecord, AutofixPatch, RoleOpinion, Verdict
-from lua_nil_guard.models import FunctionContract, ImprovementProposal
+from lua_nil_guard.models import (
+    DomainKnowledgeConfig,
+    DomainKnowledgeRule,
+    FunctionContract,
+    ImprovementProposal,
+    SinkRule,
+)
 from lua_nil_guard.service import (
     apply_autofix_manifest,
     benchmark_cache_compare,
@@ -20,6 +27,7 @@ from lua_nil_guard.service import (
     export_autofix_patches,
     export_autofix_unified_diff,
     find_repository_root_for_file,
+    review_source,
     run_file_review,
     summarize_improvement_proposals,
 )
@@ -176,6 +184,131 @@ def test_bootstrap_repository_loads_config_and_discovers_sources(tmp_path: Path)
     assert len(snapshot.sink_rules) == 1
     assert snapshot.confidence_policy.default_report_min_confidence == "high"
     assert snapshot.lua_files == (src_dir / "demo.lua",)
+
+
+def test_bootstrap_repository_loads_domain_knowledge_rules(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    src_dir = tmp_path / "src"
+    config_dir.mkdir()
+    src_dir.mkdir()
+    (config_dir / "sink_rules.json").write_text("[]", encoding="utf-8")
+    (config_dir / "confidence_policy.json").write_text(
+        json.dumps(
+            {
+                "levels": ["low", "medium", "high"],
+                "default_report_min_confidence": "high",
+                "default_include_medium_in_audit": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (config_dir / "domain_knowledge.json").write_text(
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "id": "system_name_table_prefix",
+                        "action": "skip_candidate",
+                        "symbol_regex": "^_name_[A-Z0-9_]+(?:\\\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+                        "applies_to_sinks": ["member_access.receiver"],
+                        "assumed_non_nil": True,
+                        "assumed_kind": "table",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (src_dir / "demo.lua").write_text("return _name_TOYS.car\n", encoding="utf-8")
+
+    snapshot = bootstrap_repository(tmp_path)
+
+    assert len(snapshot.domain_knowledge.rules) == 1
+    assert snapshot.domain_knowledge.rules[0].id == "system_name_table_prefix"
+
+
+def test_review_source_domain_fast_prune_skips_static_ast_build(monkeypatch) -> None:
+    sink_rules = (
+        SinkRule(
+            id="member_access.receiver",
+            kind="receiver",
+            qualified_name="member_access",
+            arg_index=0,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("assert(x)",),
+        ),
+    )
+    domain_knowledge = DomainKnowledgeConfig(
+        rules=(
+            DomainKnowledgeRule(
+                id="system_name_table_prefix",
+                action="skip_candidate",
+                symbol_regex=r"^_name_[A-Z0-9_]+(?:\.[A-Za-z_][A-Za-z0-9_]*)*$",
+                applies_to_sinks=("member_access.receiver",),
+                assumed_non_nil=True,
+                assumed_kind="table",
+            ),
+        )
+    )
+
+    def _fail_if_called(_: str):
+        raise AssertionError("build_static_analysis_context should not run for fully-pruned files")
+
+    monkeypatch.setattr(service_module, "build_static_analysis_context", _fail_if_called)
+
+    assessments = review_source(
+        Path("foo.lua"),
+        "return _name_TOYS.car\n",
+        sink_rules,
+        domain_knowledge=domain_knowledge,
+    )
+
+    assert assessments == ()
+
+
+def test_review_source_scopes_ast_context_to_enclosing_functions(monkeypatch) -> None:
+    sink_rules = (
+        SinkRule(
+            id="string.match.arg1",
+            kind="function_arg",
+            qualified_name="string.match",
+            arg_index=1,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("x or ''",),
+        ),
+    )
+    source = "\n".join(
+        [
+            "local function parse_name(name, alias)",
+            "  local first = string.match(name, '^a')",
+            "  local second = string.match(alias, '^b')",
+            "  return first or second",
+            "end",
+            "",
+            "local function parse_suffix(suffix)",
+            "  return string.match(suffix, '^c')",
+            "end",
+        ]
+    )
+    seen_scoped_sources: list[str] = []
+
+    def _record_scope(scoped_source: str):
+        seen_scoped_sources.append(scoped_source)
+        return None
+
+    monkeypatch.setattr(service_module, "build_static_analysis_context", _record_scope)
+
+    assessments = review_source(Path("foo.lua"), source, sink_rules)
+
+    assert len(assessments) == 3
+    assert len(seen_scoped_sources) == 2
+    assert seen_scoped_sources[0].startswith("local function parse_name")
+    assert seen_scoped_sources[1].startswith("local function parse_suffix")
+    assert all(scoped_source.count("local function") == 1 for scoped_source in seen_scoped_sources)
 
 
 def test_bootstrap_repository_splits_preprocessor_files_and_run_file_review_uses_macro_index(

@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import lua_nil_guard.collector as collector_module
 from lua_nil_guard.collector import collect_candidates
-from lua_nil_guard.models import SinkRule
-from lua_nil_guard.parser_backend import ParserBackendUnavailableError, SourceAstIndex
+from lua_nil_guard.models import DomainKnowledgeConfig, DomainKnowledgeRule, SinkRule
 
 
 def test_collect_candidates_finds_configured_function_sinks() -> None:
@@ -39,70 +37,7 @@ def test_collect_candidates_finds_configured_function_sinks() -> None:
     assert candidate.expression == "username"
     assert candidate.symbol == "username"
     assert candidate.static_state == "unknown_static"
-    assert candidate.candidate_source == "ast_exact"
-
-
-def test_collect_candidates_falls_back_to_lexical_when_ast_backend_is_unavailable(
-    monkeypatch,
-) -> None:
-    sink_rules = (
-        SinkRule(
-            id="string.match.arg1",
-            kind="function_arg",
-            qualified_name="string.match",
-            arg_index=1,
-            nil_sensitive=True,
-            failure_mode="runtime_error",
-            default_severity="high",
-            safe_patterns=("x or ''",),
-        ),
-    )
-    source = "return string.match(username, '^a')"
-
-    def _raise_unavailable(_: str) -> SourceAstIndex:
-        raise ParserBackendUnavailableError("tree_sitter unavailable")
-
-    monkeypatch.setattr(collector_module, "build_source_ast_index", _raise_unavailable)
-
-    candidates = collect_candidates(Path("foo/bar.lua"), source, sink_rules)
-
-    assert len(candidates) == 1
-    assert candidates[0].candidate_source == "lexical_fallback"
-
-
-def test_collect_candidates_falls_back_to_lexical_when_ast_has_parse_errors(
-    monkeypatch,
-) -> None:
-    sink_rules = (
-        SinkRule(
-            id="string.match.arg1",
-            kind="function_arg",
-            qualified_name="string.match",
-            arg_index=1,
-            nil_sensitive=True,
-            failure_mode="runtime_error",
-            default_severity="high",
-            safe_patterns=("x or ''",),
-        ),
-    )
-    source = "return string.match(username, '^a')"
-
-    monkeypatch.setattr(
-        collector_module,
-        "build_source_ast_index",
-        lambda _: SourceAstIndex(
-            has_error=True,
-            call_sites=(),
-            receiver_accesses=(),
-            length_operands=(),
-            binary_operands=(),
-        ),
-    )
-
-    candidates = collect_candidates(Path("foo/bar.lua"), source, sink_rules)
-
-    assert len(candidates) == 1
-    assert candidates[0].candidate_source == "lexical_fallback"
+    assert candidate.candidate_source == "lexical_fallback"
 
 
 def test_collect_candidates_tracks_enclosing_function_name() -> None:
@@ -265,6 +200,94 @@ def test_collect_candidates_skips_package_seeall_in_module_declaration() -> None
 
     assert len(candidates) == 1
     assert candidates[0].expression == "profile"
+
+
+def test_collect_candidates_domain_knowledge_skips_system_table_prefix_receivers() -> None:
+    sink_rules = (
+        SinkRule(
+            id="member_access.receiver",
+            kind="receiver",
+            qualified_name="member_access",
+            arg_index=0,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("if x then ... end",),
+        ),
+    )
+    domain = DomainKnowledgeConfig(
+        rules=(
+            DomainKnowledgeRule(
+                id="system_name_table_prefix",
+                action="skip_candidate",
+                symbol_regex=r"^_name_[A-Z0-9_]+(?:\.[A-Za-z_][A-Za-z0-9_]*)*$",
+                applies_to_sinks=("member_access.receiver",),
+                assumed_non_nil=True,
+                assumed_kind="table",
+            ),
+            DomainKnowledgeRule(
+                id="system_cmd_table_prefix",
+                action="skip_candidate",
+                symbol_regex=r"^_cmd_[A-Z0-9_]+(?:\.[A-Za-z_][A-Za-z0-9_]*)*$",
+                applies_to_sinks=("member_access.receiver",),
+                assumed_non_nil=True,
+                assumed_kind="table",
+            ),
+        )
+    )
+    source = "\n".join(
+        [
+            "local _name_TOYS = {}",
+            "local _cmd_TASKS = {}",
+            "return _name_TOYS.car, _cmd_TASKS.run",
+        ]
+    )
+
+    candidates = collect_candidates(
+        Path("foo/member.lua"),
+        source,
+        sink_rules,
+        domain_knowledge=domain,
+    )
+
+    assert candidates == ()
+
+
+def test_collect_candidates_domain_knowledge_skips_uppercase_macro_symbols() -> None:
+    sink_rules = (
+        SinkRule(
+            id="string.find.arg1",
+            kind="function_arg",
+            qualified_name="string.find",
+            arg_index=1,
+            nil_sensitive=True,
+            failure_mode="runtime_error",
+            default_severity="high",
+            safe_patterns=("x or ''",),
+        ),
+    )
+    domain = DomainKnowledgeConfig(
+        rules=(
+            DomainKnowledgeRule(
+                id="uppercase_macro_non_nil",
+                action="skip_candidate",
+                symbol_regex=r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$",
+                applies_to_sinks=(),
+                assumed_non_nil=True,
+                assumed_kind="macro",
+            ),
+        )
+    )
+    source = "return string.find(USER_NAME, '^g')"
+
+    candidates = collect_candidates(
+        Path("foo/macro.lua"),
+        source,
+        sink_rules,
+        domain_knowledge=domain,
+    )
+
+    assert candidates == ()
 
 
 def test_collect_candidates_finds_configured_length_operator_sinks() -> None:
